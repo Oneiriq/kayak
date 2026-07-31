@@ -1,0 +1,212 @@
+//! OpenAPI 3.1 generation.
+//!
+//! Emits a deterministic document (sorted keys via `BTreeMap`-backed
+//! `serde_json::Value` construction) so the checked-in artifact diffs
+//! cleanly. Types come from the schema's `FieldDefinition`s: the
+//! contract never restates a column type, so drift between database and
+//! API document is structurally impossible.
+//!
+//! Generation refuses to run on an invalid contract — the validation
+//! gate is not advisory.
+
+use serde_json::{json, Map, Value};
+
+use surql::schema::{FieldDefinition, FieldType, TableDefinition};
+
+use crate::ir::{Contract, Resource};
+use crate::validate::{validate, Violation};
+
+/// Errors from generation.
+#[derive(Debug, thiserror::Error)]
+pub enum GenerateError {
+    /// The contract does not match the schema; every violation listed.
+    #[error("contract failed validation:\n{}", format_violations(.0))]
+    Invalid(Vec<Violation>),
+}
+
+fn format_violations(violations: &[Violation]) -> String {
+    violations
+        .iter()
+        .map(|v| format!("  - {v}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Generate the OpenAPI 3.1 document for `contract` over `schema`.
+pub fn generate_openapi(
+    contract: &Contract,
+    schema: &[TableDefinition],
+) -> Result<Value, GenerateError> {
+    let violations = validate(contract, schema);
+    if !violations.is_empty() {
+        return Err(GenerateError::Invalid(violations));
+    }
+
+    let mut paths = Map::new();
+    let mut schemas = Map::new();
+    for resource in &contract.resources {
+        let table = schema
+            .iter()
+            .find(|t| t.name == resource.table)
+            .expect("validated: table exists");
+        let schema_name = component_name(&resource.name);
+        schemas.insert(schema_name.clone(), resource_schema(resource, table));
+        paths.insert(
+            format!("/v1/{}", resource.name),
+            list_path(resource, &schema_name),
+        );
+        paths.insert(
+            format!("/v1/{}/{{id}}", resource.name),
+            get_path(resource, &schema_name),
+        );
+    }
+
+    Ok(json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": contract.name,
+            "version": contract.version,
+        },
+        "paths": Value::Object(paths),
+        "components": { "schemas": Value::Object(schemas) },
+    }))
+}
+
+/// `files` -> `File`; `file-versions` -> `FileVersion`.
+fn component_name(resource: &str) -> String {
+    let singular = resource.strip_suffix('s').unwrap_or(resource);
+    singular
+        .split(['-', '_'])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+fn resource_schema(resource: &Resource, table: &TableDefinition) -> Value {
+    let mut properties = Map::new();
+    let mut required = Vec::new();
+    // Every resource carries an opaque id.
+    properties.insert("id".into(), json!({"type": "string"}));
+    required.push(json!("id"));
+    for exposure in &resource.fields {
+        let field = table
+            .fields
+            .iter()
+            .find(|f| f.name == exposure.column)
+            .expect("validated: column exists");
+        properties.insert(exposure.api_name().to_owned(), field_schema(field));
+        if !field.nullable {
+            required.push(json!(exposure.api_name()));
+        }
+    }
+    json!({
+        "type": "object",
+        "properties": Value::Object(properties),
+        "required": required,
+    })
+}
+
+/// Map a schema field to a JSON Schema fragment. Nullable columns
+/// (`option<...>`) become type unions with `"null"`, the 3.1 idiom.
+fn field_schema(field: &FieldDefinition) -> Value {
+    let base: Value = match field.field_type {
+        FieldType::String | FieldType::Record | FieldType::File => json!({"type": "string"}),
+        FieldType::Int => json!({"type": "integer"}),
+        FieldType::Float | FieldType::Decimal | FieldType::Number => json!({"type": "number"}),
+        FieldType::Bool => json!({"type": "boolean"}),
+        FieldType::Datetime => json!({"type": "string", "format": "date-time"}),
+        FieldType::Duration => json!({"type": "string", "format": "duration"}),
+        FieldType::Object | FieldType::Geometry => json!({"type": "object"}),
+        FieldType::Array => json!({"type": "array"}),
+        FieldType::Bytes => json!({"type": "string", "format": "byte"}),
+        FieldType::Any => json!({}),
+    };
+    if !field.nullable {
+        return base;
+    }
+    let mut wrapped = base;
+    if let Some(t) = wrapped.get("type").cloned() {
+        wrapped["type"] = json!([t, "null"]);
+    }
+    wrapped
+}
+
+fn list_path(resource: &Resource, schema_name: &str) -> Value {
+    let mut parameters = vec![json!({
+        "name": "limit",
+        "in": "query",
+        "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": resource.max_page_size,
+            "default": resource.max_page_size,
+        },
+    })];
+    for column in &resource.filterable {
+        parameters.push(json!({
+            "name": column,
+            "in": "query",
+            "schema": {"type": "string"},
+            "description": format!("Filter by {column} (indexed)."),
+        }));
+    }
+    if !resource.sortable.is_empty() {
+        parameters.push(json!({
+            "name": "sort",
+            "in": "query",
+            "schema": {"type": "string", "enum": sort_values(resource)},
+            "description": "Sort order; every value is backed by an index.",
+        }));
+    }
+    json!({
+        "get": {
+            "operationId": format!("list_{}", resource.name.replace('-', "_")),
+            "parameters": parameters,
+            "responses": {
+                "200": {
+                    "description": "Page of resources.",
+                    "content": {"application/json": {"schema": {
+                        "type": "array",
+                        "items": {"$ref": format!("#/components/schemas/{schema_name}")},
+                    }}},
+                },
+            },
+        },
+    })
+}
+
+fn sort_values(resource: &Resource) -> Vec<String> {
+    resource
+        .sortable
+        .iter()
+        .flat_map(|c| [c.clone(), format!("-{c}")])
+        .collect()
+}
+
+fn get_path(resource: &Resource, schema_name: &str) -> Value {
+    json!({
+        "get": {
+            "operationId": format!("get_{}", resource.name.replace('-', "_")),
+            "parameters": [{
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": {"type": "string"},
+            }],
+            "responses": {
+                "200": {
+                    "description": "The resource.",
+                    "content": {"application/json": {"schema": {
+                        "$ref": format!("#/components/schemas/{schema_name}"),
+                    }}},
+                },
+                "404": {"description": "Not found."},
+            },
+        },
+    })
+}

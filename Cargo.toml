@@ -1,0 +1,21 @@
+[package]
+name = "oneiriq-janus"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Contract layer for SurrealDB-backed APIs: one serializable IR over surql-rs schema definitions, validated against real indexes, generating every API surface."
+license = "Apache-2.0"
+repository = "https://github.com/Oneiriq/janus"
+authors = ["Shon Thomas <shonpt@outlook.com>"]
+
+[lib]
+name = "janus"
+
+[dependencies]
+oneiriq-surql = { version = "0.31", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[patch.crates-io]
+oneiriq-surql = { git = "https://github.com/Oneiriq/surql-rs", branch = "feat/copal-janus" }

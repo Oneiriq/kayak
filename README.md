@@ -1,79 +1,57 @@
 # Janus
 
-One contract, every face. Janus is the contract layer for
-SurrealDB-backed APIs: a serializable intermediate representation
-authored over `surql-rs` schema definitions, validated against the
-schema's real indexes at build time, and compiled into every API
-surface — so the surfaces cannot drift from each other or from the
-database.
+One contract, every face. Janus is the contract layer for SurrealDB-backed
+APIs: a serializable intermediate representation authored over `surql-rs`
+schema definitions, validated against the schema's real indexes at build
+time, and compiled into every API surface. The surfaces cannot drift from
+each other or from the database, because they are the same object.
 
 ```text
 contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
         |
-        |-- validate: fields exist, renames do not collide, filters are
-        |   indexed, sorts are reachable through an index prefix whose
-        |   earlier columns are pinned or filterable, actions are sane
+        |-- validate: fields exist, renames are safe, filters are
+        |   indexed, sorts are reachable through an index prefix,
+        |   actions and chosen names are well-formed
         |
-        |-- openapi.json      OpenAPI 3.1 (list/get + action paths)
+        |-- openapi.json      OpenAPI 3.1 (page envelopes, action paths)
         |-- schema.graphql    SDL (types, sort enums, Query, Mutation)
         |-- client.rs         reqwest + serde
         |-- client.ts         fetch, zero dependencies
         |-- client.py         standard library only
         |-- client.go         net/http only
+        |
+        |-- runtime           the contract, executed: resolvers,
+                              middleware, live GraphQL
 ```
 
-Nothing is exposed by default: fields are allowlisted and renameable,
-filters and sorts are explicit, and declaring a sortable field no index
-can serve is a **generation error naming the field** — the class of
-failure that otherwise ships and becomes a production table scan.
+Nothing is exposed by default. Fields are allowlisted and renameable,
+filters and sorts are explicit, and declaring a sortable field no index can
+serve is a generation error naming the field. That class of failure
+otherwise ships quietly and becomes a production table scan.
 
-Actions model everything beyond list/get — uploads, grants, deletes,
-workflow starts — with typed inputs and instance/collection targeting;
-they become OpenAPI operations, GraphQL mutations, and client methods
-from the same declaration.
-
-GraphQL names are overridable per resource (`graphql.type_name`,
-`graphql.list_field`, `graphql.get_field`, and per-action
-`graphql_field`) without touching REST paths or generated clients.
-Overrides and renames are gated: valid GraphQL grammar, no `__`
-prefix, no root-type collisions, and no collisions with SurrealDB
-v3 reserved names (the reserved-word list is exported as
-`janus::is_reserved` for schema layers to reuse). Changing an
-effective GraphQL name is a breaking change to the differ.
+Actions model everything beyond list and get (uploads, grants, deletes,
+workflow starts) with typed inputs and instance or collection targeting.
+They become OpenAPI operations, GraphQL mutations, and client methods from
+the same declaration.
 
 ## Runtime
 
-The contract is also executable. With the `runtime` feature a service
-registers its own resolvers — async closures over its own data access
-(surql-rs repositories, caches, other services) — and stacks
-middleware around them; the dispatcher enforces the contract before
-any resolver runs (limits clamped, filters and sorts allowlisted,
-action inputs type-checked, unknown inputs dropped).
+With the `runtime` feature the contract executes. A service registers its
+own resolvers (async closures over its own data access) and stacks
+middleware around them. The dispatcher enforces the contract before any
+resolver runs: limits clamp and every argument checks against its declaration. Construction refuses, by
+name, any declared operation without a resolver.
 
-With the `graphql` feature the same contract builds an `async-graphql`
-dynamic schema: every query and mutation field funnels through the
-dispatcher, so middleware and enforcement behave identically across
-protocols, and the served schema cannot disagree with the checked-in
-SDL artifact — both derive from one contract object.
+With the `graphql` feature the same contract builds a live schema on
+`async-graphql`. Every field dispatches through the middleware chain, and
+the served schema matches the generated SDL by construction. GraphQL name
+overrides (type and field names, per resource and per action) are validated
+against the GraphQL grammar and the SurrealDB v3 reserved-word list, which
+is exported as `janus::is_reserved`. Renaming any effective GraphQL name is
+a breaking change to the differ.
 
-```rust
-let resolvers = Resolvers::new()
-    .list("files", |ctx, args| async move { /* your repo call */ })
-    .get("files", |ctx, args| async move { /* ... */ })
-    .action("files", "issue_url", |ctx, args| async move { /* ... */ });
-
-let dispatcher = Arc::new(Dispatcher::new(contract, resolvers, vec![
-    Arc::new(RequireTenant),          // your Middleware impls
-])?);
-let schema = janus::runtime::graphql::build_schema(&tables, dispatcher)?;
-// or schema_builder(...) to attach async-graphql extensions,
-// depth/complexity limits, and global data before finishing.
-```
-
-Per-request values (tenant, principal) travel in a typed
-`JanusContext` injected as request data; middleware reads, enriches,
-or rejects. A missing context is an empty context, so
-context-requiring middleware fails closed.
+See [docs/](docs/README.md) for the contract reference, the runtime guide,
+and the generator workflow.
 
 ## CLI
 
@@ -84,16 +62,18 @@ janus diff old-contract.json new-contract.json   # exits non-zero on breaking ch
 ```
 
 Contracts and schemas travel as data; the schema file is a serialized
-`Vec<TableDefinition>` exported by the owning service. `diff` operates
-on the IR, not the documents, so it catches what document diffs hide:
-a dropped filter, a moved action, an input that became required.
+`Vec<TableDefinition>` exported by the owning service. `diff` operates on
+the IR, so it catches what document diffs hide: a dropped filter, a moved
+action, an input that became required, a field re-pointed at a different
+column under the same wire name.
 
 ## Testing
 
-Golden files per generator (`JANUS_BLESS=1 cargo test` re-blesses
-deliberately), gate refusal tests by name, IR round-trips, and a CLI
-integration test that — where the toolchains exist — compiles the
-generated Python and parses the generated Go with the real tools.
+Golden files per generator (`JANUS_BLESS=1 cargo test` re-blesses as an
+explicit step), gate refusal tests by name, IR round-trips, a runtime suite
+covering middleware ordering and enforcement, and a CLI integration test
+that compiles the generated Python and parses the generated Go with the
+real toolchains where they exist.
 
 ## License
 

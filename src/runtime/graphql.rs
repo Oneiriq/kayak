@@ -3,7 +3,7 @@
 //!
 //! Both faces derive from one contract object, so the checked-in
 //! `.graphql` artifact and the served schema cannot disagree. Every
-//! field resolver funnels through the [`Dispatcher`] — the middleware
+//! field resolver funnels through the [`Dispatcher`], so the middleware
 //! chain and contract enforcement run identically for GraphQL and REST.
 //!
 //! Rows travel as `serde_json::Value`s: resolvers return wire-shaped
@@ -47,7 +47,7 @@ pub fn build_schema(
         .map_err(|e| GraphqlBuildError::Schema(e.to_string()))
 }
 
-/// Build the schema BUILDER — the plugin seam. Callers may attach
+/// Build the schema BUILDER, the plugin seam. Callers may attach
 /// `async-graphql` extensions, depth/complexity limits, or global data
 /// before finishing:
 ///
@@ -347,7 +347,7 @@ pub fn schema_builder(
     Ok(builder)
 }
 
-/// The per-request context, or empty when the caller injected none —
+/// The per-request context, or empty when the caller injected none;
 /// context-requiring middleware then rejects, which is the safe
 /// default.
 fn request_context(ctx: &async_graphql::dynamic::ResolverContext<'_>) -> JanusContext {

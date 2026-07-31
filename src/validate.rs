@@ -12,7 +12,7 @@
 //!   index requirement of its own).
 //! - filterable column: must appear in at least one index on the table.
 //! - sortable column: some index must contain it at a position where
-//!   every EARLIER column is pinned or filterable — an index serves an
+//!   every EARLIER column is pinned or filterable; an index serves an
 //!   ORDER BY only from a prefix whose head is equality-bound. A bare
 //!   leading column is the degenerate case.
 
@@ -56,7 +56,7 @@ pub enum Violation {
 
     #[error(
         "resource {resource}: filterable column {column} is not covered by any \
-         index on {table} — filtering on it would scan the table"
+         index on {table}; filtering on it would scan the table"
     )]
     UnindexedFilter {
         resource: String,
@@ -66,7 +66,7 @@ pub enum Violation {
 
     #[error(
         "resource {resource}: sortable column {column} is not reachable as an \
-         index sort suffix on {table} — some index must hold it with every \
+         index sort suffix on {table}; some index must hold it with every \
          earlier column pinned or filterable, or ORDER BY falls off the index"
     )]
     UnindexedSort {
@@ -124,8 +124,8 @@ fn is_graphql_name(name: &str) -> bool {
 }
 
 /// Names the contract author CHOSE must be valid for every surface
-/// they reach; names that OVERRIDE something — field renames and
-/// GraphQL overrides — additionally must never collide with a
+/// they reach; names that OVERRIDE something (field renames and
+/// GraphQL overrides) additionally must never collide with a
 /// SurrealDB v3 reserved name. Action, input, and resource names are
 /// exempt from the reserved gate (verbs like `remove` or `update` are
 /// legitimate action names and never reach the database); column names

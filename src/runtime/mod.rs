@@ -3,7 +3,7 @@
 //! Generators compile the contract into artifacts; the runtime executes
 //! it. A service registers a [`resolvers::Resolvers`] set (its own
 //! data-access closures), stacks [`middleware::Middleware`] around them
-//! (auth, audit, metrics — protocol-agnostic), and a
+//! (auth, auditing; all protocol-agnostic), and a
 //! [`dispatch::Dispatcher`] enforces the contract before any resolver
 //! runs: page limits clamped, filters and sorts checked against the
 //! allowlists, action inputs type-checked. Protocol layers (the

@@ -104,7 +104,7 @@ fn all_targets_generate_and_match_goldens() {
             std::fs::write(&golden_path, content).unwrap();
         }
         let golden = std::fs::read_to_string(&golden_path)
-            .unwrap_or_else(|_| panic!("{golden_path} missing — JANUS_BLESS=1 to create"));
+            .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS=1 to create"));
         assert_eq!(
             content.trim(),
             golden.trim(),

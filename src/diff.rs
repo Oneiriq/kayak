@@ -1,7 +1,7 @@
 //! IR-level breaking-change detection.
 //!
-//! Diffing the IR — not the generated SDL or OpenAPI — catches changes
-//! documents hide: a filter removed from an allowlist, a sort claim
+//! Diffing at the IR level catches changes the rendered documents
+//! hide: a filter removed from an allowlist, a sort claim
 //! dropped, an action's method changed, a required input added. The
 //! rule of thumb: anything a deployed client could be relying on is
 //! breaking; pure additions are compatible.

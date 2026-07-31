@@ -1,5 +1,5 @@
 //! The janus binary end to end: generate from contract+schema files,
-//! diff with CI-able exit codes — and, where the toolchains exist,
+//! diff with CI-able exit codes, and, where the toolchains exist,
 //! syntax-check the generated Python and Go clients with the real
 //! compilers rather than trusting the goldens alone.
 

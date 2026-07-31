@@ -1,8 +1,8 @@
 //! The dispatcher: contract enforcement in front of every resolver.
 //!
-//! Construction is the completeness gate — a contract that declares a
+//! Construction is the completeness gate: a contract that declares a
 //! resource or action without a registered resolver refuses to build,
-//! at startup, by name. Dispatch is the enforcement gate — arguments
+//! at startup, by name. Dispatch is the enforcement gate: arguments
 //! are validated against the contract, then travel the middleware
 //! chain, then reach the resolver.
 

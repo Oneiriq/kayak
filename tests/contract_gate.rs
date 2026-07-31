@@ -177,7 +177,7 @@ fn generated_openapi_matches_the_golden_document() {
         std::fs::write(golden_path, &rendered).unwrap();
     }
     let golden = std::fs::read_to_string(golden_path)
-        .expect("golden file missing — run with JANUS_BLESS=1 to create");
+        .expect("golden file missing; run with JANUS_BLESS=1 to create");
     assert_eq!(
         rendered.trim(),
         golden.trim(),

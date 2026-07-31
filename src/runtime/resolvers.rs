@@ -1,8 +1,8 @@
 //! The resolver registry: where a service plugs its own data access in.
 //!
 //! Janus never talks to a database. A resolver is any async closure the
-//! service registers — over surql-rs repositories, a cache, another
-//! service — and the dispatcher guarantees it only ever sees
+//! service registers (over surql-rs repositories or another
+//! service), and the dispatcher guarantees it only ever sees
 //! contract-validated arguments.
 
 use std::collections::BTreeMap;

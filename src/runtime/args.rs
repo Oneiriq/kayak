@@ -67,7 +67,7 @@ pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<
 }
 
 /// Check action arguments: instance id presence, required inputs,
-/// input types. Unknown input keys are DROPPED, not rejected — the
+/// input types. Unknown input keys are dropped; the
 /// differ promises that removing an optional input is compatible, and
 /// that only holds if servers ignore fields they no longer declare.
 pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<(), JanusError> {

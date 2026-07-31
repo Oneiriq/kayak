@@ -344,7 +344,7 @@ async fn graphql_name_overrides_are_served_and_breaking_to_change() {
     assert!(sdl.contains("mintUrl"), "{sdl}");
 
     // Renaming any GraphQL name out from under deployed clients is
-    // breaking — effective names are what the differ compares.
+    // breaking; effective names are what the differ compares.
     let changes = janus::diff(&contract(), &renamed);
     let breaking: Vec<&str> = changes
         .iter()

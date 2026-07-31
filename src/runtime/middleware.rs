@@ -1,7 +1,7 @@
 //! The middleware chain: protocol-agnostic policy around every
 //! operation.
 //!
-//! Middleware wraps DISPATCH, not HTTP — the same chain runs whether an
+//! Middleware wraps dispatch itself, so the same chain runs whether an
 //! operation arrived over GraphQL or REST, which is the point: auth,
 //! auditing, and metrics are written once. Each layer receives the
 //! operation identity, the context, the validated payload, and a

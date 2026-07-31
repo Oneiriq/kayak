@@ -1,4 +1,4 @@
-//! GraphQL SDL generation — the second face over the same contract.
+//! GraphQL SDL generation, the second face over the same contract.
 //!
 //! Emission is deterministic (resources and fields in declaration
 //! order, scalars once, alphabetical only where the IR imposes no

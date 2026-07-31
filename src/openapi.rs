@@ -6,7 +6,7 @@
 //! contract never restates a column type, so drift between database and
 //! API document is structurally impossible.
 //!
-//! Generation refuses to run on an invalid contract — the validation
+//! Generation refuses to run on an invalid contract; the validation
 //! gate is not advisory.
 
 use serde_json::{json, Map, Value};
@@ -171,7 +171,7 @@ fn field_schema(field: &FieldDefinition) -> Value {
     wrapped
 }
 
-/// The page envelope every list endpoint actually returns — the same
+/// The page envelope every list endpoint actually returns, the same
 /// shape the SDL's `{Type}Page` and every generated client use.
 fn page_schema(schema_name: &str) -> Value {
     json!({

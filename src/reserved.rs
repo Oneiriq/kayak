@@ -1,7 +1,7 @@
 //! SurrealDB v3.0+ reserved-name gate.
 //!
-//! Contract-chosen names — field renames, GraphQL overrides, action and
-//! input names — must never collide with a SurrealQL keyword, operator
+//! Contract-chosen names (field renames, GraphQL overrides, action and
+//! input names) must never collide with a SurrealQL keyword, operator
 //! word, special parameter, or special field. Collisions are legal in
 //! SurrealDB itself (idents can be escaped), but a contract that leans
 //! on escaping is a contract that breaks the moment a query is written

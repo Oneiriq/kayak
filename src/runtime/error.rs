@@ -2,7 +2,7 @@
 
 /// What a resolver or middleware can fail with. Protocol layers map
 /// these to their own wire forms (HTTP status codes, GraphQL error
-/// extensions) — resolvers never think in protocol terms.
+/// extensions); resolvers never think in protocol terms.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JanusError {
     /// The request is malformed or violates the contract.

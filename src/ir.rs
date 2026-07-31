@@ -1,7 +1,7 @@
 //! The contract intermediate representation.
 //!
 //! A contract is data: serializable, versioned, diffable, checked in.
-//! It deliberately does not restate the database schema — resources
+//! It never restates the database schema: resources
 //! reference tables and columns by name, and validation resolves those
 //! references against the authoritative `surql-rs` definitions. What
 //! lives here is exclusively API-side: exposure, renaming, filter and
@@ -37,7 +37,7 @@ pub struct Resource {
     /// Projected fields. Nothing is exposed that is not listed.
     pub fields: Vec<FieldExposure>,
     /// Columns the SERVER always equality-binds before any caller input
-    /// — tenant scoping, soft-delete filters. Never exposed as API
+    /// (tenant scoping, soft-delete filters). Never exposed as API
     /// parameters; they exist so index-prefix validation can credit
     /// them: an index `(tenant_id, state, created_at)` serves a
     /// `created_at` sort because `tenant_id` is pinned and `state` is
@@ -167,7 +167,7 @@ pub struct ActionField {
     pub description: Option<String>,
 }
 
-/// Wire types for action inputs — deliberately small; anything richer
+/// Wire types for action inputs, kept small; anything richer
 /// is `Json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

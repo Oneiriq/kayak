@@ -46,6 +46,7 @@ fn files_resource() -> Resource {
         filterable: vec!["state".into()],
         sortable: vec!["created_at".into()],
         max_page_size: 100,
+        actions: vec![],
     }
 }
 
@@ -142,6 +143,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         filterable: vec!["also_missing".into()],
         sortable: vec![],
         max_page_size: 10,
+        actions: vec![],
     };
     let violations = validate(&contract(vec![resource]), &[file_table()]);
     let text = violations

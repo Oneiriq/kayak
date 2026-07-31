@@ -53,6 +53,76 @@ pub struct Resource {
     /// Page-size ceiling for list endpoints.
     #[serde(default = "default_max_page_size")]
     pub max_page_size: u32,
+    /// Verbs beyond list/get: uploads, grants, deletions, workflow
+    /// starts. An action binds to a domain use-case on the server; the
+    /// contract only describes its wire shape.
+    #[serde(default)]
+    pub actions: Vec<Action>,
+}
+
+/// One verb on a resource.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Action {
+    /// Snake-case action name; generators derive per-language method
+    /// and mutation names from it.
+    pub name: String,
+    /// HTTP method: POST, PUT, DELETE, or PATCH.
+    pub method: String,
+    /// Path suffix under the resource (`"/{id}/url"`, `"/{id}"`, or
+    /// `""` for the collection itself). A literal `{id}` marks an
+    /// instance action and becomes a required id parameter everywhere.
+    #[serde(default)]
+    pub path: String,
+    /// Request-body fields.
+    #[serde(default)]
+    pub input: Vec<ActionField>,
+    /// What the action returns.
+    #[serde(default)]
+    pub output: ActionOutput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl Action {
+    /// Whether this action targets one instance (path carries `{id}`).
+    pub fn takes_id(&self) -> bool {
+        self.path.contains("{id}")
+    }
+}
+
+/// One request-body field of an action.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionField {
+    pub name: String,
+    pub kind: TypeRef,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Wire types for action inputs — deliberately small; anything richer
+/// is `Json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TypeRef {
+    String,
+    Int,
+    Bool,
+    Json,
+}
+
+/// What an action returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionOutput {
+    /// The parent resource's object schema.
+    Resource,
+    /// A free-form JSON object.
+    #[default]
+    Json,
+    /// Nothing (HTTP 204).
+    None,
 }
 
 fn default_max_page_size() -> u32 {
@@ -113,6 +183,19 @@ mod tests {
                 filterable: vec!["state".into()],
                 sortable: vec!["created_at".into()],
                 max_page_size: 100,
+                actions: vec![Action {
+                    name: "issue_url".into(),
+                    method: "POST".into(),
+                    path: "/{id}/url".into(),
+                    input: vec![ActionField {
+                        name: "ttl_secs".into(),
+                        kind: TypeRef::Int,
+                        required: false,
+                        description: None,
+                    }],
+                    output: ActionOutput::Json,
+                    description: Some("Issue a signed URL.".into()),
+                }],
             }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();

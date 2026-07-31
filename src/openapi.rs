@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 
 use surql::schema::{FieldDefinition, FieldType, TableDefinition};
 
-use crate::ir::{Contract, Resource};
+use crate::ir::{Action, ActionOutput, Contract, Resource, TypeRef};
 use crate::validate::{validate, Violation};
 
 /// Errors from generation.
@@ -22,6 +22,9 @@ pub enum GenerateError {
     /// The contract does not match the schema; every violation listed.
     #[error("contract failed validation:\n{}", format_violations(.0))]
     Invalid(Vec<Violation>),
+    /// A target name the orchestrator does not recognise.
+    #[error("unknown generation target {0:?}")]
+    UnknownTarget(String),
 }
 
 fn format_violations(violations: &[Violation]) -> String {
@@ -59,6 +62,18 @@ pub fn generate_openapi(
             format!("/v1/{}/{{id}}", resource.name),
             get_path(resource, &schema_name),
         );
+        for action in &resource.actions {
+            let path = format!("/v1/{}{}", resource.name, action.path);
+            let entry = paths
+                .entry(path)
+                .or_insert_with(|| Value::Object(Map::new()));
+            if let Some(object) = entry.as_object_mut() {
+                object.insert(
+                    action.method.to_ascii_lowercase(),
+                    action_operation(resource, action, &schema_name),
+                );
+            }
+        }
     }
 
     Ok(json!({
@@ -186,6 +201,83 @@ fn sort_values(resource: &Resource) -> Vec<String> {
         .iter()
         .flat_map(|c| [c.clone(), format!("-{c}")])
         .collect()
+}
+
+fn type_ref_schema(kind: TypeRef) -> Value {
+    match kind {
+        TypeRef::String => json!({"type": "string"}),
+        TypeRef::Int => json!({"type": "integer"}),
+        TypeRef::Bool => json!({"type": "boolean"}),
+        TypeRef::Json => json!({"type": "object"}),
+    }
+}
+
+fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> Value {
+    let mut operation = Map::new();
+    operation.insert(
+        "operationId".into(),
+        json!(format!(
+            "{}_{}",
+            action.name,
+            resource.name.replace('-', "_")
+        )),
+    );
+    if let Some(description) = &action.description {
+        operation.insert("description".into(), json!(description));
+    }
+    if action.takes_id() {
+        operation.insert(
+            "parameters".into(),
+            json!([{
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": {"type": "string"},
+            }]),
+        );
+    }
+    if !action.input.is_empty() {
+        let mut properties = Map::new();
+        let mut required = Vec::new();
+        for field in &action.input {
+            properties.insert(field.name.clone(), type_ref_schema(field.kind));
+            if field.required {
+                required.push(json!(field.name));
+            }
+        }
+        operation.insert(
+            "requestBody".into(),
+            json!({
+                "required": true,
+                "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": Value::Object(properties),
+                    "required": required,
+                }}},
+            }),
+        );
+    }
+    let responses = match action.output {
+        ActionOutput::Resource => json!({
+            "200": {
+                "description": "The resource.",
+                "content": {"application/json": {"schema": {
+                    "$ref": format!("#/components/schemas/{schema_name}"),
+                }}},
+            },
+        }),
+        ActionOutput::Json => json!({
+            "200": {
+                "description": "Action result.",
+                "content": {"application/json": {"schema": {"type": "object"}}},
+            },
+        }),
+        ActionOutput::None => json!({
+            "204": {"description": "No content."},
+        }),
+    };
+    operation.insert("responses".into(), responses);
+    Value::Object(operation)
 }
 
 fn get_path(resource: &Resource, schema_name: &str) -> Value {

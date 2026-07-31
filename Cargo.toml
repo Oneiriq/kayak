@@ -11,11 +11,18 @@ authors = ["Shon Thomas <shonpt@outlook.com>"]
 [lib]
 name = "janus"
 
+[[bin]]
+name = "janus"
+path = "src/bin/janus.rs"
+
 [dependencies]
 oneiriq-surql = { version = "0.31", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [patch.crates-io]
 oneiriq-surql = { git = "https://github.com/Oneiriq/surql-rs", branch = "feat/copal-janus" }

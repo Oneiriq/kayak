@@ -40,6 +40,13 @@ pub enum Violation {
     #[error("resource {resource}: duplicate API field name {name} (rename collision)")]
     DuplicateApiName { resource: String, name: String },
 
+    #[error("resource {resource}: action {action}: {problem}")]
+    InvalidAction {
+        resource: String,
+        action: String,
+        problem: String,
+    },
+
     #[error(
         "resource {resource}: filterable column {column} is not covered by any \
          index on {table} — filtering on it would scan the table"
@@ -131,6 +138,41 @@ fn validate_resource(
     for column in &resource.pinned {
         if !column_exists(column) {
             push_unknown(column, violations);
+        }
+    }
+
+    let mut action_names = std::collections::BTreeSet::new();
+    for action in &resource.actions {
+        let mut problem = |text: String| {
+            violations.push(Violation::InvalidAction {
+                resource: resource.name.clone(),
+                action: action.name.clone(),
+                problem: text,
+            });
+        };
+        if action.name.is_empty() {
+            problem("empty action name".into());
+        }
+        if !action_names.insert(action.name.clone()) {
+            problem("duplicate action name".into());
+        }
+        if !matches!(action.method.as_str(), "POST" | "PUT" | "DELETE" | "PATCH") {
+            problem(format!(
+                "method must be POST, PUT, DELETE, or PATCH, not {:?}",
+                action.method,
+            ));
+        }
+        if !action.path.is_empty() && !action.path.starts_with('/') {
+            problem(format!("path {:?} must start with '/'", action.path));
+        }
+        let mut input_names = std::collections::BTreeSet::new();
+        for field in &action.input {
+            if field.name.is_empty() {
+                problem("empty input field name".into());
+            }
+            if !input_names.insert(field.name.clone()) {
+                problem(format!("duplicate input field {:?}", field.name));
+            }
         }
     }
 

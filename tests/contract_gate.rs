@@ -46,6 +46,7 @@ fn files_resource() -> Resource {
         filterable: vec!["state".into()],
         sortable: vec!["created_at".into()],
         max_page_size: 100,
+        graphql: None,
         actions: vec![],
     }
 }
@@ -143,6 +144,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         filterable: vec!["also_missing".into()],
         sortable: vec![],
         max_page_size: 10,
+        graphql: None,
         actions: vec![],
     };
     let violations = validate(&contract(vec![resource]), &[file_table()]);
@@ -202,4 +204,58 @@ fn nullable_columns_become_type_unions_and_leave_required() {
     assert!(required.contains(&"path"));
     // The rename is the API name everywhere.
     assert!(file_schema["properties"].get("size_bytes").is_none());
+}
+
+#[test]
+fn chosen_names_are_gated_against_surrealdb_reserved_words() {
+    // A rename onto a reserved word refuses.
+    let mut resource = files_resource();
+    resource.fields[4] = FieldExposure::renamed("digest", "value");
+    let violations = validate(&contract(vec![resource]), &[file_table()]);
+    let text = violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("\"value\"") && text.contains("reserved"),
+        "{text}",
+    );
+
+    // GraphQL overrides are gated for grammar, __, root names, and
+    // reserved words.
+    let mut resource = files_resource();
+    resource.graphql = Some(janus::GraphqlNames {
+        type_name: Some("Query".into()),
+        list_field: Some("__files".into()),
+        get_field: Some("select".into()),
+    });
+    let violations = validate(&contract(vec![resource]), &[file_table()]);
+    let text = violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("root type name"), "{text}");
+    assert!(text.contains("__ prefix"), "{text}");
+    assert!(text.contains("reserved"), "{text}");
+
+    // Two resources landing on one effective GraphQL type name refuse.
+    let mut second = files_resource();
+    second.name = "file".into();
+    let violations = validate(&contract(vec![files_resource(), second]), &[file_table()]);
+    let text = violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("collides with the GraphQL type name"),
+        "{text}"
+    );
+
+    // The reserved gate is exported for schema layers to reuse.
+    assert!(janus::is_reserved("SELECT"));
+    assert!(janus::is_reserved("$auth"));
+    assert!(!janus::is_reserved("tenant_id"));
 }

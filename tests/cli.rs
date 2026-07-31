@@ -42,6 +42,7 @@ fn contract() -> Contract {
             filterable: vec!["state".into()],
             sortable: vec!["created_at".into()],
             max_page_size: 100,
+            graphql: None,
             actions: vec![Action {
                 name: "issue_url".into(),
                 method: "POST".into(),
@@ -54,6 +55,7 @@ fn contract() -> Contract {
                 }],
                 output: ActionOutput::Json,
                 description: None,
+                graphql_field: None,
             }],
         }],
     }

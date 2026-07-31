@@ -13,12 +13,19 @@ pub mod generate;
 pub mod ir;
 mod naming;
 pub mod openapi;
+pub mod reserved;
 pub mod sdl;
 pub mod validate;
 
+#[cfg(feature = "runtime")]
+pub mod runtime;
+
 pub use diff::{diff, Change};
 pub use generate::generate_all;
-pub use ir::{Action, ActionField, ActionOutput, Contract, FieldExposure, Resource, TypeRef};
+pub use ir::{
+    Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource, TypeRef,
+};
 pub use openapi::{generate_openapi, GenerateError};
+pub use reserved::is_reserved;
 pub use sdl::generate_sdl;
 pub use validate::{validate, Violation};

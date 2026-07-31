@@ -32,6 +32,49 @@ workflow starts — with typed inputs and instance/collection targeting;
 they become OpenAPI operations, GraphQL mutations, and client methods
 from the same declaration.
 
+GraphQL names are overridable per resource (`graphql.type_name`,
+`graphql.list_field`, `graphql.get_field`, and per-action
+`graphql_field`) without touching REST paths or generated clients.
+Overrides and renames are gated: valid GraphQL grammar, no `__`
+prefix, no root-type collisions, and no collisions with SurrealDB
+v3 reserved names (the reserved-word list is exported as
+`janus::is_reserved` for schema layers to reuse). Changing an
+effective GraphQL name is a breaking change to the differ.
+
+## Runtime
+
+The contract is also executable. With the `runtime` feature a service
+registers its own resolvers — async closures over its own data access
+(surql-rs repositories, caches, other services) — and stacks
+middleware around them; the dispatcher enforces the contract before
+any resolver runs (limits clamped, filters and sorts allowlisted,
+action inputs type-checked, unknown inputs dropped).
+
+With the `graphql` feature the same contract builds an `async-graphql`
+dynamic schema: every query and mutation field funnels through the
+dispatcher, so middleware and enforcement behave identically across
+protocols, and the served schema cannot disagree with the checked-in
+SDL artifact — both derive from one contract object.
+
+```rust
+let resolvers = Resolvers::new()
+    .list("files", |ctx, args| async move { /* your repo call */ })
+    .get("files", |ctx, args| async move { /* ... */ })
+    .action("files", "issue_url", |ctx, args| async move { /* ... */ });
+
+let dispatcher = Arc::new(Dispatcher::new(contract, resolvers, vec![
+    Arc::new(RequireTenant),          // your Middleware impls
+])?);
+let schema = janus::runtime::graphql::build_schema(&tables, dispatcher)?;
+// or schema_builder(...) to attach async-graphql extensions,
+// depth/complexity limits, and global data before finishing.
+```
+
+Per-request values (tenant, principal) travel in a typed
+`JanusContext` injected as request data; middleware reads, enriches,
+or rejects. A missing context is an empty context, so
+context-requiring middleware fails closed.
+
 ## CLI
 
 ```

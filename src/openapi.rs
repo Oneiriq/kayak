@@ -76,7 +76,7 @@ pub fn generate_openapi(
         }
     }
 
-    Ok(json!({
+    Ok(canonical(json!({
         "openapi": "3.1.0",
         "info": {
             "title": contract.name,
@@ -84,7 +84,26 @@ pub fn generate_openapi(
         },
         "paths": Value::Object(paths),
         "components": { "schemas": Value::Object(schemas) },
-    }))
+    })))
+}
+
+/// Rebuild every object with keys in sorted order, so the emitted
+/// document is byte-identical whether `serde_json` was compiled with
+/// `preserve_order` (any dependent may unify that feature in) or not.
+fn canonical(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut out = Map::new();
+            for (key, inner) in entries {
+                out.insert(key, canonical(inner));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(canonical).collect()),
+        other => other,
+    }
 }
 
 /// `files` -> `File`; `file-versions` -> `FileVersion`.

@@ -103,13 +103,46 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         )));
     }
 
+    // GraphQL names are part of a deployed schema's identity: fragments
+    // name types, queries name fields. Effective names are compared so
+    // an override equal to the derived default is a no-op.
+    for (label, before, after) in [
+        ("type", old.graphql_type_name(), new.graphql_type_name()),
+        (
+            "list field",
+            old.graphql_list_field(),
+            new.graphql_list_field(),
+        ),
+        (
+            "get field",
+            old.graphql_get_field(),
+            new.graphql_get_field(),
+        ),
+    ] {
+        if before != after {
+            changes.push(Change::Breaking(format!(
+                "{scope}: graphql {label} renamed {before} -> {after}",
+            )));
+        }
+    }
+
     for old_action in &old.actions {
         match new.actions.iter().find(|a| a.name == old_action.name) {
             None => changes.push(Change::Breaking(format!(
                 "{scope}: action {} removed",
                 old_action.name,
             ))),
-            Some(new_action) => diff_action(scope, old_action, new_action, changes),
+            Some(new_action) => {
+                let before = old_action.graphql_field_name(old);
+                let after = new_action.graphql_field_name(new);
+                if before != after {
+                    changes.push(Change::Breaking(format!(
+                        "{scope}: action {} graphql field renamed {before} -> {after}",
+                        old_action.name,
+                    )));
+                }
+                diff_action(scope, old_action, new_action, changes);
+            }
         }
     }
     for new_action in &new.actions {

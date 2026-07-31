@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use surql::schema::{FieldDefinition, FieldType, TableDefinition};
 
 use crate::ir::{Action, ActionOutput, Contract, Resource, TypeRef};
-use crate::naming::{camel, type_name};
+use crate::naming::camel;
 use crate::openapi::GenerateError;
 use crate::validate::validate;
 
@@ -36,7 +36,7 @@ pub fn generate_sdl(
             .iter()
             .find(|t| t.name == resource.table)
             .expect("validated: table exists");
-        let type_name = type_name(&resource.name);
+        let type_name = resource.graphql_type_name();
 
         writeln!(body, "type {type_name} {{").unwrap();
         writeln!(body, "  id: ID!").unwrap();
@@ -72,9 +72,9 @@ pub fn generate_sdl(
     // Query root.
     body.push_str("type Query {\n");
     for resource in &contract.resources {
-        let type_name = type_name(&resource.name);
-        let field = camel(&resource.name);
-        let singular = camel(resource.name.strip_suffix('s').unwrap_or(&resource.name));
+        let type_name = resource.graphql_type_name();
+        let field = resource.graphql_list_field();
+        let singular = resource.graphql_get_field();
         let mut arguments = vec![
             format!("limit: Int = {}", resource.max_page_size),
             "cursor: String".to_owned(),
@@ -148,8 +148,7 @@ fn graphql_type(field: &FieldDefinition) -> (String, bool, bool) {
 
 /// One Mutation field for an action; returns (line, uses_json).
 fn mutation_field(resource: &Resource, action: &Action) -> (String, bool) {
-    let singular = resource.name.strip_suffix('s').unwrap_or(&resource.name);
-    let name = camel(&format!("{singular}_{}", action.name));
+    let name = action.graphql_field_name(resource);
     let mut arguments = Vec::new();
     let mut uses_json = false;
     if action.takes_id() {
@@ -169,7 +168,7 @@ fn mutation_field(resource: &Resource, action: &Action) -> (String, bool) {
         arguments.push(format!("{}: {base}{bang}", camel(&field.name)));
     }
     let output = match action.output {
-        ActionOutput::Resource => format!("{}!", type_name(&resource.name)),
+        ActionOutput::Resource => format!("{}!", resource.graphql_type_name()),
         ActionOutput::Json => {
             uses_json = true;
             "JSON!".to_owned()

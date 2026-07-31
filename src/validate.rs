@@ -47,6 +47,13 @@ pub enum Violation {
         problem: String,
     },
 
+    #[error("{scope}: name {name:?} {problem}")]
+    InvalidName {
+        scope: String,
+        name: String,
+        problem: String,
+    },
+
     #[error(
         "resource {resource}: filterable column {column} is not covered by any \
          index on {table} — filtering on it would scan the table"
@@ -73,6 +80,7 @@ pub enum Violation {
 pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violation> {
     let mut violations = Vec::new();
     for resource in &contract.resources {
+        validate_names(resource, &mut violations);
         match schema.iter().find(|t| t.name == resource.table) {
             Some(table) => validate_resource(resource, table, &mut violations),
             None => violations.push(Violation::UnknownTable {
@@ -81,7 +89,160 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
             }),
         }
     }
+
+    // GraphQL type names are schema-global; two resources landing on
+    // the same effective type name would shadow each other.
+    let mut type_names = std::collections::BTreeMap::new();
+    for resource in &contract.resources {
+        if let Some(previous) = type_names.insert(resource.graphql_type_name(), &resource.name) {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {}", resource.name),
+                name: resource.graphql_type_name(),
+                problem: format!("collides with the GraphQL type name of resource {previous}"),
+            });
+        }
+    }
     violations
+}
+
+/// `[a-z][a-z0-9_]*`, with `-` also allowed when `kebab` is set.
+fn is_wire_ident(name: &str, kebab: bool) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || (kebab && c == '-')
+        })
+}
+
+/// The GraphQL `Name` grammar: `[_A-Za-z][_0-9A-Za-z]*`.
+fn is_graphql_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Names the contract author CHOSE must be valid for every surface
+/// they reach; names that OVERRIDE something — field renames and
+/// GraphQL overrides — additionally must never collide with a
+/// SurrealDB v3 reserved name. Action, input, and resource names are
+/// exempt from the reserved gate (verbs like `remove` or `update` are
+/// legitimate action names and never reach the database); column names
+/// belong to the schema layer, which handles its own escaping.
+fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
+    let mut push = |scope: String, name: &str, problem: String| {
+        violations.push(Violation::InvalidName {
+            scope,
+            name: name.to_owned(),
+            problem,
+        });
+    };
+    let scope = |suffix: &str| format!("resource {}{suffix}", resource.name);
+
+    if !is_wire_ident(&resource.name, true) {
+        push(
+            scope(""),
+            &resource.name,
+            "must be lowercase snake or kebab case".into(),
+        );
+    }
+
+    for exposure in &resource.fields {
+        if let Some(rename) = &exposure.rename {
+            if !is_wire_ident(rename, false) {
+                push(
+                    scope(""),
+                    rename,
+                    "rename must be lowercase snake case".into(),
+                );
+            }
+            if crate::reserved::is_reserved(rename) {
+                push(
+                    scope(""),
+                    rename,
+                    "rename collides with a SurrealDB v3 reserved name".into(),
+                );
+            }
+        }
+    }
+
+    let graphql_overrides = resource.graphql.as_ref().map_or(Vec::new(), |g| {
+        [
+            ("graphql.type_name", g.type_name.as_deref()),
+            ("graphql.list_field", g.list_field.as_deref()),
+            ("graphql.get_field", g.get_field.as_deref()),
+        ]
+        .into_iter()
+        .filter_map(|(label, name)| name.map(|n| (label, n)))
+        .collect()
+    });
+    for (label, name) in graphql_overrides {
+        if !is_graphql_name(name) {
+            push(
+                scope(&format!(" {label}")),
+                name,
+                "is not a valid GraphQL name".into(),
+            );
+        }
+        if name.starts_with("__") {
+            push(
+                scope(&format!(" {label}")),
+                name,
+                "GraphQL reserves the __ prefix for introspection".into(),
+            );
+        }
+        if matches!(name, "Query" | "Mutation" | "Subscription") {
+            push(
+                scope(&format!(" {label}")),
+                name,
+                "collides with a GraphQL root type name".into(),
+            );
+        }
+        if crate::reserved::is_reserved(name) {
+            push(
+                scope(&format!(" {label}")),
+                name,
+                "collides with a SurrealDB v3 reserved name".into(),
+            );
+        }
+    }
+
+    for action in &resource.actions {
+        let action_scope = || scope(&format!(" action {}", action.name));
+        if !action.name.is_empty() && !is_wire_ident(&action.name, false) {
+            push(
+                action_scope(),
+                &action.name,
+                "must be lowercase snake case".into(),
+            );
+        }
+        if let Some(field) = &action.graphql_field {
+            if !is_graphql_name(field) || field.starts_with("__") {
+                push(
+                    action_scope(),
+                    field,
+                    "graphql_field is not a valid GraphQL name".into(),
+                );
+            }
+            if crate::reserved::is_reserved(field) {
+                push(
+                    action_scope(),
+                    field,
+                    "graphql_field collides with a SurrealDB v3 reserved name".into(),
+                );
+            }
+        }
+        for input in &action.input {
+            if !input.name.is_empty() && !is_wire_ident(&input.name, false) {
+                push(
+                    action_scope(),
+                    &input.name,
+                    "input name must be lowercase snake case".into(),
+                );
+            }
+        }
+    }
 }
 
 fn validate_resource(

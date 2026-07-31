@@ -58,6 +58,27 @@ pub struct Resource {
     /// contract only describes its wire shape.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// GraphQL-scoped name overrides. REST paths and generated clients
+    /// never see these; they exist because GraphQL names are part of a
+    /// deployed schema's identity (fragments name types, queries name
+    /// fields) and sometimes must differ from the derived defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql: Option<GraphqlNames>,
+}
+
+/// GraphQL-side name overrides for one resource. Every member is
+/// optional; absent members fall back to the derived names.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GraphqlNames {
+    /// Object type name (default: PascalCase singular of the resource).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    /// Query field returning a page (default: camelCase resource name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_field: Option<String>,
+    /// Query field returning one instance (default: camelCase singular).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub get_field: Option<String>,
 }
 
 /// One verb on a resource.
@@ -81,12 +102,57 @@ pub struct Action {
     pub output: ActionOutput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// GraphQL mutation field name override (default: camelCase
+    /// singular resource + PascalCase action, e.g. `fileIssueUrl`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql_field: Option<String>,
 }
 
 impl Action {
     /// Whether this action targets one instance (path carries `{id}`).
     pub fn takes_id(&self) -> bool {
         self.path.contains("{id}")
+    }
+
+    /// The GraphQL mutation field name: the override, or camelCase
+    /// singular resource + PascalCase action (`fileIssueUrl`).
+    pub fn graphql_field_name(&self, resource: &Resource) -> String {
+        self.graphql_field.clone().unwrap_or_else(|| {
+            format!(
+                "{}{}",
+                crate::naming::camel(crate::naming::singular(&resource.name)),
+                crate::naming::pascal(&self.name),
+            )
+        })
+    }
+}
+
+impl Resource {
+    /// The GraphQL object type name: the override, or PascalCase
+    /// singular of the resource name (`files` -> `File`).
+    pub fn graphql_type_name(&self) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.type_name.clone())
+            .unwrap_or_else(|| crate::naming::type_name(&self.name))
+    }
+
+    /// The Query field returning a page: the override, or camelCase
+    /// resource name (`files`).
+    pub fn graphql_list_field(&self) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.list_field.clone())
+            .unwrap_or_else(|| crate::naming::camel(&self.name))
+    }
+
+    /// The Query field returning one instance: the override, or
+    /// camelCase singular (`file`).
+    pub fn graphql_get_field(&self) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.get_field.clone())
+            .unwrap_or_else(|| crate::naming::camel(crate::naming::singular(&self.name)))
     }
 }
 
@@ -195,7 +261,9 @@ mod tests {
                     }],
                     output: ActionOutput::Json,
                     description: Some("Issue a signed URL.".into()),
+                    graphql_field: None,
                 }],
+                graphql: None,
             }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();

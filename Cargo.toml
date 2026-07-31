@@ -15,7 +15,16 @@ name = "janus"
 name = "janus"
 path = "src/bin/janus.rs"
 
+[features]
+default = []
+# The contract, executed: resolver registry, middleware chain,
+# contract-enforcing dispatcher. No heavy dependencies.
+runtime = []
+# The live GraphQL face over the runtime (async-graphql dynamic schema).
+graphql = ["runtime", "dep:async-graphql"]
+
 [dependencies]
+async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] }
 oneiriq-surql = { version = "0.31", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,6 +32,7 @@ thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [patch.crates-io]
 oneiriq-surql = { git = "https://github.com/Oneiriq/surql-rs", branch = "feat/copal-janus" }

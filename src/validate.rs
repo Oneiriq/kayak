@@ -8,9 +8,13 @@
 //! production.
 //!
 //! Rules:
+//! - pinned column: must exist on the table (it is server-bound, so no
+//!   index requirement of its own).
 //! - filterable column: must appear in at least one index on the table.
-//! - sortable column: must be the leading column of at least one index —
-//!   an index only serves an ORDER BY from its prefix.
+//! - sortable column: some index must contain it at a position where
+//!   every EARLIER column is pinned or filterable — an index serves an
+//!   ORDER BY only from a prefix whose head is equality-bound. A bare
+//!   leading column is the degenerate case.
 
 use surql::schema::TableDefinition;
 
@@ -47,8 +51,9 @@ pub enum Violation {
     },
 
     #[error(
-        "resource {resource}: sortable column {column} is not the leading column \
-         of any index on {table} — an index serves ORDER BY only from its prefix"
+        "resource {resource}: sortable column {column} is not reachable as an \
+         index sort suffix on {table} — some index must hold it with every \
+         earlier column pinned or filterable, or ORDER BY falls off the index"
     )]
     UnindexedSort {
         resource: String,
@@ -123,16 +128,31 @@ fn validate_resource(
         }
     }
 
+    for column in &resource.pinned {
+        if !column_exists(column) {
+            push_unknown(column, violations);
+        }
+    }
+
+    // A column earlier in an index than the sort column must be
+    // equality-boundable, or the index cannot serve the ORDER BY.
+    let boundable = |column: &str| {
+        resource.pinned.iter().any(|c| c == column)
+            || resource.filterable.iter().any(|c| c == column)
+    };
     for column in &resource.sortable {
         if !column_exists(column) {
             push_unknown(column, violations);
             continue;
         }
-        let leads = table
-            .indexes
-            .iter()
-            .any(|index| index.columns.first().map(String::as_str) == Some(column.as_str()));
-        if !leads {
+        let reachable = table.indexes.iter().any(|index| {
+            index
+                .columns
+                .iter()
+                .position(|c| c == column)
+                .is_some_and(|k| index.columns[..k].iter().all(|earlier| boundable(earlier)))
+        });
+        if !reachable {
             violations.push(Violation::UnindexedSort {
                 resource: resource.name.clone(),
                 table: resource.table.clone(),

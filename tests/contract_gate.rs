@@ -23,8 +23,10 @@ fn file_table() -> TableDefinition {
         ])
         .with_indexes([
             unique_index("uniq_live_path", ["tenant_id", "path", "live_marker"]),
+            // The REAL copal shape: created_at leads no index. The sort
+            // is reachable only through this prefix, which is exactly
+            // what the prefix rule exists to credit.
             index("idx_listing", ["tenant_id", "state", "created_at"]),
-            index("idx_created", ["created_at"]),
         ])
 }
 
@@ -40,6 +42,7 @@ fn files_resource() -> Resource {
             FieldExposure::column("digest"),
             FieldExposure::column("created_at"),
         ],
+        pinned: vec!["tenant_id".into()],
         filterable: vec!["state".into()],
         sortable: vec!["created_at".into()],
         max_page_size: 100,
@@ -88,13 +91,41 @@ fn unindexed_sort_fails_generation_by_name() {
 }
 
 #[test]
-fn non_leading_index_membership_filters_but_does_not_sort() {
+fn prefix_rule_credits_pinned_and_filterable_columns() {
+    // `state` sits behind only the pinned tenant_id: sortable.
     let mut resource = files_resource();
-    // `state` is in idx_listing but not its leading column: filterable
-    // yes, sortable no.
     resource.sortable.push("state".into());
+    assert_eq!(validate(&contract(vec![resource]), &[file_table()]), vec![]);
+
+    // But drop `state` from filterable and created_at (behind
+    // tenant_id, state) loses its path to the index: refused.
+    let mut resource = files_resource();
+    resource.filterable.clear();
     let violations = validate(&contract(vec![resource]), &[file_table()]);
-    assert!(matches!(&violations[0], Violation::UnindexedSort { column, .. } if column == "state"));
+    assert!(matches!(
+        &violations[0],
+        Violation::UnindexedSort { column, .. } if column == "created_at"
+    ));
+
+    // And without the pin nothing behind tenant_id is reachable.
+    let mut resource = files_resource();
+    resource.pinned.clear();
+    let violations = validate(&contract(vec![resource]), &[file_table()]);
+    assert!(matches!(
+        &violations[0],
+        Violation::UnindexedSort { column, .. } if column == "created_at"
+    ));
+}
+
+#[test]
+fn pinned_columns_must_exist() {
+    let mut resource = files_resource();
+    resource.pinned.push("no_such_pin".into());
+    let violations = validate(&contract(vec![resource]), &[file_table()]);
+    assert!(matches!(
+        &violations[0],
+        Violation::UnknownColumn { column, .. } if column == "no_such_pin"
+    ));
 }
 
 #[test]
@@ -107,6 +138,7 @@ fn unknown_names_and_collisions_are_each_reported() {
             FieldExposure::renamed("path", "state"),
             FieldExposure::column("state"),
         ],
+        pinned: vec![],
         filterable: vec!["also_missing".into()],
         sortable: vec![],
         max_page_size: 10,

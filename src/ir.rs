@@ -36,6 +36,14 @@ pub struct Resource {
     pub table: String,
     /// Projected fields. Nothing is exposed that is not listed.
     pub fields: Vec<FieldExposure>,
+    /// Columns the SERVER always equality-binds before any caller input
+    /// — tenant scoping, soft-delete filters. Never exposed as API
+    /// parameters; they exist so index-prefix validation can credit
+    /// them: an index `(tenant_id, state, created_at)` serves a
+    /// `created_at` sort because `tenant_id` is pinned and `state` is
+    /// filterable.
+    #[serde(default)]
+    pub pinned: Vec<String>,
     /// Columns callers may filter on. Validated against indexes.
     #[serde(default)]
     pub filterable: Vec<String>,
@@ -101,6 +109,7 @@ mod tests {
                     FieldExposure::column("path"),
                     FieldExposure::renamed("size_bytes", "size"),
                 ],
+                pinned: vec!["tenant_id".into()],
                 filterable: vec!["state".into()],
                 sortable: vec!["created_at".into()],
                 max_page_size: 100,

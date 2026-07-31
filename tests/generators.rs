@@ -151,6 +151,13 @@ fn openapi_carries_action_paths() {
             ["type"],
         "integer",
     );
+    let list = &doc["paths"]["/v1/files"]["get"];
+    assert_eq!(
+        list["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/FilePage",
+        "list responses are the page envelope, matching the SDL and clients",
+    );
+    assert!(doc["components"]["schemas"]["FilePage"]["properties"]["next_cursor"].is_object());
     let remove = &doc["paths"]["/v1/files/{id}"]["delete"];
     assert_eq!(remove["responses"]["204"]["description"], "No content.");
     // The plain get on the same path coexists with the delete action.

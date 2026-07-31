@@ -54,6 +54,7 @@ pub fn generate_openapi(
             .expect("validated: table exists");
         let schema_name = component_name(&resource.name);
         schemas.insert(schema_name.clone(), resource_schema(resource, table));
+        schemas.insert(format!("{schema_name}Page"), page_schema(&schema_name));
         paths.insert(
             format!("/v1/{}", resource.name),
             list_path(resource, &schema_name),
@@ -170,17 +171,44 @@ fn field_schema(field: &FieldDefinition) -> Value {
     wrapped
 }
 
-fn list_path(resource: &Resource, schema_name: &str) -> Value {
-    let mut parameters = vec![json!({
-        "name": "limit",
-        "in": "query",
-        "schema": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": resource.max_page_size,
-            "default": resource.max_page_size,
+/// The page envelope every list endpoint actually returns — the same
+/// shape the SDL's `{Type}Page` and every generated client use.
+fn page_schema(schema_name: &str) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {"$ref": format!("#/components/schemas/{schema_name}")},
+            },
+            "next_cursor": {
+                "type": ["string", "null"],
+                "description": "Opaque keyset cursor for the next page; null when drained.",
+            },
         },
-    })];
+        "required": ["items", "next_cursor"],
+    })
+}
+
+fn list_path(resource: &Resource, schema_name: &str) -> Value {
+    let mut parameters = vec![
+        json!({
+            "name": "limit",
+            "in": "query",
+            "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": resource.max_page_size,
+                "default": resource.max_page_size,
+            },
+        }),
+        json!({
+            "name": "cursor",
+            "in": "query",
+            "schema": {"type": "string"},
+            "description": "Opaque cursor from a previous page's next_cursor.",
+        }),
+    ];
     for column in &resource.filterable {
         parameters.push(json!({
             "name": column,
@@ -205,8 +233,7 @@ fn list_path(resource: &Resource, schema_name: &str) -> Value {
                 "200": {
                     "description": "Page of resources.",
                     "content": {"application/json": {"schema": {
-                        "type": "array",
-                        "items": {"$ref": format!("#/components/schemas/{schema_name}")},
+                        "$ref": format!("#/components/schemas/{schema_name}Page"),
                     }}},
                 },
             },

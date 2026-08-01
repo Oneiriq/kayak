@@ -25,6 +25,18 @@ pub enum JanusError {
     #[error("{0}")]
     Conflict(String),
 
+    /// The request body exceeds a declared ceiling. Distinct from
+    /// [`JanusError::BadRequest`] because a client retries an
+    /// oversized payload differently from a malformed one: it shrinks
+    /// the body instead of fixing it.
+    #[error("{0}")]
+    PayloadTooLarge(String),
+
+    /// The caller exceeded its consumption ceiling. Retryable after
+    /// waiting, which no other refusal in this vocabulary is.
+    #[error("{0}")]
+    TooManyRequests(String),
+
     /// The service itself failed.
     #[error("{0}")]
     Internal(String),
@@ -39,6 +51,8 @@ impl JanusError {
             Self::Forbidden(_) => 403,
             Self::NotFound => 404,
             Self::Conflict(_) => 409,
+            Self::PayloadTooLarge(_) => 413,
+            Self::TooManyRequests(_) => 429,
             Self::Internal(_) => 500,
         }
     }
@@ -52,6 +66,8 @@ impl JanusError {
             Self::Forbidden(_) => "forbidden",
             Self::NotFound => "not_found",
             Self::Conflict(_) => "conflict",
+            Self::PayloadTooLarge(_) => "payload_too_large",
+            Self::TooManyRequests(_) => "too_many_requests",
             Self::Internal(_) => "internal",
         }
     }

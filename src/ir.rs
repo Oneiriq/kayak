@@ -19,8 +19,29 @@ pub struct Contract {
     /// IR schema revision, for forward-compatible tooling.
     #[serde(default = "default_ir_revision")]
     pub ir_revision: u32,
+    /// Request-cost ceilings, declared here so they appear in the
+    /// artifacts and the differ tracks them. A ceiling hand-wired at
+    /// the protocol layer is policy the contract does not know about:
+    /// invisible in review, silent when it tightens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ContractLimits>,
     /// Exposed resources.
     pub resources: Vec<Resource>,
+}
+
+/// Ceilings on what one operation may cost. The served GraphQL schema
+/// enforces both before any resolver runs; REST operations have fixed
+/// shape and depth, so the ceilings exist for the face where cost is
+/// caller-controlled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractLimits {
+    /// Maximum selection depth of one GraphQL operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+    /// Maximum field-selection count of one GraphQL operation, which
+    /// is what alias amplification multiplies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_complexity: Option<u32>,
 }
 
 fn default_ir_revision() -> u32 {
@@ -357,6 +378,7 @@ mod tests {
             name: "copal".into(),
             version: "1.0.0".into(),
             ir_revision: 1,
+            limits: None,
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),

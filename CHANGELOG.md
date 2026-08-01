@@ -11,6 +11,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Consumption refusals in the error vocabulary.** `PayloadTooLarge` (413)
+  and `TooManyRequests` (429), so a protocol face no longer downgrades an
+  oversized body to a generic bad request and a metered refusal has a status a
+  client can wait on.
+- **Contract-declared limits.** Depth and complexity ceilings live in the
+  contract, where the served GraphQL schema applies them before any resolver
+  runs, the OpenAPI document carries them as `x-limits`, and the differ treats
+  introducing or lowering one as a named breaking change.
 - **Sub-resources.** A collection belonging to one parent instance (a file's
   versions, an endpoint's deliveries) is declared on the parent and reaches
   every face from that one declaration: `GET /v1/files/{id}/versions`, a field

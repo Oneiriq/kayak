@@ -36,6 +36,7 @@ fn contract() -> Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        limits: None,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -342,4 +343,50 @@ fn differ_classifies_changes() {
     assert!(changes.iter().any(|c| c.is_breaking()));
     let changes = diff(&empty, &old);
     assert!(changes.iter().all(|c| !c.is_breaking()));
+}
+
+#[test]
+fn limits_are_visible_and_their_tightening_is_breaking() {
+    let open = contract();
+    let mut capped = contract();
+    capped.limits = Some(janus::ContractLimits {
+        max_depth: Some(10),
+        max_complexity: Some(500),
+    });
+
+    // The document carries what the served schema will enforce.
+    let doc = janus::generate_openapi(&capped, &[file_table()]).unwrap();
+    assert_eq!(doc["x-limits"]["max_depth"], 10);
+    assert_eq!(doc["x-limits"]["max_complexity"], 500);
+    let bare = janus::generate_openapi(&open, &[file_table()]).unwrap();
+    assert!(bare.get("x-limits").is_none(), "no ceilings, no extension");
+
+    // Introducing a ceiling refuses operations that used to run.
+    let changes = diff(&open, &capped);
+    assert!(
+        changes
+            .iter()
+            .filter(|c| c.is_breaking())
+            .any(|c| c.message().contains("max_depth introduced at 10")),
+        "{changes:?}",
+    );
+
+    // Lowering is breaking; raising is compatible; removing is
+    // compatible.
+    let mut lowered = capped.clone();
+    lowered.limits = Some(janus::ContractLimits {
+        max_depth: Some(8),
+        max_complexity: Some(500),
+    });
+    let changes = diff(&capped, &lowered);
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.is_breaking() && c.message().contains("max_depth lowered 10 -> 8")),
+        "{changes:?}",
+    );
+    let changes = diff(&lowered, &capped);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+    let changes = diff(&capped, &open);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
 }

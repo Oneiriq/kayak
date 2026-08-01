@@ -90,7 +90,7 @@ pub fn generate_openapi(
         }
     }
 
-    Ok(canonical(json!({
+    let mut document = json!({
         "openapi": "3.1.0",
         "info": {
             "title": contract.name,
@@ -98,7 +98,20 @@ pub fn generate_openapi(
         },
         "paths": Value::Object(paths),
         "components": { "schemas": Value::Object(schemas) },
-    })))
+    });
+    // Declared ceilings ride the document as a root extension, so
+    // policy that refuses requests is visible where the API is read.
+    if let Some(limits) = &contract.limits {
+        let mut rendered = Map::new();
+        if let Some(depth) = limits.max_depth {
+            rendered.insert("max_depth".into(), json!(depth));
+        }
+        if let Some(complexity) = limits.max_complexity {
+            rendered.insert("max_complexity".into(), json!(complexity));
+        }
+        document["x-limits"] = Value::Object(rendered);
+    }
+    Ok(canonical(document))
 }
 
 /// Rebuild every object with keys in sorted order, so the emitted

@@ -64,6 +64,11 @@ pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
             old_limits.max_complexity,
             new_limits.max_complexity,
         ),
+        (
+            "max_watches_per_principal",
+            old_limits.max_watches_per_principal,
+            new_limits.max_watches_per_principal,
+        ),
     ] {
         match (before, after) {
             (None, Some(introduced)) => changes.push(Change::Breaking(format!(

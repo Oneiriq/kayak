@@ -758,6 +758,7 @@ async fn declared_limits_bound_what_the_served_schema_accepts() {
     capped.limits = Some(janus::ContractLimits {
         max_depth: Some(2),
         max_complexity: None,
+        max_watches_per_principal: None,
     });
     let shallow = fixture(capped);
     let response = shallow.schema.execute(tenant_request(query)).await;
@@ -772,6 +773,7 @@ async fn declared_limits_bound_what_the_served_schema_accepts() {
     narrow.limits = Some(janus::ContractLimits {
         max_depth: None,
         max_complexity: Some(3),
+        max_watches_per_principal: None,
     });
     let thin = fixture(narrow);
     let response = thin.schema.execute(tenant_request(query)).await;
@@ -1448,4 +1450,66 @@ fn a_hand_written_face_computes_the_same_hidden_set() {
     assert_eq!(sub[0].api_name, "digest");
     let allowed = JanusContext::new().with(Principal::new("k2", ["audit".to_owned()]));
     assert!(janus::runtime::hidden_fields(&contract, "files", None, &guards, &allowed).is_empty());
+}
+
+#[tokio::test]
+async fn the_watch_ceiling_holds_and_slots_free_on_drop() {
+    let mut contract = contract_with_versions();
+    contract.resources[0].watchable = true;
+    contract.limits = Some(janus::ContractLimits {
+        max_depth: None,
+        max_complexity: None,
+        max_watches_per_principal: Some(1),
+    });
+    let fixture = fixture(contract);
+    let query = r#"subscription { fileChanged { id } }"#;
+
+    // The first subscription holds the caller's only slot. The stream
+    // stays OPEN by holding the response stream unpolled to
+    // completion: polling one item keeps the slot alive.
+    let mut first = fixture.schema.execute_stream(scoped_request(query, &[]));
+    let opening = first.next().await.expect("the stream yields");
+    assert!(opening.errors.is_empty(), "{:?}", opening.errors);
+
+    // A second open by the SAME caller refuses with the retryable
+    // code; a different principal has its own slots.
+    let refused: Vec<_> = fixture
+        .schema
+        .execute_stream(scoped_request(query, &[]))
+        .collect()
+        .await;
+    let error = &refused[0].errors[0];
+    assert!(error.message.contains("watch ceiling"), "{error:?}");
+    let code = error
+        .extensions
+        .as_ref()
+        .and_then(|x| x.get("code"))
+        .map(|v| format!("{v}"));
+    assert_eq!(code.as_deref(), Some("\"too_many_requests\""));
+
+    let other = async_graphql::Request::new(query).data(
+        JanusContext::new()
+            .with(Tenant("acme".into()))
+            .with(Principal::new("key-two", std::iter::empty())),
+    );
+    let opened: Vec<_> = fixture.schema.execute_stream(other).collect().await;
+    assert!(
+        opened.iter().all(|r| r.errors.is_empty()),
+        "{:?}",
+        opened.iter().map(|r| &r.errors).collect::<Vec<_>>(),
+    );
+
+    // Dropping the held stream frees the slot; the same caller opens
+    // again.
+    drop(first);
+    let reopened: Vec<_> = fixture
+        .schema
+        .execute_stream(scoped_request(query, &[]))
+        .collect()
+        .await;
+    assert!(
+        reopened.iter().all(|r| r.errors.is_empty()),
+        "{:?}",
+        reopened.iter().map(|r| &r.errors).collect::<Vec<_>>(),
+    );
 }

@@ -11,6 +11,12 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Per-principal watch ceilings.** `limits.max_watches_per_principal` caps
+  concurrently open subscriptions per caller; the slot is taken before the
+  resolver runs, so a refused open never starts a live query, and it rides
+  the stream so dropping the subscription frees it. Over the ceiling is
+  `too_many_requests`: closing a subscription is what frees a slot. Carried
+  in `x-limits`; introducing or lowering the ceiling diffs as breaking.
 - **The projection API for hand-written faces.** `hidden_fields`,
   `hidden_in`, and `strip_hidden` expose the dispatcher's own guard
   computation, so a service's hand-written REST handlers redact from the

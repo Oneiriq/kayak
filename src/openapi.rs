@@ -109,6 +109,9 @@ pub fn generate_openapi(
         if let Some(complexity) = limits.max_complexity {
             rendered.insert("max_complexity".into(), json!(complexity));
         }
+        if let Some(watches) = limits.max_watches_per_principal {
+            rendered.insert("max_watches_per_principal".into(), json!(watches));
+        }
         document["x-limits"] = Value::Object(rendered);
     }
     Ok(canonical(document))

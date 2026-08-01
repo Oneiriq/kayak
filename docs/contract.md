@@ -184,7 +184,10 @@ compatible.
 
 ## Watching
 
-`watchable: true` opens the resource to subscribers. It adds a GraphQL
+`watchable: true` opens the resource to subscribers.
+`limits.max_watches_per_principal` caps how many subscriptions one
+caller may hold open at once; over the ceiling refuses with the
+retryable code, and closing a subscription frees the slot. It adds a GraphQL
 Subscription field and requires the service to register a watch resolver;
 nothing about REST changes, because Janus generates no long-lived HTTP
 operations.

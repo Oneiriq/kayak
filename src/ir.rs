@@ -58,6 +58,12 @@ pub struct ContractLimits {
     /// is what alias amplification multiplies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_complexity: Option<u32>,
+    /// Maximum concurrently open subscriptions per principal. A
+    /// subscription holds server resources for as long as the client
+    /// stays; without a ceiling, one caller can hold every live query
+    /// the deployment will ever serve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_watches_per_principal: Option<u32>,
 }
 
 fn default_ir_revision() -> u32 {

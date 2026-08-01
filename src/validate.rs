@@ -172,6 +172,7 @@ fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
             ("graphql.type_name", g.type_name.as_deref()),
             ("graphql.list_field", g.list_field.as_deref()),
             ("graphql.get_field", g.get_field.as_deref()),
+            ("graphql.watch_field", g.watch_field.as_deref()),
         ]
         .into_iter()
         .filter_map(|(label, name)| name.map(|n| (label, n)))

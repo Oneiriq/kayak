@@ -47,6 +47,7 @@ fn files_resource() -> Resource {
         sortable: vec!["created_at".into()],
         max_page_size: 100,
         graphql: None,
+        watchable: false,
         actions: vec![],
     }
 }
@@ -145,6 +146,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         sortable: vec![],
         max_page_size: 10,
         graphql: None,
+        watchable: false,
         actions: vec![],
     };
     let violations = validate(&contract(vec![resource]), &[file_table()]);
@@ -229,6 +231,7 @@ fn chosen_names_are_gated_against_surrealdb_reserved_words() {
         type_name: Some("Query".into()),
         list_field: Some("__files".into()),
         get_field: Some("select".into()),
+        watch_field: None,
     });
     let violations = validate(&contract(vec![resource]), &[file_table()]);
     let text = violations

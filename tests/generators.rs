@@ -53,6 +53,7 @@ fn contract() -> Contract {
             sortable: vec!["created_at".into()],
             max_page_size: 100,
             graphql: None,
+            watchable: false,
             actions: vec![
                 Action {
                     name: "issue_url".into(),
@@ -281,6 +282,44 @@ fn differ_classifies_changes() {
     assert!(joined.contains("action issue_url moved"), "{joined}");
     assert!(joined.contains("gained required input reason"), "{joined}");
     assert!(joined.contains("max_page_size lowered"), "{joined}");
+
+    // Opening a subscription is additive; closing one strands every
+    // deployed subscriber, and so does renaming its field.
+    let mut opened = contract();
+    opened.resources[0].watchable = true;
+    let changes = diff(&old, &opened);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.message().contains("became watchable")),
+        "{changes:?}",
+    );
+
+    let mut closed = contract();
+    closed.resources[0].watchable = true;
+    let changes = diff(&opened, &closed);
+    assert!(changes.is_empty(), "{changes:?}");
+    let changes = diff(&opened, &old);
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.is_breaking() && c.message().contains("no longer watchable")),
+        "{changes:?}",
+    );
+
+    let mut renamed_watch = opened.clone();
+    renamed_watch.resources[0].graphql = Some(janus::GraphqlNames {
+        watch_field: Some("fileTouched".into()),
+        ..Default::default()
+    });
+    let changes = diff(&opened, &renamed_watch);
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("graphql watch field renamed fileChanged -> fileTouched")),
+        "{changes:?}",
+    );
 
     // Same wire name over a different column is breaking.
     let mut retargeted = contract();

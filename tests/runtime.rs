@@ -6,10 +6,11 @@
 
 use std::sync::{Arc, Mutex};
 
+use async_graphql::futures_util::{stream, StreamExt as _};
 use janus::runtime::graphql::build_schema;
 use janus::runtime::{
     Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, Middleware, Next, Operation,
-    Outcome, Payload, Resolvers, SortDirection,
+    Outcome, Payload, Resolvers, RowStream, SortDirection, WatchArgs,
 };
 use janus::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource, TypeRef,
@@ -51,6 +52,7 @@ fn contract() -> Contract {
             sortable: vec!["created_at".into()],
             max_page_size: 100,
             graphql: None,
+            watchable: false,
             actions: vec![
                 Action {
                     name: "issue_url".into(),
@@ -147,15 +149,18 @@ impl Middleware for Recorder {
 struct Fixture {
     schema: async_graphql::dynamic::Schema,
     seen_list_args: Arc<Mutex<Option<ListArgs>>>,
+    seen_watch_args: Arc<Mutex<Option<WatchArgs>>>,
     recorded: Arc<Mutex<Vec<String>>>,
 }
 
 fn fixture(contract: Contract) -> Fixture {
     let seen_list_args = Arc::new(Mutex::new(None));
+    let seen_watch_args = Arc::new(Mutex::new(None));
     let recorded = Arc::new(Mutex::new(Vec::new()));
+    let watchable = contract.resources[0].watchable;
 
     let capture = seen_list_args.clone();
-    let resolvers = Resolvers::new()
+    let mut resolvers = Resolvers::new()
         .list("files", move |_ctx, args: ListArgs| {
             let capture = capture.clone();
             async move {
@@ -193,6 +198,27 @@ fn fixture(contract: Contract) -> Fixture {
             Ok(None)
         });
 
+    // Registered only when the contract declares it, which is the rule
+    // the dispatcher enforces in both directions.
+    if watchable {
+        let capture = seen_watch_args.clone();
+        resolvers = resolvers.watch("files", move |_ctx, args: WatchArgs| {
+            let capture = capture.clone();
+            async move {
+                *capture.lock().unwrap() = Some(args.clone());
+                let matched: Vec<_> = rows()
+                    .into_iter()
+                    .filter(|row| match args.filters.get("state") {
+                        Some(state) => row["state"] == *state,
+                        None => true,
+                    })
+                    .map(Ok)
+                    .collect();
+                Ok(Box::pin(stream::iter(matched)) as RowStream)
+            }
+        });
+    }
+
     let dispatcher = Dispatcher::new(
         Arc::new(contract),
         resolvers,
@@ -206,8 +232,16 @@ fn fixture(contract: Contract) -> Fixture {
     Fixture {
         schema,
         seen_list_args,
+        seen_watch_args,
         recorded,
     }
+}
+
+/// The same contract with the resource opened for watching.
+fn watched_contract() -> Contract {
+    let mut contract = contract();
+    contract.resources[0].watchable = true;
+    contract
 }
 
 fn tenant_request(query: &str) -> async_graphql::Request {
@@ -325,6 +359,7 @@ async fn graphql_name_overrides_are_served_and_breaking_to_change() {
         type_name: Some("StoredFile".into()),
         list_field: Some("storedFiles".into()),
         get_field: Some("storedFile".into()),
+        watch_field: None,
     });
     renamed.resources[0].actions[0].graphql_field = Some("mintUrl".into());
 
@@ -400,4 +435,100 @@ async fn dynamic_schema_agrees_with_generated_sdl() {
 async fn incomplete_resolvers_refuse_to_build() {
     let error = Dispatcher::new(Arc::new(contract()), Resolvers::new(), vec![]).unwrap_err();
     assert!(error.to_string().contains("no list resolver"), "{error}");
+}
+
+#[tokio::test]
+async fn subscriptions_stream_rows_narrowed_by_the_list_filters() {
+    let fixture = fixture(watched_contract());
+    let responses: Vec<_> = fixture
+        .schema
+        .execute_stream(tenant_request(
+            r#"subscription { fileChanged(state: "ready") { id path state } }"#,
+        ))
+        .collect()
+        .await;
+
+    assert_eq!(responses.len(), 1, "one row matches the filter");
+    assert!(responses[0].errors.is_empty(), "{:?}", responses[0].errors);
+    let data = responses[0].data.clone().into_json().unwrap();
+    assert_eq!(data["fileChanged"]["id"], "01A");
+    assert_eq!(data["fileChanged"]["path"], "a.txt");
+
+    // The filter reached the resolver under its COLUMN name.
+    let seen = fixture.seen_watch_args.lock().unwrap().clone().unwrap();
+    assert_eq!(seen.filters["state"], "ready");
+
+    // The chain ran ONCE, at open. Two rows would have recorded twice.
+    let recorded = fixture.recorded.lock().unwrap().clone();
+    assert_eq!(recorded, vec!["enter:files:Watch", "exit:files:Watch"]);
+}
+
+#[tokio::test]
+async fn subscriptions_are_authorized_before_any_row_flows() {
+    let fixture = fixture(watched_contract());
+    let responses: Vec<_> = fixture
+        .schema
+        .execute_stream(r#"subscription { fileChanged { id } }"#)
+        .collect()
+        .await;
+
+    assert_eq!(responses.len(), 1, "the refusal is the only payload");
+    let error = &responses[0].errors[0];
+    assert!(error.message.contains("tenant required"), "{error:?}");
+    assert!(
+        responses[0].data.clone().into_json().unwrap().is_null(),
+        "no row accompanies the refusal",
+    );
+    assert!(fixture.seen_watch_args.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn watching_is_declared_and_registered_together_or_not_at_all() {
+    // Declared, unregistered: the resource would answer nothing.
+    let declared_only = Resolvers::new()
+        .list("files", |_ctx, _args| async { Ok(ListOutput::default()) })
+        .get("files", |_ctx, _args| async { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) });
+    let error = Dispatcher::new(Arc::new(watched_contract()), declared_only, vec![]).unwrap_err();
+    assert!(error.to_string().contains("no watch resolver"), "{error}");
+
+    // Registered, undeclared: a resolver nothing can ever call.
+    let registered_only = Resolvers::new()
+        .list("files", |_ctx, _args| async { Ok(ListOutput::default()) })
+        .get("files", |_ctx, _args| async { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) })
+        .watch("files", |_ctx, _args| async {
+            Ok(Box::pin(stream::empty()) as RowStream)
+        });
+    let error = Dispatcher::new(Arc::new(contract()), registered_only, vec![]).unwrap_err();
+    assert!(
+        error.to_string().contains("does not mark it watchable"),
+        "{error}",
+    );
+}
+
+#[tokio::test]
+async fn the_subscription_root_appears_only_for_watchable_resources() {
+    let quiet = fixture(contract());
+    assert!(
+        !quiet.schema.sdl().contains("type Subscription"),
+        "an unwatchable contract has no Subscription root",
+    );
+
+    let live = fixture(watched_contract());
+    let served = live.schema.sdl();
+    assert!(served.contains("type Subscription"), "{served}");
+    assert!(
+        served.contains("fileChanged(state: String): File!"),
+        "{served}"
+    );
+
+    // And the checked-in artifact prints the same root.
+    let generated = janus::generate_sdl(&watched_contract(), &[file_table()]).unwrap();
+    assert!(
+        generated.contains("  fileChanged(state: String): File!"),
+        "{generated}",
+    );
 }

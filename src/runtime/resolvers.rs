@@ -10,12 +10,20 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput};
+use futures_core::Stream;
+
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 
 /// The boxed future every resolver and middleware returns.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// What a watch resolver returns: rows in the same wire shape list and
+/// get produce, arriving until the subscriber drops the stream. An
+/// `Err` item ends the subscription with that error; a resolver that
+/// loses its source should yield one rather than closing silently.
+pub type RowStream = Pin<Box<dyn Stream<Item = Result<serde_json::Value, JanusError>> + Send>>;
 
 pub(crate) type ListResolver = Arc<
     dyn Fn(JanusContext, ListArgs) -> BoxFuture<'static, Result<ListOutput, JanusError>>
@@ -39,12 +47,19 @@ pub(crate) type ActionResolver = Arc<
         + Sync,
 >;
 
+pub(crate) type WatchResolver = Arc<
+    dyn Fn(JanusContext, WatchArgs) -> BoxFuture<'static, Result<RowStream, JanusError>>
+        + Send
+        + Sync,
+>;
+
 /// Registered resolvers, keyed by resource (and action) name.
 #[derive(Default, Clone)]
 pub struct Resolvers {
     pub(crate) list: BTreeMap<String, ListResolver>,
     pub(crate) get: BTreeMap<String, GetResolver>,
     pub(crate) action: BTreeMap<(String, String), ActionResolver>,
+    pub(crate) watch: BTreeMap<String, WatchResolver>,
 }
 
 impl Resolvers {
@@ -96,6 +111,27 @@ impl Resolvers {
         );
         self
     }
+
+    /// Register the watch resolver for `resource`, required of every
+    /// resource the contract marks watchable.
+    ///
+    /// The closure is awaited once, when a subscription opens, and the
+    /// stream it returns runs until the subscriber drops it. The
+    /// middleware chain runs around that opening call only: a
+    /// subscription is authorized when it starts, so a resolver whose
+    /// stream must stop on a revoked credential has to enforce that
+    /// itself, per row.
+    pub fn watch<F, Fut>(mut self, resource: &str, f: F) -> Self
+    where
+        F: Fn(JanusContext, WatchArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<RowStream, JanusError>> + Send + 'static,
+    {
+        self.watch.insert(
+            resource.to_owned(),
+            Arc::new(move |ctx, args| Box::pin(f(ctx, args))),
+        );
+        self
+    }
 }
 
 impl std::fmt::Debug for Resolvers {
@@ -104,6 +140,7 @@ impl std::fmt::Debug for Resolvers {
             .field("list", &self.list.keys().collect::<Vec<_>>())
             .field("get", &self.get.keys().collect::<Vec<_>>())
             .field("action", &self.action.keys().collect::<Vec<_>>())
+            .field("watch", &self.watch.keys().collect::<Vec<_>>())
             .finish()
     }
 }

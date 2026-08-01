@@ -27,6 +27,7 @@ Contract {
         filterable: vec!["state".into()],
         sortable: vec!["created_at".into()],
         max_page_size: 100,
+        watchable: false,
         graphql: None,
         actions: vec![/* see below */],
     }],
@@ -81,18 +82,31 @@ A literal `{id}` in the path marks an instance action and becomes a required
 id parameter on every surface: the OpenAPI path, the mutation argument, each
 client method signature.
 
+## Watching
+
+`watchable: true` opens the resource to subscribers. It adds a GraphQL
+Subscription field and requires the service to register a watch resolver;
+nothing about REST changes, because Janus generates no long-lived HTTP
+operations.
+
+Watchers narrow the stream with the same `filterable` columns list callers
+use, so a resource has one filter vocabulary whichever operation reads it.
+A column watchers should filter on therefore needs an index, like any other
+filter. There is no limit or cursor: a stream is not a page.
+
 ## GraphQL name overrides
 
 GraphQL names are part of a deployed schema's identity, since fragments name
 types and queries name fields. When the derived defaults (type `File`, query
-fields `files` and `file`, mutation `fileIssueUrl`) need to differ, override
-them per resource:
+fields `files` and `file`, mutation `fileIssueUrl`, subscription
+`fileChanged`) need to differ, override them per resource:
 
 ```rust
 graphql: Some(GraphqlNames {
     type_name: Some("StoredFile".into()),
     list_field: Some("storedFiles".into()),
     get_field: Some("storedFile".into()),
+    watch_field: Some("storedFileChanged".into()),
 }),
 ```
 
@@ -121,8 +135,9 @@ ships.
 classifies every change. Breaking: a removed resource, field, filter, or
 sort; a field re-pointed to a different column under the same wire name; a
 lowered page ceiling; a moved action; a changed output; an input that became
-required or changed type; any effective GraphQL rename. Compatible:
-additions, and removal of an optional input.
+required or changed type; any effective GraphQL rename; a resource that
+stopped being watchable. Compatible: additions, a resource that became
+watchable, and removal of an optional input.
 
 The CLI exits non-zero on breaking changes (`janus diff old.json new.json`),
 which makes the gate one line of CI.

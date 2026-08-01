@@ -126,6 +126,24 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         }
     }
 
+    // Watching: opening one is additive, closing one strands every
+    // deployed subscriber, and the field name matters only while the
+    // subscription exists.
+    match (old.watchable, new.watchable) {
+        (false, true) => changes.push(Change::Compatible(format!("{scope}: became watchable"))),
+        (true, false) => changes.push(Change::Breaking(format!("{scope}: no longer watchable",))),
+        (true, true) => {
+            let before = old.graphql_watch_field();
+            let after = new.graphql_watch_field();
+            if before != after {
+                changes.push(Change::Breaking(format!(
+                    "{scope}: graphql watch field renamed {before} -> {after}",
+                )));
+            }
+        }
+        (false, false) => {}
+    }
+
     for old_action in &old.actions {
         match new.actions.iter().find(|a| a.name == old_action.name) {
             None => changes.push(Change::Breaking(format!(

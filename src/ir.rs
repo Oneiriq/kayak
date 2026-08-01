@@ -58,6 +58,14 @@ pub struct Resource {
     /// contract only describes its wire shape.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// Whether callers may watch this resource for changes. A watchable
+    /// resource gains a GraphQL Subscription field and requires a watch
+    /// resolver; it changes nothing about REST, which has no long-lived
+    /// shape here. Watchers narrow the stream with the same `filterable`
+    /// columns list callers use, so a resource has ONE filter vocabulary
+    /// whichever operation reads it.
+    #[serde(default)]
+    pub watchable: bool,
     /// GraphQL-scoped name overrides. REST paths and generated clients
     /// never see these; they exist because GraphQL names are part of a
     /// deployed schema's identity (fragments name types, queries name
@@ -79,6 +87,11 @@ pub struct GraphqlNames {
     /// Query field returning one instance (default: camelCase singular).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub get_field: Option<String>,
+    /// Subscription field delivering rows as they change (default:
+    /// camelCase singular + `Changed`). Read only when the resource is
+    /// watchable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_field: Option<String>,
 }
 
 /// One verb on a resource.
@@ -153,6 +166,20 @@ impl Resource {
             .as_ref()
             .and_then(|g| g.get_field.clone())
             .unwrap_or_else(|| crate::naming::camel(crate::naming::singular(&self.name)))
+    }
+
+    /// The Subscription field delivering rows as they change: the
+    /// override, or camelCase singular + `Changed` (`fileChanged`).
+    pub fn graphql_watch_field(&self) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.watch_field.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}Changed",
+                    crate::naming::camel(crate::naming::singular(&self.name)),
+                )
+            })
     }
 }
 
@@ -264,6 +291,7 @@ mod tests {
                     graphql_field: None,
                 }],
                 graphql: None,
+                watchable: false,
             }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();

@@ -720,6 +720,7 @@ name = "oneiriq-janus"
 version = "0.1.0"
 dependencies = [
  "async-graphql",
+ "futures-core",
  "oneiriq-surql",
  "serde",
  "serde_json",

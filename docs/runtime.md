@@ -49,6 +49,40 @@ undeclared sorts refuse, action inputs check against their declared types,
 and unknown input keys drop (the differ promises that removing an optional
 input is compatible, which only holds if servers ignore unknown fields).
 
+## Watching
+
+A resource the contract marks `watchable` registers a fourth kind of
+resolver. It is awaited once, when a subscription opens, and returns a
+stream of rows that runs until the subscriber drops it:
+
+```rust
+let resolvers = resolvers.watch("events", |ctx, args| async move {
+    // args.filters is allowlist-checked, same columns list callers filter on
+    Ok(Box::pin(my_live_query(ctx, args)) as janus::runtime::RowStream)
+});
+```
+
+Declaration and registration are checked in both directions. A watchable
+resource with no resolver refuses to build, and so does a resolver for a
+resource the contract never opened, because that resolver is dead code that
+reads as live.
+
+Watchers narrow the stream with the same `filterable` columns list callers
+use, so a resource has one filter vocabulary whichever operation reads it.
+There is no limit or cursor: a stream is not a page.
+
+The middleware chain runs around the opening call ONLY. Authorization
+happens when the subscription starts, and the rows that follow flow from the
+resolver to the subscriber without re-entering the chain. A stream that must
+stop when a credential is revoked has to check that itself, per row, inside
+the resolver. An `Err` item ends the subscription with that error, which is
+how a resolver that loses its source should report it rather than closing
+silently.
+
+Watching has no REST shape here. Janus generates no long-lived HTTP
+operations, so subscriptions appear in the SDL and the served schema and
+nowhere else.
+
 ## Middleware
 
 Middleware wraps dispatch. The same chain runs whether an operation arrived
@@ -103,10 +137,13 @@ let response = schema.execute(
 
 The schema is built dynamically from the contract: object types with
 nullability from the schema definitions, sort enums listing only index-backed
-orderings, page types, query fields, one mutation field per action. Every
-field resolver funnels through the dispatcher, so middleware and contract
-enforcement behave identically everywhere. Errors carry their code in
-`extensions.code`.
+orderings, page types, query fields, one mutation field per action, one
+subscription field per watchable resource. Every field resolver funnels
+through the dispatcher, so middleware and contract enforcement behave
+identically everywhere. Errors carry their code in `extensions.code`.
+
+The Mutation and Subscription roots appear only when something populates
+them, so a read-only contract prints neither.
 
 `schema_builder` is the plugin seam. It returns the underlying
 `async-graphql` builder before finishing, which is where depth and complexity

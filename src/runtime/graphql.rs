@@ -16,13 +16,14 @@ use std::sync::Arc;
 
 use async_graphql::dynamic::{
     Enum, Field, FieldFuture, FieldValue, InputValue, Object, Scalar, Schema, SchemaBuilder,
-    TypeRef as Gql,
+    Subscription, SubscriptionField, SubscriptionFieldFuture, TypeRef as Gql,
 };
+use async_graphql::futures_util::StreamExt as _;
 use async_graphql::Value as GqlValue;
 use surql::schema::{FieldType, TableDefinition};
 
 use crate::ir::{ActionOutput, TypeRef};
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, SortDirection};
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, SortDirection, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::JanusError;
@@ -70,10 +71,16 @@ pub fn schema_builder(
     let mut uses_datetime = false;
     let mut uses_json = false;
     let has_actions = contract.resources.iter().any(|r| !r.actions.is_empty());
+    let has_watchers = contract.resources.iter().any(|r| r.watchable);
 
-    let mut builder = Schema::build("Query", has_actions.then_some("Mutation"), None);
+    let mut builder = Schema::build(
+        "Query",
+        has_actions.then_some("Mutation"),
+        has_watchers.then_some("Subscription"),
+    );
     let mut query = Object::new("Query");
     let mut mutation = Object::new("Mutation");
+    let mut subscription = Subscription::new("Subscription");
 
     for resource in &contract.resources {
         let table = schema
@@ -332,6 +339,49 @@ pub fn schema_builder(
             }
             mutation = mutation.field(field);
         }
+
+        // Subscription: rows as they change, narrowed by the same
+        // filters list takes.
+        if resource.watchable {
+            let watch_dispatcher = dispatcher.clone();
+            let watch_resource = resource.name.clone();
+            let watch_filterable = resource.filterable.clone();
+            let mut watch_field = SubscriptionField::new(
+                resource.graphql_watch_field(),
+                Gql::named_nn(&type_name),
+                move |ctx| {
+                    let dispatcher = watch_dispatcher.clone();
+                    let resource = watch_resource.clone();
+                    let filterable = watch_filterable.clone();
+                    SubscriptionFieldFuture::new(async move {
+                        let mut args = WatchArgs::default();
+                        for column in &filterable {
+                            if let Some(value) = ctx.args.get(crate::naming::camel(column).as_str())
+                            {
+                                args.filters.insert(
+                                    column.clone(),
+                                    serde_json::Value::String(value.string()?.to_owned()),
+                                );
+                            }
+                        }
+                        let jctx = request_context(&ctx);
+                        let stream = dispatcher
+                            .watch(&resource, jctx, args)
+                            .await
+                            .map_err(to_graphql_error)?;
+                        Ok(stream
+                            .map(|row| row.map(FieldValue::owned_any).map_err(to_graphql_error)))
+                    })
+                },
+            );
+            for column in &resource.filterable {
+                watch_field = watch_field.argument(InputValue::new(
+                    crate::naming::camel(column),
+                    Gql::named(Gql::STRING),
+                ));
+            }
+            subscription = subscription.field(watch_field);
+        }
     }
 
     if uses_datetime {
@@ -343,6 +393,9 @@ pub fn schema_builder(
     builder = builder.register(query);
     if has_actions {
         builder = builder.register(mutation);
+    }
+    if has_watchers {
+        builder = builder.register(subscription);
     }
     Ok(builder)
 }

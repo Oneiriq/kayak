@@ -14,7 +14,8 @@ contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
         |   actions and chosen names are well-formed
         |
         |-- openapi.json      OpenAPI 3.1 (page envelopes, action paths)
-        |-- schema.graphql    SDL (types, sort enums, Query, Mutation)
+        |-- schema.graphql    SDL (types, sort enums, Query, Mutation,
+        |                     Subscription)
         |-- client.rs         reqwest + serde
         |-- client.ts         fetch, zero dependencies
         |-- client.py         standard library only
@@ -44,7 +45,9 @@ name, any declared operation without a resolver.
 
 With the `graphql` feature the same contract builds a live schema on
 `async-graphql`. Every field dispatches through the middleware chain, and
-the served schema matches the generated SDL by construction. GraphQL name
+the served schema matches the generated SDL by construction. A resource the
+contract marks watchable gains a Subscription field over a stream resolver
+the service registers; the chain runs once, when the subscription opens. GraphQL name
 overrides (type and field names, per resource and per action) are validated
 against the GraphQL grammar and the SurrealDB v3 reserved-word list, which
 is exported as `janus::is_reserved`. Renaming any effective GraphQL name is

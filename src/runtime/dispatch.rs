@@ -15,6 +15,7 @@ use crate::runtime::args::{
 };
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
+use crate::runtime::guards::Guards;
 use crate::runtime::middleware::{
     Middleware, Next, Operation, OperationKind, Outcome, Payload, Terminal,
 };
@@ -44,6 +45,14 @@ pub enum RuntimeBuildError {
          use Dispatcher::with_rate_store"
     )]
     UnmeteredRateClass { scope: String, class: String },
+    #[error("{scope}: field {field} names guard {guard}, but none is registered")]
+    MissingGuard {
+        scope: String,
+        field: String,
+        guard: String,
+    },
+    #[error("guard {0} is registered, but no field in the contract names it")]
+    UnusedGuard(String),
 }
 
 /// The executable heart of the runtime. Cheap to clone via `Arc`.
@@ -52,6 +61,7 @@ pub struct Dispatcher {
     resolvers: Resolvers,
     middleware: Arc<[Arc<dyn Middleware>]>,
     rate_store: Option<Arc<dyn RateStore>>,
+    guards: Guards,
 }
 
 impl Dispatcher {
@@ -62,7 +72,7 @@ impl Dispatcher {
         resolvers: Resolvers,
         middleware: Vec<Arc<dyn Middleware>>,
     ) -> Result<Self, RuntimeBuildError> {
-        Self::build(contract, resolvers, middleware, None)
+        Self::build(contract, resolvers, middleware, None, Guards::new())
     }
 
     /// Assemble a dispatcher with a consumption ledger. Required
@@ -75,7 +85,27 @@ impl Dispatcher {
         middleware: Vec<Arc<dyn Middleware>>,
         rate_store: Arc<dyn RateStore>,
     ) -> Result<Self, RuntimeBuildError> {
-        Self::build(contract, resolvers, middleware, Some(rate_store))
+        Self::build(
+            contract,
+            resolvers,
+            middleware,
+            Some(rate_store),
+            Guards::new(),
+        )
+    }
+
+    /// Assemble a dispatcher with the full policy set: a consumption
+    /// ledger and field guards. Either may be empty when the contract
+    /// declares nothing that needs it; the gate below refuses the
+    /// mismatches by name.
+    pub fn with_policies(
+        contract: Arc<Contract>,
+        resolvers: Resolvers,
+        middleware: Vec<Arc<dyn Middleware>>,
+        rate_store: Option<Arc<dyn RateStore>>,
+        guards: Guards,
+    ) -> Result<Self, RuntimeBuildError> {
+        Self::build(contract, resolvers, middleware, rate_store, guards)
     }
 
     fn build(
@@ -83,6 +113,7 @@ impl Dispatcher {
         resolvers: Resolvers,
         middleware: Vec<Arc<dyn Middleware>>,
         rate_store: Option<Arc<dyn RateStore>>,
+        guards: Guards,
     ) -> Result<Self, RuntimeBuildError> {
         if rate_store.is_none() {
             for resource in &contract.resources {
@@ -102,6 +133,44 @@ impl Dispatcher {
                 }
             }
         }
+        // Guards are gated in both directions, like watch resolvers.
+        // A declared guard nobody registered would silently show what
+        // it was meant to hide, so it refuses instead; a registered
+        // guard nothing references is dead policy that reads as live.
+        for resource in &contract.resources {
+            let subs = resource.sub_resources.iter().flat_map(|s| {
+                s.fields
+                    .iter()
+                    .map(move |f| (format!("resource {}.{}", resource.name, s.name), f))
+            });
+            let own = resource
+                .fields
+                .iter()
+                .map(|f| (format!("resource {}", resource.name), f));
+            for (scope, exposure) in own.chain(subs) {
+                if let Some(guard) = &exposure.guard {
+                    if !guards.map.contains_key(guard) {
+                        return Err(RuntimeBuildError::MissingGuard {
+                            scope,
+                            field: exposure.api_name().to_owned(),
+                            guard: guard.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        for name in guards.map.keys() {
+            let referenced = contract.resources.iter().any(|r| {
+                r.fields.iter().any(|f| f.guard.as_deref() == Some(name))
+                    || r.sub_resources
+                        .iter()
+                        .any(|s| s.fields.iter().any(|f| f.guard.as_deref() == Some(name)))
+            });
+            if !referenced {
+                return Err(RuntimeBuildError::UnusedGuard(name.to_owned()));
+            }
+        }
+
         for resource in &contract.resources {
             if !resolvers.list.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingList(resource.name.clone()));
@@ -149,6 +218,7 @@ impl Dispatcher {
             resolvers,
             middleware: middleware.into(),
             rate_store,
+            guards,
         })
     }
 
@@ -182,10 +252,12 @@ impl Dispatcher {
         let resolvers = self.resolvers.clone();
         let contract = self.contract.clone();
         let rate_store = self.rate_store.clone();
+        let guards = self.guards.clone();
         let terminal: Terminal = Arc::new(move |operation: Operation, ctx, payload| {
             let resolvers = resolvers.clone();
             let contract = contract.clone();
             let rate_store = rate_store.clone();
+            let guards = guards.clone();
             Box::pin(async move {
                 // The ledger is charged first: a caller past its
                 // budget learns nothing else about the request, and an
@@ -196,7 +268,15 @@ impl Dispatcher {
                 // mid-chain still counts, and checked before the
                 // resolver, so no guarded data is touched on a refusal.
                 enforce_scopes(&contract, &operation, &ctx)?;
-                match (payload, operation.kind) {
+                // Guard evaluation happens once per operation: which
+                // fields this caller sees does not vary by row. The
+                // hidden set refuses filters and sorts BEFORE the
+                // resolver, because narrowing by a value is reading
+                // it, and projects rows AFTER, so a guarded value
+                // cannot leave through any face.
+                let hidden = hidden_fields(&contract, &operation, &ctx, &guards);
+                refuse_hidden_narrowing(&hidden, &payload)?;
+                let outcome = match (payload, operation.kind) {
                     (Payload::List(args), OperationKind::List) => {
                         let resolver = resolvers
                             .list
@@ -248,7 +328,8 @@ impl Dispatcher {
                     _ => Err(JanusError::Internal(
                         "payload does not match operation kind".into(),
                     )),
-                }
+                }?;
+                Ok(project_hidden(outcome, hidden))
             })
         });
         Next {
@@ -401,6 +482,162 @@ impl Dispatcher {
             _ => Err(JanusError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
+        }
+    }
+}
+
+/// The wire names and columns this caller may NOT see for the
+/// operation's row shape, evaluated once per operation.
+fn hidden_fields(
+    contract: &Contract,
+    operation: &Operation,
+    ctx: &JanusContext,
+    guards: &Guards,
+) -> Vec<(String, String)> {
+    let Some(resource) = contract
+        .resources
+        .iter()
+        .find(|r| r.name == operation.resource)
+    else {
+        return Vec::new();
+    };
+    let fields: &[crate::ir::FieldExposure] = match operation.kind {
+        OperationKind::SubList => operation
+            .sub
+            .as_deref()
+            .and_then(|name| resource.sub_resources.iter().find(|s| s.name == name))
+            .map(|s| s.fields.as_slice())
+            .unwrap_or(&[]),
+        // An action that returns the resource row shares the
+        // resource's shape, so it shares its projection. A Json
+        // action is free-form: its keys are not the resource's, so a
+        // coincidental name must not be stripped.
+        OperationKind::Action => {
+            let returns_resource = operation
+                .action
+                .as_deref()
+                .and_then(|name| resource.actions.iter().find(|a| a.name == name))
+                .is_some_and(|a| a.output == crate::ir::ActionOutput::Resource);
+            if returns_resource {
+                &resource.fields
+            } else {
+                &[]
+            }
+        }
+        _ => &resource.fields,
+    };
+    fields
+        .iter()
+        .filter_map(|exposure| {
+            let guard = exposure.guard.as_deref()?;
+            let decide = guards.map.get(guard)?;
+            if decide(ctx) {
+                None
+            } else {
+                Some((exposure.api_name().to_owned(), exposure.column.clone()))
+            }
+        })
+        .collect()
+}
+
+/// Refuse filters and sorts over columns the caller cannot see.
+/// Narrowing by a value is reading it: a caller filtering a hidden
+/// column to a guessed value would learn the value from which rows
+/// come back.
+fn refuse_hidden_narrowing(
+    hidden: &[(String, String)],
+    payload: &Payload,
+) -> Result<(), JanusError> {
+    if hidden.is_empty() {
+        return Ok(());
+    }
+    let hidden_column = |column: &str| hidden.iter().any(|(_, c)| c == column);
+    let (filters, sort) = match payload {
+        Payload::List(args) => (&args.filters, &args.sort),
+        Payload::SubList(args) => (&args.filters, &args.sort),
+        Payload::Watch(args) => (&args.filters, &None),
+        _ => return Ok(()),
+    };
+    for column in filters.keys() {
+        if hidden_column(column) {
+            return Err(JanusError::Forbidden(format!(
+                "filtering on {column} requires permission to see it",
+            )));
+        }
+    }
+    if let Some((column, _)) = sort {
+        if hidden_column(column) {
+            return Err(JanusError::Forbidden(format!(
+                "sorting on {column} requires permission to see it",
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Strip the hidden fields from whatever the resolver returned. Rows
+/// omit the keys rather than nulling them, so a redacted value and a
+/// stored null are distinguishable to the service and identical on
+/// wire faces that render omissions as null.
+fn project_hidden(outcome: Outcome, hidden: Vec<(String, String)>) -> Outcome {
+    if hidden.is_empty() {
+        return outcome;
+    }
+    let strip = move |row: &mut serde_json::Value| {
+        if let Some(object) = row.as_object_mut() {
+            for (api_name, _) in &hidden {
+                object.remove(api_name);
+            }
+        }
+    };
+    match outcome {
+        Outcome::List(mut output) => {
+            for row in &mut output.items {
+                strip(row);
+            }
+            Outcome::List(output)
+        }
+        Outcome::Get(mut row) => {
+            if let Some(row) = row.as_mut() {
+                strip(row);
+            }
+            Outcome::Get(row)
+        }
+        Outcome::Action(mut value) => {
+            if let Some(value) = value.as_mut() {
+                strip(value);
+            }
+            Outcome::Action(value)
+        }
+        Outcome::Watch(stream) => {
+            use futures_core::Stream;
+            use std::pin::Pin;
+            use std::task::{Context, Poll};
+
+            struct Projected {
+                inner: crate::runtime::resolvers::RowStream,
+                strip: Box<dyn FnMut(&mut serde_json::Value) + Send>,
+            }
+            impl Stream for Projected {
+                type Item = Result<serde_json::Value, JanusError>;
+                fn poll_next(
+                    self: Pin<&mut Self>,
+                    cx: &mut Context<'_>,
+                ) -> Poll<Option<Self::Item>> {
+                    let this = self.get_mut();
+                    match Pin::new(&mut this.inner).poll_next(cx) {
+                        Poll::Ready(Some(Ok(mut row))) => {
+                            (this.strip)(&mut row);
+                            Poll::Ready(Some(Ok(row)))
+                        }
+                        other => other,
+                    }
+                }
+            }
+            Outcome::Watch(Box::pin(Projected {
+                inner: stream,
+                strip: Box::new(strip),
+            }))
         }
     }
 }

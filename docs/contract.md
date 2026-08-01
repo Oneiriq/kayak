@@ -116,6 +116,29 @@ may each carry a `versions` collection without colliding. Filters and page
 ceilings belong to the sub-resource. Declaring `sortable` on `files` says
 nothing about what `versions` may sort on.
 
+## Field guards
+
+A guard is a named visibility policy on one exposed field:
+
+```rust
+FieldExposure::column("digest").with_guard("audit_only"),
+```
+
+The service registers the decision and the dispatcher applies it as
+projection on every row a resolver returns, on every face including
+subscriptions, so a guarded value cannot leave through a forgotten
+path. Rows OMIT denied fields; a read is never an error. A guarded
+field renders nullable on every generated surface, since a field the
+dispatcher may omit cannot promise to be present, and its OpenAPI
+property carries `x-guard` naming the policy.
+
+A caller who cannot see a column cannot narrow by it either:
+filtering or sorting on a hidden column refuses, because narrowing by
+a value is reading it.
+
+Guarding an open field or swapping its policy is breaking; removing a
+guard shows more and refuses nobody.
+
 ## Rate classes
 
 A rate class is a named consumption budget, defined once and

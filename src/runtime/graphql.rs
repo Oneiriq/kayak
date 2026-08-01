@@ -112,7 +112,7 @@ pub fn schema_builder(
             let (base, datetime, json) = graphql_scalar(&field_def.field_type);
             uses_datetime |= datetime;
             uses_json |= json;
-            let type_ref = if field_def.nullable {
+            let type_ref = if field_def.nullable || exposure.guard.is_some() {
                 Gql::named(base)
             } else {
                 Gql::named_nn(base)
@@ -156,7 +156,7 @@ pub fn schema_builder(
                 let (base, datetime, json) = graphql_scalar(&field_def.field_type);
                 uses_datetime |= datetime;
                 uses_json |= json;
-                let type_ref = if field_def.nullable {
+                let type_ref = if field_def.nullable || exposure.guard.is_some() {
                     Gql::named(base)
                 } else {
                     Gql::named_nn(base)

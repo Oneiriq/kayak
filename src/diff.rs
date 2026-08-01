@@ -109,6 +109,30 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         let api = exposure.api_name();
         match new.fields.iter().find(|f| f.api_name() == api) {
             None => changes.push(Change::Breaking(format!("{scope}: field {api} removed",))),
+            Some(current) if current.guard != exposure.guard => {
+                // Guarding a field that was open takes values away from
+                // deployed callers, and swapping guards changes which
+                // callers those are. Removing a guard shows more, which
+                // refuses nobody.
+                match (&exposure.guard, &current.guard) {
+                    (None, Some(guard)) => changes.push(Change::Breaking(format!(
+                        "{scope}: field {api} now guarded by {guard}",
+                    ))),
+                    (Some(before), Some(after)) => changes.push(Change::Breaking(format!(
+                        "{scope}: field {api} guard changed {before} -> {after}",
+                    ))),
+                    (Some(guard), None) => changes.push(Change::Compatible(format!(
+                        "{scope}: field {api} no longer guarded (was {guard})",
+                    ))),
+                    (None, None) => {}
+                }
+                if current.column != exposure.column {
+                    changes.push(Change::Breaking(format!(
+                        "{scope}: field {api} now reads column {} (was {})",
+                        current.column, exposure.column,
+                    )));
+                }
+            }
             Some(current) if current.column != exposure.column => {
                 // Same wire name over a different column: the value's
                 // meaning (and possibly type) changed under the client.

@@ -160,8 +160,12 @@ fn sub_resource_schema(sub: &crate::ir::SubResource, table: &TableDefinition) ->
             .iter()
             .find(|f| f.name == exposure.column)
             .expect("validated: column exists");
-        properties.insert(exposure.api_name().to_owned(), field_schema(field));
-        if !field.nullable {
+        let mut schema = field_schema(field);
+        if let Some(guard) = &exposure.guard {
+            schema["x-guard"] = json!(guard);
+        }
+        properties.insert(exposure.api_name().to_owned(), schema);
+        if !field.nullable && exposure.guard.is_none() {
             required.push(json!(exposure.api_name()));
         }
     }
@@ -261,8 +265,14 @@ fn resource_schema(resource: &Resource, table: &TableDefinition) -> Value {
             .iter()
             .find(|f| f.name == exposure.column)
             .expect("validated: column exists");
-        properties.insert(exposure.api_name().to_owned(), field_schema(field));
-        if !field.nullable {
+        let mut schema = field_schema(field);
+        if let Some(guard) = &exposure.guard {
+            // Visible where the API is read: this field may be absent,
+            // and here is the policy that decides.
+            schema["x-guard"] = json!(guard);
+        }
+        properties.insert(exposure.api_name().to_owned(), schema);
+        if !field.nullable && exposure.guard.is_none() {
             required.push(json!(exposure.api_name()));
         }
     }

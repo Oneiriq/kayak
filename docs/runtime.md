@@ -66,6 +66,32 @@ It dispatches as its own operation (`OperationKind::SubList`), so middleware
 sees the parent listing and the sub-listing separately and can authorize them
 separately.
 
+## Field guards
+
+A guard is registered by name and decides over the context,
+synchronously:
+
+```rust
+let guards = Guards::new().guard("audit_only", |ctx| {
+    ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
+});
+let dispatcher = Dispatcher::with_policies(
+    contract.into(), resolvers, middleware, None, guards,
+)?;
+```
+
+Synchronous on purpose: guards run per operation, and a guard that
+performed IO would turn one listing into hundreds of queries.
+Anything needing IO belongs in an auth middleware that resolves once
+into the context, where the guard can then see it.
+
+The gate runs in both directions: a declared guard nobody registered
+refuses to build (it would silently show what it was meant to hide),
+and a registered guard nothing references refuses too (dead policy
+that reads as live). Visibility is evaluated once per operation, and
+the hidden set both refuses filters and sorts before the resolver and
+projects rows after it, streamed rows included.
+
 ## Rate limiting
 
 The dispatcher is the one layer that can meter GraphQL accurately: a

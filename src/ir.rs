@@ -225,7 +225,7 @@ impl Action {
         self.graphql_field.clone().unwrap_or_else(|| {
             format!(
                 "{}{}",
-                crate::naming::camel(crate::naming::singular(&resource.name)),
+                crate::naming::camel(&crate::naming::singular(&resource.name)),
                 crate::naming::pascal(&self.name),
             )
         })
@@ -257,7 +257,7 @@ impl Resource {
         self.graphql
             .as_ref()
             .and_then(|g| g.get_field.clone())
-            .unwrap_or_else(|| crate::naming::camel(crate::naming::singular(&self.name)))
+            .unwrap_or_else(|| crate::naming::camel(&crate::naming::singular(&self.name)))
     }
 
     /// The Subscription field delivering rows as they change: the
@@ -269,7 +269,7 @@ impl Resource {
             .unwrap_or_else(|| {
                 format!(
                     "{}Changed",
-                    crate::naming::camel(crate::naming::singular(&self.name)),
+                    crate::naming::camel(&crate::naming::singular(&self.name)),
                 )
             })
     }

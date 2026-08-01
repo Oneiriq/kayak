@@ -106,7 +106,7 @@ pub fn generate_client_rs(
     for (resource, _) in &resources {
         let name = type_name(&resource.name);
         let list_fn = format!("list_{}", snake(&resource.name));
-        let get_fn = format!("get_{}", snake(singular(&resource.name)));
+        let get_fn = format!("get_{}", snake(&singular(&resource.name)));
         writeln!(
             out,
             "    pub async fn {list_fn}(&self, limit: Option<u32>, cursor: Option<&str>) \
@@ -188,7 +188,7 @@ pub fn generate_client_rs(
             let method_fn = format!(
                 "{}_{}",
                 snake(&action.name),
-                snake(singular(&resource.name))
+                snake(&singular(&resource.name))
             );
             let mut parameters = vec!["&self".to_owned()];
             if action.takes_id() {
@@ -299,7 +299,7 @@ pub fn generate_client_ts(
     for (resource, _) in &resources {
         let name = type_name(&resource.name);
         let list_fn = camel(&format!("list_{}", snake(&resource.name)));
-        let get_fn = camel(&format!("get_{}", snake(singular(&resource.name))));
+        let get_fn = camel(&format!("get_{}", snake(&singular(&resource.name))));
         writeln!(
             out,
             "  {list_fn}(limit?: number, cursor?: string): Promise<{name}Page> {{"
@@ -353,7 +353,7 @@ pub fn generate_client_ts(
             let method_fn = camel(&format!(
                 "{}_{}",
                 snake(&action.name),
-                snake(singular(&resource.name)),
+                snake(&singular(&resource.name)),
             ));
             let mut parameters = Vec::new();
             if action.takes_id() {
@@ -480,7 +480,7 @@ pub fn generate_client_py(
             "  def get_{single}(self, id: str) -> {name}:\n\
              \x20   item = self._request('GET', f'/v1/{plural}/{{id}}')\n\
              \x20   return {fields_from}\n",
-            single = snake(singular(&resource.name)),
+            single = snake(&singular(&resource.name)),
             plural = resource.name,
         )
         .unwrap();
@@ -515,7 +515,7 @@ pub fn generate_client_py(
             let method_fn = format!(
                 "{}_{}",
                 snake(&action.name),
-                snake(singular(&resource.name)),
+                snake(&singular(&resource.name)),
             );
             let mut parameters = vec!["self".to_owned()];
             if action.takes_id() {
@@ -692,7 +692,7 @@ pub fn generate_client_go(
              \t\treturn nil, err\n\
              \t}}\n\
              \treturn &out, nil\n}}\n",
-            single = pascal(singular(&resource.name)),
+            single = pascal(&singular(&resource.name)),
             plural = resource.name,
         )
         .unwrap();
@@ -734,7 +734,7 @@ pub fn generate_client_go(
             let method_name = format!(
                 "{}{}",
                 pascal(&snake(&action.name)),
-                pascal(singular(&resource.name)),
+                pascal(&singular(&resource.name)),
             );
             let mut parameters = Vec::new();
             if action.takes_id() {

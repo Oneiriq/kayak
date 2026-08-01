@@ -204,6 +204,7 @@ mod tests {
             actions: vec![],
             graphql: None,
             watchable: false,
+            reads_require: vec![],
             sub_resources: vec![],
         }
     }
@@ -230,6 +231,7 @@ mod tests {
             output: crate::ir::ActionOutput::Json,
             description: None,
             graphql_field: None,
+            requires: vec![],
         }
     }
 

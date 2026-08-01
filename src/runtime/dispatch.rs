@@ -18,6 +18,7 @@ use crate::runtime::error::JanusError;
 use crate::runtime::middleware::{
     Middleware, Next, Operation, OperationKind, Outcome, Payload, Terminal,
 };
+use crate::runtime::principal::Principal;
 use crate::runtime::resolvers::{Resolvers, RowStream};
 
 /// Why a runtime could not be assembled.
@@ -131,9 +132,16 @@ impl Dispatcher {
 
     fn chain(&self) -> Next {
         let resolvers = self.resolvers.clone();
+        let contract = self.contract.clone();
         let terminal: Terminal = Arc::new(move |operation: Operation, ctx, payload| {
             let resolvers = resolvers.clone();
+            let contract = contract.clone();
             Box::pin(async move {
+                // Scopes are checked here, after the whole middleware
+                // chain, so an auth layer that resolves the principal
+                // mid-chain still counts, and checked before the
+                // resolver, so no guarded data is touched on a refusal.
+                enforce_scopes(&contract, &operation, &ctx)?;
                 match (payload, operation.kind) {
                     (Payload::List(args), OperationKind::List) => {
                         let resolver = resolvers
@@ -341,6 +349,57 @@ impl Dispatcher {
             )),
         }
     }
+}
+
+/// The scopes `operation` demands, per the contract: reads check the
+/// resource's requirement, actions their own.
+fn required_scopes<'a>(contract: &'a Contract, operation: &Operation) -> &'a [String] {
+    let Some(resource) = contract
+        .resources
+        .iter()
+        .find(|r| r.name == operation.resource)
+    else {
+        return &[];
+    };
+    match operation.kind {
+        OperationKind::List
+        | OperationKind::Get
+        | OperationKind::SubList
+        | OperationKind::Watch => &resource.reads_require,
+        OperationKind::Action => operation
+            .action
+            .as_deref()
+            .and_then(|name| resource.actions.iter().find(|a| a.name == name))
+            .map(|a| a.requires.as_slice())
+            .unwrap_or(&[]),
+    }
+}
+
+/// Refuse an operation whose declared scopes the caller does not hold.
+/// No declaration checks nothing; an anonymous caller against a
+/// declared scope is `Unauthorized`; an identified caller missing one
+/// is `Forbidden`, naming the scope.
+fn enforce_scopes(
+    contract: &Contract,
+    operation: &Operation,
+    ctx: &JanusContext,
+) -> Result<(), JanusError> {
+    let required = required_scopes(contract, operation);
+    if required.is_empty() {
+        return Ok(());
+    }
+    let Some(principal) = ctx.get::<Principal>() else {
+        return Err(JanusError::Unauthorized(format!(
+            "scope {} requires an identified caller",
+            required.join(", "),
+        )));
+    };
+    for scope in required {
+        if !principal.has(scope) {
+            return Err(JanusError::Forbidden(format!("scope {scope} required")));
+        }
+    }
+    Ok(())
 }
 
 impl std::fmt::Debug for Dispatcher {

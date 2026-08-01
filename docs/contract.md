@@ -116,6 +116,27 @@ may each carry a `versions` collection without colliding. Filters and page
 ceilings belong to the sub-resource. Declaring `sortable` on `files` says
 nothing about what `versions` may sort on.
 
+## Scopes
+
+`reads_require` on a resource names the scopes a caller must hold to
+list, get, read sub-collections of, or watch it. `requires` on an
+action does the same for invoking it. Empty means open to any caller
+the middleware admits, which is every existing contract's behavior.
+
+```rust
+reads_require: vec!["files_read".into()],
+actions: vec![Action { requires: vec!["files_write".into()], /* ... */ }],
+```
+
+The dispatcher enforces them after the middleware chain and before the
+resolver, so an auth layer that resolves the principal mid-chain still
+counts and no guarded data is touched on a refusal. An anonymous
+caller against a declared scope refuses `unauthorized`; an identified
+caller missing one refuses `forbidden`, naming the scope. OpenAPI
+operations carry their requirements as `x-requires-scopes`, and the
+differ treats a new requirement as breaking and a removed one as
+compatible.
+
 ## Watching
 
 `watchable: true` opens the resource to subscribers. It adds a GraphQL

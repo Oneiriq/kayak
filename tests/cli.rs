@@ -45,6 +45,7 @@ fn contract() -> Contract {
             max_page_size: 100,
             graphql: None,
             watchable: false,
+            reads_require: vec![],
             sub_resources: vec![],
             actions: vec![Action {
                 name: "issue_url".into(),
@@ -59,6 +60,7 @@ fn contract() -> Contract {
                 output: ActionOutput::Json,
                 description: None,
                 graphql_field: None,
+                requires: vec![],
             }],
         }],
     }

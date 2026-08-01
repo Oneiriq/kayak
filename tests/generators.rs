@@ -55,6 +55,7 @@ fn contract() -> Contract {
             max_page_size: 100,
             graphql: None,
             watchable: false,
+            reads_require: vec![],
             sub_resources: vec![],
             actions: vec![
                 Action {
@@ -78,6 +79,7 @@ fn contract() -> Contract {
                     output: ActionOutput::Json,
                     description: Some("Issue a signed URL for a servable file.".into()),
                     graphql_field: None,
+                    requires: vec![],
                 },
                 Action {
                     name: "remove".into(),
@@ -87,6 +89,7 @@ fn contract() -> Contract {
                     output: ActionOutput::None,
                     description: Some("Soft-delete the file.".into()),
                     graphql_field: None,
+                    requires: vec![],
                 },
             ],
         }],
@@ -225,6 +228,7 @@ fn action_validation_fires() {
         output: ActionOutput::Json,
         description: None,
         graphql_field: None,
+        requires: vec![],
     });
     let violations = janus::validate(&bad, &[file_table()]);
     let text = violations

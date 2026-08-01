@@ -10,7 +10,7 @@ use async_graphql::futures_util::{stream, StreamExt as _};
 use janus::runtime::graphql::build_schema;
 use janus::runtime::{
     Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, Middleware, Next, Operation,
-    Outcome, Payload, Resolvers, RowStream, SortDirection, SubListArgs, WatchArgs,
+    Outcome, Payload, Principal, Resolvers, RowStream, SortDirection, SubListArgs, WatchArgs,
 };
 use janus::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource,
@@ -91,6 +91,7 @@ fn contract() -> Contract {
             max_page_size: 100,
             graphql: None,
             watchable: false,
+            reads_require: vec![],
             sub_resources: vec![],
             actions: vec![
                 Action {
@@ -106,6 +107,7 @@ fn contract() -> Contract {
                     output: ActionOutput::Json,
                     description: None,
                     graphql_field: None,
+                    requires: vec![],
                 },
                 Action {
                     name: "remove".into(),
@@ -115,6 +117,7 @@ fn contract() -> Contract {
                     output: ActionOutput::None,
                     description: None,
                     graphql_field: None,
+                    requires: vec![],
                 },
             ],
         }],
@@ -782,4 +785,174 @@ fn consumption_refusals_carry_their_own_statuses() {
     let metered = JanusError::TooManyRequests("rate class exceeded".into());
     assert_eq!(metered.status(), 429);
     assert_eq!(metered.code(), "too_many_requests");
+}
+
+/// The contract with a read scope on the resource and a write scope
+/// on one action.
+fn scoped_contract() -> Contract {
+    let mut contract = contract();
+    contract.resources[0].reads_require = vec!["files_read".into()];
+    contract.resources[0].actions[1].requires = vec!["files_write".into()];
+    contract
+}
+
+/// A request whose caller holds the given scopes, beside the tenant
+/// the middleware requires.
+fn scoped_request(query: &str, scopes: &[&str]) -> async_graphql::Request {
+    let principal = Principal::new("key-01", scopes.iter().map(|s| s.to_string()));
+    async_graphql::Request::new(query).data(
+        JanusContext::new()
+            .with(Tenant("acme".into()))
+            .with(principal),
+    )
+}
+
+#[tokio::test]
+async fn declared_scopes_gate_reads_and_actions() {
+    let fixture = fixture(scoped_contract());
+
+    // An identified caller without the read scope is refused by name.
+    let response = fixture
+        .schema
+        .execute(scoped_request(r#"{ files { items { id } } }"#, &["other"]))
+        .await;
+    let error = &response.errors[0];
+    assert!(error.message.contains("files_read"), "{error:?}");
+    let code = error
+        .extensions
+        .as_ref()
+        .and_then(|x| x.get("code"))
+        .map(|v| format!("{v}"));
+    assert_eq!(code.as_deref(), Some("\"forbidden\""));
+
+    // An anonymous caller is a different refusal: no identity at all.
+    let response = fixture
+        .schema
+        .execute(tenant_request(r#"{ files { items { id } } }"#))
+        .await;
+    let error = &response.errors[0];
+    let code = error
+        .extensions
+        .as_ref()
+        .and_then(|x| x.get("code"))
+        .map(|v| format!("{v}"));
+    assert_eq!(code.as_deref(), Some("\"unauthorized\""));
+
+    // The right scope passes, and the read scope does not leak into
+    // permission for the guarded action.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ files { items { id } } }"#,
+            &["files_read"],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"mutation { fileRemove(id: "01A") }"#,
+            &["files_read"],
+        ))
+        .await;
+    assert!(
+        response.errors[0].message.contains("files_write"),
+        "{:?}",
+        response.errors,
+    );
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"mutation { fileRemove(id: "01A") }"#,
+            &["files_read", "files_write"],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+    // The unguarded action stays open to any admitted caller.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"mutation { fileIssueUrl(id: "01A", ttlSecs: 60) }"#,
+            &[],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+}
+
+#[tokio::test]
+async fn scopes_gate_subscriptions_at_open() {
+    let mut contract = contract_with_versions();
+    contract.resources[0].watchable = true;
+    contract.resources[0].reads_require = vec!["files_read".into()];
+
+    let fixture = fixture(contract);
+    let responses: Vec<_> = fixture
+        .schema
+        .execute_stream(scoped_request(
+            r#"subscription { fileChanged { id } }"#,
+            &["other"],
+        ))
+        .collect()
+        .await;
+    assert_eq!(responses.len(), 1, "the refusal is the only payload");
+    assert!(
+        responses[0].errors[0].message.contains("files_read"),
+        "{:?}",
+        responses[0].errors,
+    );
+    assert!(fixture.seen_watch_args.lock().unwrap().is_none());
+
+    // Sub-collections read under the parent requirement too.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ file(id: "01A") { versions { items { id } } } }"#,
+            &["files_read"],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+}
+
+#[test]
+fn scope_tightening_is_breaking_and_visible() {
+    let open = contract();
+    let scoped = scoped_contract();
+
+    let changes = janus::diff(&open, &scoped);
+    let breaking: Vec<&str> = changes
+        .iter()
+        .filter(|c| c.is_breaking())
+        .map(janus::Change::message)
+        .collect();
+    let joined = breaking.join(
+        "
+",
+    );
+    assert!(
+        joined.contains("reads now require scope files_read"),
+        "{joined}",
+    );
+    assert!(
+        joined.contains("action remove now requires scope files_write"),
+        "{joined}",
+    );
+    // Loosening refuses nothing.
+    let changes = janus::diff(&scoped, &open);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+
+    // The document says what the dispatcher will enforce.
+    let doc = janus::generate_openapi(&scoped, &[file_table(), version_table()]).unwrap();
+    assert_eq!(
+        doc["paths"]["/v1/files"]["get"]["x-requires-scopes"][0],
+        "files_read",
+    );
+    assert_eq!(
+        doc["paths"]["/v1/files/{id}"]["delete"]["x-requires-scopes"][0],
+        "files_write",
+    );
+    assert!(doc["paths"]["/v1/files/{id}/url"]["post"]
+        .get("x-requires-scopes")
+        .is_none());
 }

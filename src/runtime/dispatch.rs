@@ -526,17 +526,9 @@ fn hidden_fields(
         }
         _ => &resource.fields,
     };
-    fields
-        .iter()
-        .filter_map(|exposure| {
-            let guard = exposure.guard.as_deref()?;
-            let decide = guards.map.get(guard)?;
-            if decide(ctx) {
-                None
-            } else {
-                Some((exposure.api_name().to_owned(), exposure.column.clone()))
-            }
-        })
+    crate::runtime::guards::hidden_in(fields, guards, ctx)
+        .into_iter()
+        .map(|hidden| (hidden.api_name, hidden.column))
         .collect()
 }
 

@@ -1419,3 +1419,33 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
         "{changes:?}",
     );
 }
+
+#[test]
+fn a_hand_written_face_computes_the_same_hidden_set() {
+    let contract = guarded_contract();
+    let guards = Guards::new().guard("audit_only", |ctx: &JanusContext| {
+        ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
+    });
+
+    let denied = JanusContext::new().with(Principal::new("k1", std::iter::empty()));
+    let hidden = janus::runtime::hidden_fields(&contract, "files", None, &guards, &denied);
+    let names: Vec<&str> = hidden.iter().map(|h| h.api_name.as_str()).collect();
+    assert_eq!(names, vec!["state", "created_at"], "{hidden:?}");
+
+    // Stripping a wire row removes exactly those keys, matching what
+    // the dispatcher projects.
+    let mut row = serde_json::json!({
+        "id": "01A", "path": "a.txt", "state": "ready",
+        "created_at": "2026-07-30T00:00:00Z",
+    });
+    janus::runtime::strip_hidden(&mut row, &hidden);
+    assert_eq!(row, serde_json::json!({ "id": "01A", "path": "a.txt" }),);
+
+    // Sub-collections resolve through the parent, and an allowed
+    // caller hides nothing.
+    let sub = janus::runtime::hidden_fields(&contract, "files", Some("versions"), &guards, &denied);
+    assert_eq!(sub.len(), 1);
+    assert_eq!(sub[0].api_name, "digest");
+    let allowed = JanusContext::new().with(Principal::new("k2", ["audit".to_owned()]));
+    assert!(janus::runtime::hidden_fields(&contract, "files", None, &guards, &allowed).is_empty());
+}

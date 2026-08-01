@@ -11,6 +11,11 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **The projection API for hand-written faces.** `hidden_fields`,
+  `hidden_in`, and `strip_hidden` expose the dispatcher's own guard
+  computation, so a service's hand-written REST handlers redact from the
+  same declarations the GraphQL face enforces instead of drifting apart.
+  The dispatcher delegates to the shared core, so the two cannot diverge.
 - **Field guards as dispatcher projection.** A named visibility policy on an
   exposed field, registered by the service and applied once in the dispatcher
   on every row a resolver returns, subscriptions included. Denied fields are

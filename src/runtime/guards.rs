@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::ir::{Contract, FieldExposure};
 use crate::runtime::context::JanusContext;
 
 /// One visibility decision: does this caller see this field?
@@ -48,5 +49,77 @@ impl std::fmt::Debug for Guards {
         f.debug_struct("Guards")
             .field("names", &self.map.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// One field the current caller may not see.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HiddenField {
+    /// The wire name a row carries, which projection removes.
+    pub api_name: String,
+    /// The backing column, which filter and sort refusals compare.
+    pub column: String,
+}
+
+/// The fields in `fields` whose guards deny this caller. The
+/// dispatcher computes this for every operation it runs; a
+/// hand-written face calls it so both faces redact from the same
+/// declarations instead of drifting apart.
+pub fn hidden_in(
+    fields: &[FieldExposure],
+    guards: &Guards,
+    ctx: &JanusContext,
+) -> Vec<HiddenField> {
+    fields
+        .iter()
+        .filter_map(|exposure| {
+            let guard = exposure.guard.as_deref()?;
+            let decide = guards.map.get(guard)?;
+            if decide(ctx) {
+                None
+            } else {
+                Some(HiddenField {
+                    api_name: exposure.api_name().to_owned(),
+                    column: exposure.column.clone(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// [`hidden_in`] over a contract resource, or one of its
+/// sub-collections when `sub` names one. Unknown names hide nothing,
+/// matching the dispatcher: a name the contract does not know cannot
+/// have declared guards.
+pub fn hidden_fields(
+    contract: &Contract,
+    resource: &str,
+    sub: Option<&str>,
+    guards: &Guards,
+    ctx: &JanusContext,
+) -> Vec<HiddenField> {
+    let Some(resource) = contract.resources.iter().find(|r| r.name == resource) else {
+        return Vec::new();
+    };
+    let fields = match sub {
+        Some(name) => resource
+            .sub_resources
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.fields.as_slice())
+            .unwrap_or(&[]),
+        None => &resource.fields,
+    };
+    hidden_in(fields, guards, ctx)
+}
+
+/// Remove every hidden field from one wire row, in place. The row
+/// omits the keys rather than nulling them, exactly as the dispatcher
+/// projects.
+pub fn strip_hidden(row: &mut serde_json::Value, hidden: &[HiddenField]) {
+    if let Some(object) = row.as_object_mut() {
+        for field in hidden {
+            object.remove(&field.api_name);
+        }
     }
 }

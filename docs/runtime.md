@@ -92,6 +92,16 @@ that reads as live). Visibility is evaluated once per operation, and
 the hidden set both refuses filters and sorts before the resolver and
 projects rows after it, streamed rows included.
 
+A hand-written face redacts from the same declarations through the
+projection API, which the dispatcher itself delegates to:
+
+```rust
+let hidden = janus::runtime::hidden_fields(&contract, "files", None, &guards, &ctx);
+for row in &mut rows {
+    janus::runtime::strip_hidden(row, &hidden);
+}
+```
+
 ## Rate limiting
 
 The dispatcher is the one layer that can meter GraphQL accurately: a

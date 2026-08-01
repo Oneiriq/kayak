@@ -49,6 +49,23 @@ undeclared sorts refuse, action inputs check against their declared types,
 and unknown input keys drop (the differ promises that removing an optional
 input is compatible, which only holds if servers ignore unknown fields).
 
+## Sub-resources
+
+A declared sub-resource needs its own list resolver, checked at build like
+every other declared operation:
+
+```rust
+let resolvers = resolvers.sub_list("files", "versions", |ctx, args| async move {
+    // args.parent_id is the file; limit, filters, and sort are checked
+    // against the SUB-resource's own declarations
+    Ok(ListOutput { items: vec![], next_cursor: None })
+});
+```
+
+It dispatches as its own operation (`OperationKind::SubList`), so middleware
+sees the parent listing and the sub-listing separately and can authorize them
+separately.
+
 ## Watching
 
 A resource the contract marks `watchable` registers a fourth kind of
@@ -137,8 +154,9 @@ let response = schema.execute(
 
 The schema is built dynamically from the contract: object types with
 nullability from the schema definitions, sort enums listing only index-backed
-orderings, page types, query fields, one mutation field per action, one
-subscription field per watchable resource. Every field resolver funnels
+orderings, page types, query fields, a field on the parent for each
+sub-resource, one mutation field per action, one subscription field per
+watchable resource. Every field resolver funnels
 through the dispatcher, so middleware and contract enforcement behave
 identically everywhere. Errors carry their code in `extensions.code`.
 

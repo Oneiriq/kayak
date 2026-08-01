@@ -51,6 +51,17 @@ pub fn generate_sdl(
             uses_json |= json;
             writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
         }
+        // Sub-collections read as fields on their parent, which is the
+        // only place they exist.
+        for sub in &resource.sub_resources {
+            writeln!(
+                body,
+                "  {}: {}Page!",
+                sub_field_signature(resource, sub),
+                sub.graphql_type_name(resource),
+            )
+            .unwrap();
+        }
         writeln!(body, "}}\n").unwrap();
 
         if !resource.sortable.is_empty() {
@@ -67,6 +78,45 @@ pub fn generate_sdl(
         writeln!(body, "  items: [{type_name}!]!").unwrap();
         writeln!(body, "  nextCursor: String").unwrap();
         writeln!(body, "}}\n").unwrap();
+
+        // Sub-resource types and pages. The field that reaches them
+        // lives on the parent object, printed above.
+        for sub in &resource.sub_resources {
+            let sub_table = schema
+                .iter()
+                .find(|t| t.name == sub.table)
+                .expect("validated: table exists");
+            let sub_type = sub.graphql_type_name(resource);
+            writeln!(body, "type {sub_type} {{").unwrap();
+            writeln!(body, "  id: ID!").unwrap();
+            for exposure in &sub.fields {
+                let field = sub_table
+                    .fields
+                    .iter()
+                    .find(|f| f.name == exposure.column)
+                    .expect("validated: column exists");
+                let (gql, datetime, json) = graphql_type(field);
+                uses_datetime |= datetime;
+                uses_json |= json;
+                writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
+            }
+            writeln!(body, "}}\n").unwrap();
+
+            if !sub.sortable.is_empty() {
+                writeln!(body, "enum {sub_type}Sort {{").unwrap();
+                for column in &sub.sortable {
+                    let upper = column.to_ascii_uppercase();
+                    writeln!(body, "  {upper}_ASC").unwrap();
+                    writeln!(body, "  {upper}_DESC").unwrap();
+                }
+                writeln!(body, "}}\n").unwrap();
+            }
+
+            writeln!(body, "type {sub_type}Page {{").unwrap();
+            writeln!(body, "  items: [{sub_type}!]!").unwrap();
+            writeln!(body, "  nextCursor: String").unwrap();
+            writeln!(body, "}}\n").unwrap();
+        }
     }
 
     // Query root.
@@ -149,6 +199,24 @@ pub fn generate_sdl(
     }
     document.push_str(&body);
     Ok(document)
+}
+
+/// The sub-collection field on the parent, arguments included:
+/// `versions(limit: Int = 100, cursor: String, sort: FileVersionSort)`.
+/// Shared by the SDL printer and the dynamic schema so the two cannot
+/// drift in argument order or defaults.
+pub(crate) fn sub_field_signature(parent: &Resource, sub: &crate::ir::SubResource) -> String {
+    let mut arguments = vec![
+        format!("limit: Int = {}", sub.max_page_size),
+        "cursor: String".to_owned(),
+    ];
+    for column in &sub.filterable {
+        arguments.push(format!("{}: String", camel(column)));
+    }
+    if !sub.sortable.is_empty() {
+        arguments.push(format!("sort: {}Sort", sub.graphql_type_name(parent)));
+    }
+    format!("{}({})", sub.graphql_field(), arguments.join(", "))
 }
 
 /// Map a schema field to (GraphQL type, uses_datetime, uses_json).

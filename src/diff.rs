@@ -126,6 +126,74 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         }
     }
 
+    // Sub-collections: adding one is additive, removing one takes a
+    // path and a GraphQL field away from deployed clients.
+    for old_sub in &old.sub_resources {
+        match new.sub_resources.iter().find(|s| s.name == old_sub.name) {
+            None => changes.push(Change::Breaking(format!(
+                "{scope}: sub-resource {} removed",
+                old_sub.name,
+            ))),
+            Some(new_sub) => {
+                for exposure in &old_sub.fields {
+                    let api = exposure.api_name();
+                    if !new_sub.fields.iter().any(|f| f.api_name() == api) {
+                        changes.push(Change::Breaking(format!(
+                            "{scope}.{}: field {api} removed",
+                            old_sub.name,
+                        )));
+                    }
+                }
+                for column in &old_sub.filterable {
+                    if !new_sub.filterable.contains(column) {
+                        changes.push(Change::Breaking(format!(
+                            "{scope}.{}: filter {column} removed",
+                            old_sub.name,
+                        )));
+                    }
+                }
+                for column in &old_sub.sortable {
+                    if !new_sub.sortable.contains(column) {
+                        changes.push(Change::Breaking(format!(
+                            "{scope}.{}: sort {column} removed",
+                            old_sub.name,
+                        )));
+                    }
+                }
+                if new_sub.max_page_size < old_sub.max_page_size {
+                    changes.push(Change::Breaking(format!(
+                        "{scope}.{}: max_page_size lowered {} -> {}",
+                        old_sub.name, old_sub.max_page_size, new_sub.max_page_size,
+                    )));
+                }
+                let before = old_sub.graphql_field();
+                let after = new_sub.graphql_field();
+                if before != after {
+                    changes.push(Change::Breaking(format!(
+                        "{scope}.{}: graphql field renamed {before} -> {after}",
+                        old_sub.name,
+                    )));
+                }
+                let before = old_sub.graphql_type_name(old);
+                let after = new_sub.graphql_type_name(new);
+                if before != after {
+                    changes.push(Change::Breaking(format!(
+                        "{scope}.{}: graphql type renamed {before} -> {after}",
+                        old_sub.name,
+                    )));
+                }
+            }
+        }
+    }
+    for new_sub in &new.sub_resources {
+        if !old.sub_resources.iter().any(|s| s.name == new_sub.name) {
+            changes.push(Change::Compatible(format!(
+                "{scope}: sub-resource {} added",
+                new_sub.name,
+            )));
+        }
+    }
+
     // Watching: opening one is additive, closing one strands every
     // deployed subscriber, and the field name matters only while the
     // subscription exists.

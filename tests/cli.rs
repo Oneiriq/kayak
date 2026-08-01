@@ -44,6 +44,7 @@ fn contract() -> Contract {
             max_page_size: 100,
             graphql: None,
             watchable: false,
+            sub_resources: vec![],
             actions: vec![Action {
                 name: "issue_url".into(),
                 method: "POST".into(),

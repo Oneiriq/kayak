@@ -28,7 +28,7 @@ pub mod resolvers;
 #[cfg(feature = "graphql")]
 pub mod graphql;
 
-pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection, WatchArgs};
+pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection, SubListArgs, WatchArgs};
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;

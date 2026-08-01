@@ -18,7 +18,20 @@
 
 use surql::schema::TableDefinition;
 
-use crate::ir::{Contract, Resource};
+use crate::ir::{Contract, FieldExposure, Resource, SubResource};
+
+/// One listing surface's index-relevant claims, so a resource and a
+/// sub-resource are checked by exactly one rulebook.
+struct Listing<'a> {
+    /// How the surface names itself in a violation.
+    scope: String,
+    table: &'a str,
+    fields: &'a [FieldExposure],
+    /// Columns the server equality-binds; credited to sort prefixes.
+    bound: Vec<&'a str>,
+    filterable: &'a [String],
+    sortable: &'a [String],
+}
 
 /// A single contract-vs-schema violation, formatted for humans in
 /// generator output.
@@ -90,19 +103,191 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
         }
     }
 
-    // GraphQL type names are schema-global; two resources landing on
+    // GraphQL type names are schema-global; two surfaces landing on
     // the same effective type name would shadow each other.
     let mut type_names = std::collections::BTreeMap::new();
     for resource in &contract.resources {
-        if let Some(previous) = type_names.insert(resource.graphql_type_name(), &resource.name) {
+        if let Some(previous) =
+            type_names.insert(resource.graphql_type_name(), resource.name.clone())
+        {
             violations.push(Violation::InvalidName {
                 scope: format!("resource {}", resource.name),
                 name: resource.graphql_type_name(),
                 problem: format!("collides with the GraphQL type name of resource {previous}"),
             });
         }
+        let mut sub_names = std::collections::BTreeSet::new();
+        for sub in &resource.sub_resources {
+            validate_sub_resource(resource, sub, schema, &mut violations);
+            if !sub_names.insert(sub.name.clone()) {
+                violations.push(Violation::InvalidName {
+                    scope: format!("resource {}", resource.name),
+                    name: sub.name.clone(),
+                    problem: "duplicate sub-resource name".into(),
+                });
+            }
+            let owner = format!("{}.{}", resource.name, sub.name);
+            if let Some(previous) = type_names.insert(sub.graphql_type_name(resource), owner) {
+                violations.push(Violation::InvalidName {
+                    scope: format!("resource {}.{}", resource.name, sub.name),
+                    name: sub.graphql_type_name(resource),
+                    problem: format!("collides with the GraphQL type name of {previous}"),
+                });
+            }
+        }
     }
     violations
+}
+
+/// The index rulebook, applied identically to a resource and to a
+/// sub-resource. Only the scope string and the set of server-bound
+/// columns differ between them.
+fn validate_listing(
+    listing: &Listing<'_>,
+    table: &TableDefinition,
+    violations: &mut Vec<Violation>,
+) {
+    let column_exists = |column: &str| table.fields.iter().any(|f| f.name == column);
+    let push_unknown = |column: &str, violations: &mut Vec<Violation>| {
+        violations.push(Violation::UnknownColumn {
+            resource: listing.scope.clone(),
+            table: listing.table.to_owned(),
+            column: column.to_owned(),
+        });
+    };
+
+    if listing.fields.is_empty() {
+        violations.push(Violation::NoFields {
+            resource: listing.scope.clone(),
+        });
+    }
+
+    let mut seen_api_names = std::collections::BTreeSet::new();
+    for exposure in listing.fields {
+        if !column_exists(&exposure.column) {
+            push_unknown(&exposure.column, violations);
+        }
+        if !seen_api_names.insert(exposure.api_name().to_owned()) {
+            violations.push(Violation::DuplicateApiName {
+                resource: listing.scope.clone(),
+                name: exposure.api_name().to_owned(),
+            });
+        }
+    }
+
+    for column in listing.filterable {
+        if !column_exists(column) {
+            push_unknown(column, violations);
+            continue;
+        }
+        let covered = table
+            .indexes
+            .iter()
+            .any(|index| index.columns.iter().any(|c| c == column));
+        if !covered {
+            violations.push(Violation::UnindexedFilter {
+                resource: listing.scope.clone(),
+                table: listing.table.to_owned(),
+                column: column.clone(),
+            });
+        }
+    }
+
+    for column in &listing.bound {
+        if !column_exists(column) {
+            push_unknown(column, violations);
+        }
+    }
+
+    // A column earlier in an index than the sort column must be
+    // equality-boundable, or the index cannot serve the ORDER BY.
+    let boundable = |column: &str| {
+        listing.bound.contains(&column) || listing.filterable.iter().any(|c| c == column)
+    };
+    for column in listing.sortable {
+        if !column_exists(column) {
+            push_unknown(column, violations);
+            continue;
+        }
+        let reachable = table.indexes.iter().any(|index| {
+            index
+                .columns
+                .iter()
+                .position(|c| c == column)
+                .is_some_and(|k| index.columns[..k].iter().all(|earlier| boundable(earlier)))
+        });
+        if !reachable {
+            violations.push(Violation::UnindexedSort {
+                resource: listing.scope.clone(),
+                table: listing.table.to_owned(),
+                column: column.clone(),
+            });
+        }
+    }
+}
+
+/// Sub-resources: the same rulebook over the sub table, with
+/// `parent_key` credited as server-bound, plus the name checks.
+fn validate_sub_resource(
+    parent: &Resource,
+    sub: &SubResource,
+    schema: &[TableDefinition],
+    violations: &mut Vec<Violation>,
+) {
+    let scope = format!("{}.{}", parent.name, sub.name);
+    if !is_wire_ident(&sub.name, true) {
+        violations.push(Violation::InvalidName {
+            scope: format!("resource {scope}"),
+            name: sub.name.clone(),
+            problem: "must be lowercase snake or kebab case".into(),
+        });
+    }
+    for (label, name) in [
+        (
+            "graphql.type_name",
+            sub.graphql.as_ref().and_then(|g| g.type_name.as_deref()),
+        ),
+        (
+            "graphql.field",
+            sub.graphql.as_ref().and_then(|g| g.field.as_deref()),
+        ),
+    ] {
+        let Some(name) = name else { continue };
+        if !is_graphql_name(name) || name.starts_with("__") {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {scope} {label}"),
+                name: name.to_owned(),
+                problem: "is not a valid GraphQL name".into(),
+            });
+        }
+        if crate::reserved::is_reserved(name) {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {scope} {label}"),
+                name: name.to_owned(),
+                problem: "collides with a SurrealDB v3 reserved name".into(),
+            });
+        }
+    }
+
+    let Some(table) = schema.iter().find(|t| t.name == sub.table) else {
+        violations.push(Violation::UnknownTable {
+            resource: scope,
+            table: sub.table.clone(),
+        });
+        return;
+    };
+    validate_listing(
+        &Listing {
+            scope,
+            table: &sub.table,
+            fields: &sub.fields,
+            bound: sub.bound_columns(),
+            filterable: &sub.filterable,
+            sortable: &sub.sortable,
+        },
+        table,
+        violations,
+    );
 }
 
 /// `[a-z][a-z0-9_]*`, with `-` also allowed when `kebab` is set.
@@ -251,57 +436,18 @@ fn validate_resource(
     table: &TableDefinition,
     violations: &mut Vec<Violation>,
 ) {
-    let column_exists = |column: &str| table.fields.iter().any(|f| f.name == column);
-    let push_unknown = |column: &str, violations: &mut Vec<Violation>| {
-        violations.push(Violation::UnknownColumn {
-            resource: resource.name.clone(),
-            table: resource.table.clone(),
-            column: column.to_owned(),
-        });
-    };
-
-    if resource.fields.is_empty() {
-        violations.push(Violation::NoFields {
-            resource: resource.name.clone(),
-        });
-    }
-
-    let mut seen_api_names = std::collections::BTreeSet::new();
-    for exposure in &resource.fields {
-        if !column_exists(&exposure.column) {
-            push_unknown(&exposure.column, violations);
-        }
-        if !seen_api_names.insert(exposure.api_name().to_owned()) {
-            violations.push(Violation::DuplicateApiName {
-                resource: resource.name.clone(),
-                name: exposure.api_name().to_owned(),
-            });
-        }
-    }
-
-    for column in &resource.filterable {
-        if !column_exists(column) {
-            push_unknown(column, violations);
-            continue;
-        }
-        let covered = table
-            .indexes
-            .iter()
-            .any(|index| index.columns.iter().any(|c| c == column));
-        if !covered {
-            violations.push(Violation::UnindexedFilter {
-                resource: resource.name.clone(),
-                table: resource.table.clone(),
-                column: column.clone(),
-            });
-        }
-    }
-
-    for column in &resource.pinned {
-        if !column_exists(column) {
-            push_unknown(column, violations);
-        }
-    }
+    validate_listing(
+        &Listing {
+            scope: resource.name.clone(),
+            table: &resource.table,
+            fields: &resource.fields,
+            bound: resource.pinned.iter().map(String::as_str).collect(),
+            filterable: &resource.filterable,
+            sortable: &resource.sortable,
+        },
+        table,
+        violations,
+    );
 
     let mut action_names = std::collections::BTreeSet::new();
     for action in &resource.actions {
@@ -335,33 +481,6 @@ fn validate_resource(
             if !input_names.insert(field.name.clone()) {
                 problem(format!("duplicate input field {:?}", field.name));
             }
-        }
-    }
-
-    // A column earlier in an index than the sort column must be
-    // equality-boundable, or the index cannot serve the ORDER BY.
-    let boundable = |column: &str| {
-        resource.pinned.iter().any(|c| c == column)
-            || resource.filterable.iter().any(|c| c == column)
-    };
-    for column in &resource.sortable {
-        if !column_exists(column) {
-            push_unknown(column, violations);
-            continue;
-        }
-        let reachable = table.indexes.iter().any(|index| {
-            index
-                .columns
-                .iter()
-                .position(|c| c == column)
-                .is_some_and(|k| index.columns[..k].iter().all(|earlier| boundable(earlier)))
-        });
-        if !reachable {
-            violations.push(Violation::UnindexedSort {
-                resource: resource.name.clone(),
-                table: resource.table.clone(),
-                column: column.clone(),
-            });
         }
     }
 }

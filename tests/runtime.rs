@@ -10,10 +10,11 @@ use async_graphql::futures_util::{stream, StreamExt as _};
 use janus::runtime::graphql::build_schema;
 use janus::runtime::{
     Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, Middleware, Next, Operation,
-    Outcome, Payload, Resolvers, RowStream, SortDirection, WatchArgs,
+    Outcome, Payload, Resolvers, RowStream, SortDirection, SubListArgs, WatchArgs,
 };
 use janus::{
-    Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource, TypeRef,
+    Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource,
+    SubResource, TypeRef,
 };
 use surql::schema::{
     datetime_field, index, int_field, string_field, table_schema, TableDefinition, TableMode,
@@ -31,6 +32,42 @@ fn file_table() -> TableDefinition {
             built(datetime_field("created_at")),
         ])
         .with_indexes([index("idx_listing", ["tenant_id", "state", "created_at"])])
+}
+
+/// The sub-collection's own table, indexed for its own listing.
+fn version_table() -> TableDefinition {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    table_schema("file_version")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("file")),
+            built(int_field("ordinal")),
+            built(string_field("digest").nullable(true)),
+            built(datetime_field("created_at")),
+        ])
+        .with_indexes([index("idx_versions", ["file", "created_at"])])
+}
+
+/// The same contract with a sub-collection on `files`.
+fn contract_with_versions() -> Contract {
+    let mut contract = contract();
+    contract.resources[0].sub_resources = vec![SubResource {
+        name: "versions".into(),
+        table: "file_version".into(),
+        parent_key: "file".into(),
+        fields: vec![
+            FieldExposure::column("ordinal"),
+            FieldExposure::column("digest"),
+            FieldExposure::column("created_at"),
+        ],
+        pinned: vec![],
+        filterable: vec![],
+        sortable: vec!["created_at".into()],
+        max_page_size: 50,
+        description: Some("Every stored version of this file.".into()),
+        graphql: None,
+    }];
+    contract
 }
 
 fn contract() -> Contract {
@@ -53,6 +90,7 @@ fn contract() -> Contract {
             max_page_size: 100,
             graphql: None,
             watchable: false,
+            sub_resources: vec![],
             actions: vec![
                 Action {
                     name: "issue_url".into(),
@@ -198,6 +236,35 @@ fn fixture(contract: Contract) -> Fixture {
             Ok(None)
         });
 
+    for sub in &contract.resources[0].sub_resources.clone() {
+        let sub_name = sub.name.clone();
+        resolvers = resolvers.sub_list("files", &sub_name, move |_ctx, args: SubListArgs| {
+            let parent = args.parent_id.clone();
+            async move {
+                // Two versions of 01A and none of anything else, so the
+                // parent id is provably reaching the resolver.
+                let items = if parent == "01A" {
+                    vec![
+                        serde_json::json!({
+                            "id": "01A-v1", "ordinal": 1, "digest": "aaa",
+                            "created_at": "2026-07-30T00:00:00Z",
+                        }),
+                        serde_json::json!({
+                            "id": "01A-v2", "ordinal": 2, "digest": null,
+                            "created_at": "2026-07-30T01:00:00Z",
+                        }),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                Ok(ListOutput {
+                    items: items.into_iter().take(args.limit as usize).collect(),
+                    next_cursor: None,
+                })
+            }
+        });
+    }
+
     // Registered only when the contract declares it, which is the rule
     // the dispatcher enforces in both directions.
     if watchable {
@@ -228,7 +295,7 @@ fn fixture(contract: Contract) -> Fixture {
         ],
     )
     .unwrap();
-    let schema = build_schema(&[file_table()], Arc::new(dispatcher)).unwrap();
+    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
     Fixture {
         schema,
         seen_list_args,
@@ -530,5 +597,141 @@ async fn the_subscription_root_appears_only_for_watchable_resources() {
     assert!(
         generated.contains("  fileChanged(state: String): File!"),
         "{generated}",
+    );
+}
+
+#[tokio::test]
+async fn a_sub_collection_is_reached_through_its_parent() {
+    let fixture = fixture(contract_with_versions());
+    let response = fixture
+        .schema
+        .execute(tenant_request(
+            r#"{ file(id: "01A") { path versions(limit: 5, sort: CREATED_AT_DESC) {
+                items { id ordinal digest } nextCursor } } }"#,
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["file"]["path"], "a.txt");
+    let items = data["file"]["versions"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["ordinal"], 1);
+    // A nullable column on the sub type renders null, same as anywhere.
+    assert_eq!(items[1]["digest"], serde_json::Value::Null);
+
+    // The chain wrapped the sub-listing as its own operation.
+    let recorded = fixture.recorded.lock().unwrap().clone();
+    assert_eq!(
+        recorded,
+        vec![
+            "enter:files:Get",
+            "exit:files:Get",
+            "enter:files:SubList",
+            "exit:files:SubList",
+        ],
+    );
+}
+
+#[tokio::test]
+async fn a_sub_collection_enforces_its_own_declarations() {
+    let fixture = fixture(contract_with_versions());
+
+    // The sub-resource's ceiling is 50, the parent's is 100.
+    let response = fixture
+        .schema
+        .execute(tenant_request(
+            r#"{ file(id: "01A") { versions(limit: 5000) { items { id } } } }"#,
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(
+        data["file"]["versions"]["items"].as_array().unwrap().len(),
+        2,
+    );
+
+    // A sort the sub-resource never declared is refused.
+    let response = fixture
+        .schema
+        .execute(tenant_request(
+            r#"{ file(id: "01A") { versions(sort: ORDINAL_ASC) { items { id } } } }"#,
+        ))
+        .await;
+    assert!(
+        !response.errors.is_empty(),
+        "an undeclared sort must refuse"
+    );
+
+    // A different parent gets its own rows.
+    let response = fixture
+        .schema
+        .execute(tenant_request(
+            r#"{ file(id: "01B") { versions { items { id } } } }"#,
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert!(data["file"]["versions"]["items"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn a_declared_sub_collection_needs_its_resolver() {
+    let bare = Resolvers::new()
+        .list("files", |_ctx, _args| async { Ok(ListOutput::default()) })
+        .get("files", |_ctx, _args| async { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) });
+    let error = Dispatcher::new(Arc::new(contract_with_versions()), bare, vec![]).unwrap_err();
+    assert!(
+        error.to_string().contains("sub-resource versions"),
+        "{error}",
+    );
+}
+
+#[tokio::test]
+async fn sub_collections_reach_every_generated_surface() {
+    let declared = contract_with_versions();
+    let tables = [file_table(), version_table()];
+
+    let sdl = janus::generate_sdl(&declared, &tables).unwrap();
+    assert!(
+        sdl.contains(
+            "  versions(limit: Int = 50, cursor: String, sort: FileVersionSort): FileVersionPage!"
+        ),
+        "{sdl}",
+    );
+    assert!(sdl.contains("type FileVersion {"), "{sdl}");
+    assert!(sdl.contains("type FileVersionPage {"), "{sdl}");
+    // The type name composes with the parent, so two parents may each
+    // carry a `versions` collection.
+    assert!(!sdl.contains("type Version {"), "{sdl}");
+
+    let doc = janus::generate_openapi(&declared, &tables).unwrap();
+    let listing = &doc["paths"]["/v1/files/{id}/versions"]["get"];
+    assert_eq!(listing["operationId"], "list_versions_files");
+    assert_eq!(
+        listing["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/FileVersionPage",
+    );
+
+    let artifacts =
+        janus::generate::generate_all(&declared, &tables, janus::generate::TARGETS).unwrap();
+    assert!(artifacts["client.rs"].contains("pub async fn list_versions_files"));
+    assert!(artifacts["client.ts"].contains("listVersionsFiles(id: string"));
+    assert!(artifacts["client.py"].contains("def list_versions_files(self, id: str"));
+    assert!(artifacts["client.go"].contains("func (c *Client) ListVersionsFiles(id string"));
+
+    // Adding one is additive; taking it away is not.
+    let changes = janus::diff(&contract(), &declared);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+    let changes = janus::diff(&declared, &contract());
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.is_breaking() && c.message().contains("sub-resource versions removed")),
+        "{changes:?}",
     );
 }

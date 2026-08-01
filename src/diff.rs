@@ -33,6 +33,35 @@ impl Change {
 pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
     let mut changes = Vec::new();
 
+    // Ceilings: introducing or lowering one refuses operations that
+    // used to run. Raising or removing one refuses nothing.
+    let old_limits = old.limits.unwrap_or_default();
+    let new_limits = new.limits.unwrap_or_default();
+    for (label, before, after) in [
+        ("max_depth", old_limits.max_depth, new_limits.max_depth),
+        (
+            "max_complexity",
+            old_limits.max_complexity,
+            new_limits.max_complexity,
+        ),
+    ] {
+        match (before, after) {
+            (None, Some(introduced)) => changes.push(Change::Breaking(format!(
+                "limits: {label} introduced at {introduced}",
+            ))),
+            (Some(b), Some(a)) if a < b => changes.push(Change::Breaking(format!(
+                "limits: {label} lowered {b} -> {a}",
+            ))),
+            (Some(b), Some(a)) if a > b => changes.push(Change::Compatible(format!(
+                "limits: {label} raised {b} -> {a}",
+            ))),
+            (Some(removed), None) => changes.push(Change::Compatible(format!(
+                "limits: {label} removed (was {removed})",
+            ))),
+            _ => {}
+        }
+    }
+
     for old_resource in &old.resources {
         match new.resources.iter().find(|r| r.name == old_resource.name) {
             None => changes.push(Change::Breaking(format!(

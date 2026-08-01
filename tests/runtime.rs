@@ -75,6 +75,7 @@ fn contract() -> Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        limits: None,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -734,4 +735,51 @@ async fn sub_collections_reach_every_generated_surface() {
             .any(|c| c.is_breaking() && c.message().contains("sub-resource versions removed")),
         "{changes:?}",
     );
+}
+
+#[tokio::test]
+async fn declared_limits_bound_what_the_served_schema_accepts() {
+    // Without limits, a nested selection with several fields runs.
+    let open = fixture(contract());
+    let query = r#"{ files(limit: 2) { items { id path state size created_at } nextCursor } }"#;
+    let response = open.schema.execute(tenant_request(query)).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+    // A depth ceiling refuses the same operation before any resolver.
+    let mut capped = contract();
+    capped.limits = Some(janus::ContractLimits {
+        max_depth: Some(2),
+        max_complexity: None,
+    });
+    let shallow = fixture(capped);
+    let response = shallow.schema.execute(tenant_request(query)).await;
+    assert!(!response.errors.is_empty(), "the depth ceiling refuses");
+    assert!(
+        shallow.recorded.lock().unwrap().is_empty(),
+        "refused before the chain, so nothing recorded",
+    );
+
+    // A complexity ceiling refuses alias amplification the same way.
+    let mut narrow = contract();
+    narrow.limits = Some(janus::ContractLimits {
+        max_depth: None,
+        max_complexity: Some(3),
+    });
+    let thin = fixture(narrow);
+    let response = thin.schema.execute(tenant_request(query)).await;
+    assert!(
+        !response.errors.is_empty(),
+        "the complexity ceiling refuses"
+    );
+}
+
+#[test]
+fn consumption_refusals_carry_their_own_statuses() {
+    let too_large = JanusError::PayloadTooLarge("4 GiB".into());
+    assert_eq!(too_large.status(), 413);
+    assert_eq!(too_large.code(), "payload_too_large");
+
+    let metered = JanusError::TooManyRequests("rate class exceeded".into());
+    assert_eq!(metered.status(), 429);
+    assert_eq!(metered.code(), "too_many_requests");
 }

@@ -29,6 +29,7 @@ fn contract() -> Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        limits: None,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),

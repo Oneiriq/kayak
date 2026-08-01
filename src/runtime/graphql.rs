@@ -554,6 +554,18 @@ pub fn schema_builder(
     if has_watchers {
         builder = builder.register(subscription);
     }
+    // The contract's ceilings apply here, before any caller can
+    // attach extensions, so a served schema cannot forget the limits
+    // its own contract declares. Callers may still tighten further on
+    // the returned builder.
+    if let Some(limits) = &contract.limits {
+        if let Some(depth) = limits.max_depth {
+            builder = builder.limit_depth(depth as usize);
+        }
+        if let Some(complexity) = limits.max_complexity {
+            builder = builder.limit_complexity(complexity as usize);
+        }
+    }
     Ok(builder)
 }
 

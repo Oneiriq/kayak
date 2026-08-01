@@ -379,6 +379,13 @@ pub struct FieldExposure {
     /// API-facing name; defaults to the column name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rename: Option<String>,
+    /// Named guard deciding, per caller, whether this field is
+    /// visible. A guarded field renders nullable on every generated
+    /// surface and is OMITTED from rows the guard denies; a read is
+    /// never an error. Absent means visible to every caller the
+    /// operation admits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<String>,
 }
 
 impl FieldExposure {
@@ -387,6 +394,7 @@ impl FieldExposure {
         Self {
             column: column.into(),
             rename: None,
+            guard: None,
         }
     }
 
@@ -395,7 +403,14 @@ impl FieldExposure {
         Self {
             column: column.into(),
             rename: Some(rename.into()),
+            guard: None,
         }
+    }
+
+    /// Guard this exposure with the named policy.
+    pub fn with_guard(mut self, guard: impl Into<String>) -> Self {
+        self.guard = Some(guard.into());
+        self
     }
 
     /// The name the API surface uses.

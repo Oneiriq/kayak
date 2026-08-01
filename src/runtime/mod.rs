@@ -22,6 +22,7 @@ pub mod args;
 pub mod context;
 pub mod dispatch;
 pub mod error;
+pub mod guards;
 pub mod middleware;
 pub mod principal;
 pub mod rate;
@@ -34,6 +35,7 @@ pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection, SubList
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;
+pub use guards::Guards;
 pub use middleware::{Middleware, Next, Operation, OperationKind, Outcome, Payload};
 pub use principal::Principal;
 pub use rate::{MemoryRateStore, RateStore};

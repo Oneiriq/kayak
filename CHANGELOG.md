@@ -11,6 +11,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Field guards as dispatcher projection.** A named visibility policy on an
+  exposed field, registered by the service and applied once in the dispatcher
+  on every row a resolver returns, subscriptions included. Denied fields are
+  omitted; reads are never errors; a guarded field renders nullable on every
+  generated surface and carries `x-guard` in OpenAPI. A caller who cannot see
+  a column cannot filter or sort by it, because narrowing by a value is
+  reading it. The completeness gate runs both directions, and the differ
+  treats guarding an open field or swapping its policy as breaking.
 - **Rate classes and the dispatch limiter.** A contract defines named budgets
   (`rate_classes`) and attaches them to resource reads or individual actions.
   The dispatcher charges the ledger before anything else runs: listings cost

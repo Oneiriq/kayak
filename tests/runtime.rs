@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use async_graphql::futures_util::{stream, StreamExt as _};
 use janus::runtime::graphql::build_schema;
 use janus::runtime::{
-    Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, MemoryRateStore, Middleware, Next,
-    Operation, Outcome, Payload, Principal, Resolvers, RowStream, SortDirection, SubListArgs,
-    WatchArgs,
+    Dispatcher, Guards, JanusContext, JanusError, ListArgs, ListOutput, MemoryRateStore,
+    Middleware, Next, Operation, Outcome, Payload, Principal, Resolvers, RowStream, SortDirection,
+    SubListArgs, WatchArgs,
 };
 use janus::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource,
@@ -1100,5 +1100,322 @@ fn rate_movement_diffs_and_undefined_classes_refuse() {
             .iter()
             .any(|v| v.to_string().contains("undefined rate class")),
         "{violations:?}",
+    );
+}
+
+/// The contract with its sensitive columns guarded: `state` (which is
+/// also filterable) and `created_at` (which is sortable), plus the
+/// sub-collection's digest. One guard decides all three.
+fn guarded_contract() -> Contract {
+    let mut contract = contract_with_versions();
+    contract.resources[0].watchable = true;
+    contract.resources[0].fields = vec![
+        FieldExposure::column("path"),
+        FieldExposure::column("state").with_guard("audit_only"),
+        FieldExposure::renamed("size_bytes", "size"),
+        FieldExposure::column("created_at").with_guard("audit_only"),
+    ];
+    contract.resources[0].sub_resources[0].fields = vec![
+        FieldExposure::column("ordinal"),
+        FieldExposure::column("digest").with_guard("audit_only"),
+        FieldExposure::column("created_at"),
+    ];
+    contract
+}
+
+/// A fixture whose dispatcher carries the audit_only guard: visible
+/// exactly to principals holding the audit scope.
+fn guarded_fixture() -> Fixture {
+    let seen_watch_args = Arc::new(Mutex::new(None));
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let watch_capture = seen_watch_args.clone();
+    let resolvers = Resolvers::new()
+        .list("files", |_ctx, args: ListArgs| async move {
+            let mut items = rows();
+            items.truncate(args.limit as usize);
+            Ok(ListOutput {
+                items,
+                next_cursor: None,
+            })
+        })
+        .get("files", |_ctx, args| async move {
+            Ok(rows().into_iter().find(|row| row["id"] == *args.id))
+        })
+        .sub_list("files", "versions", |_ctx, _args: SubListArgs| async move {
+            Ok(ListOutput {
+                items: vec![serde_json::json!({
+                    "id": "01A-v1", "ordinal": 1, "digest": "aaa",
+                    "created_at": "2026-07-30T00:00:00Z",
+                })],
+                next_cursor: None,
+            })
+        })
+        .action("files", "issue_url", |_ctx, _args| async move {
+            // A Json action whose payload happens to carry a key named
+            // like a guarded field. Free-form output is the action's
+            // own shape; projection must not eat it.
+            Ok(Some(
+                serde_json::json!({ "url": "https://cdn/x", "state": "minted" }),
+            ))
+        })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) })
+        .watch("files", move |_ctx, args: WatchArgs| {
+            let capture = watch_capture.clone();
+            async move {
+                *capture.lock().unwrap() = Some(args.clone());
+                let items: Vec<_> = rows().into_iter().map(Ok).collect();
+                Ok(Box::pin(stream::iter(items)) as RowStream)
+            }
+        });
+    let guards = Guards::new().guard("audit_only", |ctx| {
+        ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
+    });
+    let dispatcher = Dispatcher::with_policies(
+        Arc::new(guarded_contract()),
+        resolvers,
+        vec![Arc::new(RequireTenant) as Arc<dyn Middleware>],
+        None,
+        guards,
+    )
+    .unwrap();
+    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
+    Fixture {
+        schema,
+        seen_list_args: Arc::new(Mutex::new(None)),
+        seen_watch_args,
+        recorded,
+    }
+}
+
+#[tokio::test]
+async fn guarded_fields_are_omitted_for_callers_the_guard_denies() {
+    let fixture = guarded_fixture();
+    let query = r#"{ files { items { id path state created_at } } }"#;
+
+    // Denied: the guarded fields render null; the open ones survive.
+    let response = fixture
+        .schema
+        .execute(scoped_request(query, &["other"]))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    let row = &data["files"]["items"][0];
+    assert_eq!(row["path"], "a.txt");
+    assert!(row["state"].is_null(), "{row:?}");
+    assert!(row["created_at"].is_null(), "{row:?}");
+
+    // Allowed: the same query shows everything.
+    let response = fixture
+        .schema
+        .execute(scoped_request(query, &["audit"]))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["files"]["items"][0]["state"], "ready");
+
+    // The get face projects identically.
+    let response = fixture
+        .schema
+        .execute(scoped_request(r#"{ file(id: "01A") { state } }"#, &[]))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert!(response.data.into_json().unwrap()["file"]["state"].is_null());
+
+    // Sub-collection rows project through their own field list.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ file(id: "01A") { versions { items { ordinal digest } } } }"#,
+            &[],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    let version = &data["file"]["versions"]["items"][0];
+    assert_eq!(version["ordinal"], 1);
+    assert!(version["digest"].is_null(), "{version:?}");
+
+    // A Json action's own keys are its own shape, never projected.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"mutation { fileIssueUrl(id: "01A") }"#,
+            &[],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["fileIssueUrl"]["state"], "minted");
+}
+
+#[tokio::test]
+async fn hidden_columns_refuse_narrowing_and_streams_project() {
+    let fixture = guarded_fixture();
+
+    // Filtering on a column the caller cannot see is reading it.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ files(state: "quarantined") { items { id } } }"#,
+            &["other"],
+        ))
+        .await;
+    let error = &response.errors[0];
+    assert!(
+        error.message.contains("requires permission to see it"),
+        "{error:?}",
+    );
+
+    // Sorting leaks ordering the same way.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ files(sort: CREATED_AT_DESC) { items { id } } }"#,
+            &[],
+        ))
+        .await;
+    assert!(
+        response.errors[0].message.contains("sorting on created_at"),
+        "{:?}",
+        response.errors,
+    );
+
+    // The audit scope unlocks both.
+    let response = fixture
+        .schema
+        .execute(scoped_request(
+            r#"{ files(state: "ready", sort: CREATED_AT_DESC) { items { id state } } }"#,
+            &["audit"],
+        ))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+    // Streamed rows project exactly like listed ones.
+    let responses: Vec<_> = fixture
+        .schema
+        .execute_stream(scoped_request(
+            r#"subscription { fileChanged { id state } }"#,
+            &["other"],
+        ))
+        .collect()
+        .await;
+    assert!(!responses.is_empty());
+    for response in &responses {
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.clone().into_json().unwrap();
+        assert!(
+            data["fileChanged"]["state"].is_null(),
+            "a streamed row leaked a guarded field: {data:?}",
+        );
+    }
+}
+
+#[test]
+fn guards_are_declared_and_registered_together_or_not_at_all() {
+    let resolvers = || {
+        Resolvers::new()
+            .list("files", |_ctx, _args| async { Ok(ListOutput::default()) })
+            .get("files", |_ctx, _args| async { Ok(None) })
+            .sub_list("files", "versions", |_ctx, _args| async {
+                Ok(ListOutput::default())
+            })
+            .action("files", "issue_url", |_ctx, _args| async { Ok(None) })
+            .action("files", "remove", |_ctx, _args| async { Ok(None) })
+            .watch("files", |_ctx, _args| async {
+                Ok(Box::pin(stream::empty()) as RowStream)
+            })
+    };
+
+    // Declared, unregistered: would silently show what it hides.
+    let error = Dispatcher::new(Arc::new(guarded_contract()), resolvers(), vec![]).unwrap_err();
+    assert!(error.to_string().contains("guard audit_only"), "{error}",);
+
+    // Registered, unreferenced: dead policy that reads as live.
+    let mut open = contract_with_versions();
+    open.resources[0].watchable = true;
+    let guards = Guards::new().guard("audit_only", |_| true);
+    let error =
+        Dispatcher::with_policies(Arc::new(open), resolvers(), vec![], None, guards).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("no field in the contract names it"),
+        "{error}",
+    );
+}
+
+#[test]
+fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
+    let tables = [file_table(), version_table()];
+    let guarded = guarded_contract();
+
+    // SDL and the served schema drop the bang on guarded fields.
+    let sdl = janus::generate_sdl(&guarded, &tables).unwrap();
+    assert!(
+        sdl.contains(
+            "  state: String
+"
+        ),
+        "{sdl}"
+    );
+    assert!(
+        sdl.contains(
+            "  created_at: DateTime
+"
+        ),
+        "{sdl}"
+    );
+    assert!(sdl.contains("  path: String!"), "{sdl}");
+    assert!(
+        sdl.contains(
+            "  digest: String
+"
+        ),
+        "{sdl}"
+    );
+
+    // OpenAPI: guarded fields leave required and carry the policy.
+    let doc = janus::generate_openapi(&guarded, &tables).unwrap();
+    let schema = &doc["components"]["schemas"]["File"];
+    assert_eq!(schema["properties"]["state"]["x-guard"], "audit_only");
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(required.contains(&"path"));
+    assert!(!required.contains(&"state"), "{required:?}");
+
+    // Clients render the guarded field optional in every language.
+    let artifacts =
+        janus::generate::generate_all(&guarded, &tables, janus::generate::TARGETS).unwrap();
+    assert!(artifacts["client.rs"].contains("pub state: Option<String>,"));
+    assert!(artifacts["client.ts"].contains("state?: string"));
+    assert!(artifacts["client.py"].contains("state: str | None = None"));
+    assert!(artifacts["client.go"].contains("State *string"));
+
+    // Guarding an open field is breaking; unguarding is compatible.
+    let mut open = contract_with_versions();
+    open.resources[0].watchable = true;
+    let changes = janus::diff(&open, &guarded);
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("field state now guarded by audit_only")),
+        "{changes:?}",
+    );
+    let changes = janus::diff(&guarded, &open);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+
+    // Swapping the policy behind a field changes who sees it.
+    let mut swapped = guarded_contract();
+    swapped.resources[0].fields[1] = FieldExposure::column("state").with_guard("owner_only");
+    let changes = janus::diff(&guarded, &swapped);
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("guard changed audit_only -> owner_only")),
+        "{changes:?}",
     );
 }

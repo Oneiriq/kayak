@@ -378,6 +378,15 @@ fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
     }
 
     for exposure in &resource.fields {
+        if let Some(guard) = &exposure.guard {
+            if !is_wire_ident(guard, false) {
+                push(
+                    scope(""),
+                    guard,
+                    "guard names must be lowercase snake case".into(),
+                );
+            }
+        }
         if let Some(rename) = &exposure.rename {
             if !is_wire_ident(rename, false) {
                 push(

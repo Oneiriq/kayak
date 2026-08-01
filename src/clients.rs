@@ -856,13 +856,14 @@ fn rust_struct(
             FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => "Value",
             _ => "String",
         };
-        let ty = if field.nullable {
+        let optional = field.nullable || exposure.guard.is_some();
+        let ty = if optional {
             format!("Option<{base}>")
         } else {
             base.to_owned()
         };
         let api = exposure.api_name();
-        if field.nullable {
+        if optional {
             writeln!(out, "    #[serde(default)]").unwrap();
         }
         writeln!(out, "    pub {}: {ty},", snake(api)).unwrap();
@@ -895,7 +896,11 @@ fn ts_interface(
             }
             _ => "string",
         };
-        let optional = if field.nullable { "?" } else { "" };
+        let optional = if field.nullable || exposure.guard.is_some() {
+            "?"
+        } else {
+            ""
+        };
         writeln!(out, "  {}{optional}: {base}", camel(exposure.api_name())).unwrap();
     }
     writeln!(out, "}}\n").unwrap();
@@ -927,7 +932,7 @@ fn py_dataclass(
             _ => "str",
         };
         let attribute = snake(exposure.api_name());
-        if schema_field.nullable {
+        if schema_field.nullable || exposure.guard.is_some() {
             optional_lines.push(format!("  {attribute}: {base} | None = None"));
         } else {
             required_lines.push(format!("  {attribute}: {base}"));
@@ -960,7 +965,7 @@ fn go_struct(
             FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => "any",
             _ => "string",
         };
-        let go_type = if field.nullable && base != "any" {
+        let go_type = if (field.nullable || exposure.guard.is_some()) && base != "any" {
             format!("*{base}")
         } else {
             base.to_owned()

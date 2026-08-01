@@ -46,7 +46,7 @@ pub fn generate_sdl(
                 .iter()
                 .find(|f| f.name == exposure.column)
                 .expect("validated: column exists");
-            let (gql, datetime, json) = graphql_type(field);
+            let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
             uses_datetime |= datetime;
             uses_json |= json;
             writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
@@ -95,7 +95,7 @@ pub fn generate_sdl(
                     .iter()
                     .find(|f| f.name == exposure.column)
                     .expect("validated: column exists");
-                let (gql, datetime, json) = graphql_type(field);
+                let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
                 uses_datetime |= datetime;
                 uses_json |= json;
                 writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
@@ -220,8 +220,9 @@ pub(crate) fn sub_field_signature(parent: &Resource, sub: &crate::ir::SubResourc
 }
 
 /// Map a schema field to (GraphQL type, uses_datetime, uses_json).
-/// Nullable columns drop the `!`.
-fn graphql_type(field: &FieldDefinition) -> (String, bool, bool) {
+/// Nullable columns drop the `!`, and so do guarded ones: a field the
+/// dispatcher may omit cannot promise to be present.
+fn graphql_type(field: &FieldDefinition, guarded: bool) -> (String, bool, bool) {
     let (base, datetime, json) = match field.field_type {
         FieldType::String | FieldType::Record | FieldType::File => ("String", false, false),
         FieldType::Int => ("Int", false, false),
@@ -234,7 +235,7 @@ fn graphql_type(field: &FieldDefinition) -> (String, bool, bool) {
         }
         FieldType::Bytes => ("String", false, false),
     };
-    let rendered = if field.nullable {
+    let rendered = if field.nullable || guarded {
         base.to_owned()
     } else {
         format!("{base}!")

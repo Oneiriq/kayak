@@ -361,6 +361,7 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
     capped.limits = Some(janus::ContractLimits {
         max_depth: Some(10),
         max_complexity: Some(500),
+        max_watches_per_principal: None,
     });
 
     // The document carries what the served schema will enforce.
@@ -386,6 +387,7 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
     lowered.limits = Some(janus::ContractLimits {
         max_depth: Some(8),
         max_complexity: Some(500),
+        max_watches_per_principal: None,
     });
     let changes = diff(&capped, &lowered);
     assert!(

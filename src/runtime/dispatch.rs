@@ -62,6 +62,9 @@ pub struct Dispatcher {
     middleware: Arc<[Arc<dyn Middleware>]>,
     rate_store: Option<Arc<dyn RateStore>>,
     guards: Guards,
+    /// Open subscriptions per principal subject, kept only when the
+    /// contract declares a ceiling.
+    watch_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
 }
 
 impl Dispatcher {
@@ -219,6 +222,7 @@ impl Dispatcher {
             middleware: middleware.into(),
             rate_store,
             guards,
+            watch_counts: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -253,11 +257,13 @@ impl Dispatcher {
         let contract = self.contract.clone();
         let rate_store = self.rate_store.clone();
         let guards = self.guards.clone();
+        let watch_counts = self.watch_counts.clone();
         let terminal: Terminal = Arc::new(move |operation: Operation, ctx, payload| {
             let resolvers = resolvers.clone();
             let contract = contract.clone();
             let rate_store = rate_store.clone();
             let guards = guards.clone();
+            let watch_counts = watch_counts.clone();
             Box::pin(async move {
                 // The ledger is charged first: a caller past its
                 // budget learns nothing else about the request, and an
@@ -323,7 +329,21 @@ impl Dispatcher {
                             .get(&operation.resource)
                             .expect("completeness-checked at build")
                             .clone();
-                        resolver(ctx, args).await.map(Outcome::Watch)
+                        // The slot is taken before the resolver runs,
+                        // so a refused open never starts a live query,
+                        // and it rides the stream so dropping the
+                        // subscription frees it.
+                        let slot = acquire_watch_slot(&contract, &ctx, &watch_counts)?;
+                        match resolver(ctx, args).await {
+                            Ok(stream) => Ok(Outcome::Watch(match slot {
+                                Some(slot) => Box::pin(SlottedStream {
+                                    inner: stream,
+                                    _slot: slot,
+                                }),
+                                None => stream,
+                            })),
+                            Err(error) => Err(error),
+                        }
                     }
                     _ => Err(JanusError::Internal(
                         "payload does not match operation kind".into(),
@@ -484,6 +504,75 @@ impl Dispatcher {
             )),
         }
     }
+}
+
+/// One held subscription slot; dropping it frees the count, whether
+/// the stream ended, errored, or the client walked away.
+struct WatchSlot {
+    counts: Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
+    subject: String,
+}
+
+impl Drop for WatchSlot {
+    fn drop(&mut self) {
+        if let Ok(mut counts) = self.counts.lock() {
+            if let Some(open) = counts.get_mut(&self.subject) {
+                *open = open.saturating_sub(1);
+                if *open == 0 {
+                    counts.remove(&self.subject);
+                }
+            }
+        }
+    }
+}
+
+/// A row stream carrying its slot, so the count and the subscription
+/// share a lifetime exactly.
+struct SlottedStream {
+    inner: crate::runtime::resolvers::RowStream,
+    _slot: WatchSlot,
+}
+
+impl futures_core::Stream for SlottedStream {
+    type Item = Result<serde_json::Value, JanusError>;
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.get_mut().inner).poll_next(cx)
+    }
+}
+
+/// Take a subscription slot for this caller, when the contract caps
+/// them. Over the ceiling refuses with the retryable code: closing a
+/// subscription is what frees a slot.
+fn acquire_watch_slot(
+    contract: &Contract,
+    ctx: &JanusContext,
+    counts: &Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
+) -> Result<Option<WatchSlot>, JanusError> {
+    let Some(ceiling) = contract.limits.and_then(|l| l.max_watches_per_principal) else {
+        return Ok(None);
+    };
+    let subject = ctx
+        .get::<Principal>()
+        .map(|p| p.subject.clone())
+        .unwrap_or_else(|| "anonymous".to_owned());
+    let mut counts_map = counts
+        .lock()
+        .map_err(|_| JanusError::Internal("watch ledger poisoned".into()))?;
+    let open = counts_map.entry(subject.clone()).or_insert(0);
+    if *open >= ceiling {
+        return Err(JanusError::TooManyRequests(format!(
+            "watch ceiling of {ceiling} reached; close a subscription to open another",
+        )));
+    }
+    *open += 1;
+    drop(counts_map);
+    Ok(Some(WatchSlot {
+        counts: counts.clone(),
+        subject,
+    }))
 }
 
 /// The wire names and columns this caller may NOT see for the

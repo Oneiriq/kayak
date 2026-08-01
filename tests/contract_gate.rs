@@ -48,6 +48,7 @@ fn files_resource() -> Resource {
         max_page_size: 100,
         graphql: None,
         watchable: false,
+        reads_require: vec![],
         sub_resources: vec![],
         actions: vec![],
     }
@@ -149,6 +150,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         max_page_size: 10,
         graphql: None,
         watchable: false,
+        reads_require: vec![],
         sub_resources: vec![],
         actions: vec![],
     };

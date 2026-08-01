@@ -394,6 +394,16 @@ fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
         }
     }
 
+    for required in &resource.reads_require {
+        if !is_wire_ident(required, false) {
+            push(
+                scope(" reads_require"),
+                required,
+                "scope names must be lowercase snake case".into(),
+            );
+        }
+    }
+
     for action in &resource.actions {
         let action_scope = || scope(&format!(" action {}", action.name));
         if !action.name.is_empty() && !is_wire_ident(&action.name, false) {
@@ -425,6 +435,15 @@ fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
                     action_scope(),
                     &input.name,
                     "input name must be lowercase snake case".into(),
+                );
+            }
+        }
+        for required in &action.requires {
+            if !is_wire_ident(required, false) {
+                push(
+                    action_scope(),
+                    required,
+                    "scope names must be lowercase snake case".into(),
                 );
             }
         }

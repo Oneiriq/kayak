@@ -66,6 +66,23 @@ It dispatches as its own operation (`OperationKind::SubList`), so middleware
 sees the parent listing and the sub-listing separately and can authorize them
 separately.
 
+## The principal
+
+A tenant says whose data a request touches; a [`Principal`] says what
+this caller may do with it. The protocol layer or an auth middleware
+seeds one:
+
+```rust
+ctx.insert(Principal::new("key-01", ["files_read".to_owned()]));
+```
+
+The dispatcher checks it against the contract's declared scopes at the
+terminal: after every middleware layer, so identity resolved mid-chain
+counts, and before the resolver, so guarded data is never touched on a
+refusal. Declared scope with no principal refuses `unauthorized`;
+a principal missing the scope refuses `forbidden`, naming it. A
+contract that declares no scopes checks nothing.
+
 ## Watching
 
 A resource the contract marks `watchable` registers a fourth kind of

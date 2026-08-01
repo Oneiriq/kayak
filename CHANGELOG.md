@@ -11,6 +11,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Principal and scopes.** A `Principal` (subject plus scopes) rides the
+  context; `reads_require` on a resource gates list, get, sub-collections,
+  and watching, and `requires` on an action gates invoking it. Enforcement
+  happens once, in the dispatcher after the middleware chain and before the
+  resolver, so every face inherits it identically. Anonymous against a
+  declared scope is `unauthorized`; identified but missing it is `forbidden`,
+  naming the scope. OpenAPI operations carry `x-requires-scopes`, and the
+  differ treats a new requirement as breaking.
 - **Consumption refusals in the error vocabulary.** `PayloadTooLarge` (413)
   and `TooManyRequests` (429), so a protocol face no longer downgrades an
   oversized body to a generic bad request and a metered refusal has a status a

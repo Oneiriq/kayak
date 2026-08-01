@@ -85,6 +85,13 @@ pub struct Resource {
     /// why they are not resources of their own.
     #[serde(default)]
     pub sub_resources: Vec<SubResource>,
+    /// Scopes a caller must hold to READ this resource: list, get,
+    /// sub-collections, and watching all check them. Empty means open
+    /// to any caller the middleware admits, which is every existing
+    /// contract's behavior. A sub-collection is read under its
+    /// parent's requirement, because it is reached through the parent.
+    #[serde(default)]
+    pub reads_require: Vec<String>,
     /// Whether callers may watch this resource for changes. A watchable
     /// resource gains a GraphQL Subscription field and requires a watch
     /// resolver; it changes nothing about REST, which has no long-lived
@@ -232,6 +239,10 @@ pub struct Action {
     /// singular resource + PascalCase action, e.g. `fileIssueUrl`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graphql_field: Option<String>,
+    /// Scopes a caller must hold to invoke this action. Empty means
+    /// open, which is every existing contract's behavior.
+    #[serde(default)]
+    pub requires: Vec<String>,
 }
 
 impl Action {
@@ -403,9 +414,11 @@ mod tests {
                     output: ActionOutput::Json,
                     description: Some("Issue a signed URL.".into()),
                     graphql_field: None,
+                    requires: vec![],
                 }],
                 graphql: None,
                 watchable: false,
+                reads_require: vec![],
                 sub_resources: vec![],
             }],
         };

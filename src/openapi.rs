@@ -245,6 +245,7 @@ fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &
     if let Some(description) = &sub.description {
         operation["description"] = json!(description);
     }
+    attach_scopes(&mut operation, &parent.reads_require);
     json!({ "get": operation })
 }
 
@@ -351,20 +352,28 @@ fn list_path(resource: &Resource, schema_name: &str) -> Value {
             "description": "Sort order; every value is backed by an index.",
         }));
     }
-    json!({
-        "get": {
-            "operationId": format!("list_{}", resource.name.replace('-', "_")),
-            "parameters": parameters,
-            "responses": {
-                "200": {
-                    "description": "Page of resources.",
-                    "content": {"application/json": {"schema": {
-                        "$ref": format!("#/components/schemas/{schema_name}Page"),
-                    }}},
-                },
+    let mut operation = json!({
+        "operationId": format!("list_{}", resource.name.replace('-', "_")),
+        "parameters": parameters,
+        "responses": {
+            "200": {
+                "description": "Page of resources.",
+                "content": {"application/json": {"schema": {
+                    "$ref": format!("#/components/schemas/{schema_name}Page"),
+                }}},
             },
         },
-    })
+    });
+    attach_scopes(&mut operation, &resource.reads_require);
+    json!({ "get": operation })
+}
+
+/// Stamp the scopes an operation demands, when it demands any, so
+/// authorization policy is visible where the API is read.
+fn attach_scopes(operation: &mut Value, scopes: &[String]) {
+    if !scopes.is_empty() {
+        operation["x-requires-scopes"] = json!(scopes);
+    }
 }
 
 fn sort_values(resource: &Resource) -> Vec<String> {
@@ -449,28 +458,31 @@ fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> 
         }),
     };
     operation.insert("responses".into(), responses);
+    if !action.requires.is_empty() {
+        operation.insert("x-requires-scopes".into(), json!(action.requires));
+    }
     Value::Object(operation)
 }
 
 fn get_path(resource: &Resource, schema_name: &str) -> Value {
-    json!({
-        "get": {
-            "operationId": format!("get_{}", resource.name.replace('-', "_")),
-            "parameters": [{
-                "name": "id",
-                "in": "path",
-                "required": true,
-                "schema": {"type": "string"},
-            }],
-            "responses": {
-                "200": {
-                    "description": "The resource.",
-                    "content": {"application/json": {"schema": {
-                        "$ref": format!("#/components/schemas/{schema_name}"),
-                    }}},
-                },
-                "404": {"description": "Not found."},
+    let mut operation = json!({
+        "operationId": format!("get_{}", resource.name.replace('-', "_")),
+        "parameters": [{
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"},
+        }],
+        "responses": {
+            "200": {
+                "description": "The resource.",
+                "content": {"application/json": {"schema": {
+                    "$ref": format!("#/components/schemas/{schema_name}"),
+                }}},
             },
+            "404": {"description": "Not found."},
         },
-    })
+    });
+    attach_scopes(&mut operation, &resource.reads_require);
+    json!({ "get": operation })
 }

@@ -223,6 +223,22 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         }
     }
 
+    // Scopes: a new requirement refuses callers that used to pass.
+    for required in &new.reads_require {
+        if !old.reads_require.contains(required) {
+            changes.push(Change::Breaking(format!(
+                "{scope}: reads now require scope {required}",
+            )));
+        }
+    }
+    for required in &old.reads_require {
+        if !new.reads_require.contains(required) {
+            changes.push(Change::Compatible(format!(
+                "{scope}: reads no longer require scope {required}",
+            )));
+        }
+    }
+
     // Watching: opening one is additive, closing one strands every
     // deployed subscriber, and the field name matters only while the
     // subscription exists.
@@ -272,6 +288,20 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
 
 fn diff_action(scope: &str, old: &Action, new: &Action, changes: &mut Vec<Change>) {
     let name = &old.name;
+    for required in &new.requires {
+        if !old.requires.contains(required) {
+            changes.push(Change::Breaking(format!(
+                "{scope}: action {name} now requires scope {required}",
+            )));
+        }
+    }
+    for required in &old.requires {
+        if !new.requires.contains(required) {
+            changes.push(Change::Compatible(format!(
+                "{scope}: action {name} no longer requires scope {required}",
+            )));
+        }
+    }
     if old.method != new.method || old.path != new.path {
         changes.push(Change::Breaking(format!(
             "{scope}: action {name} moved ({} {} -> {} {})",

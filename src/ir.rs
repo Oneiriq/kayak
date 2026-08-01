@@ -19,6 +19,12 @@ pub struct Contract {
     /// IR schema revision, for forward-compatible tooling.
     #[serde(default = "default_ir_revision")]
     pub ir_revision: u32,
+    /// Named consumption budgets. A resource or action that names one
+    /// is metered against it; introducing or shrinking a budget is a
+    /// breaking change the differ names. Defined here so the budgets
+    /// are review-visible beside the operations they bound.
+    #[serde(default)]
+    pub rate_classes: Vec<RateClass>,
     /// Request-cost ceilings, declared here so they appear in the
     /// artifacts and the differ tracks them. A ceiling hand-wired at
     /// the protocol layer is policy the contract does not know about:
@@ -27,6 +33,16 @@ pub struct Contract {
     pub limits: Option<ContractLimits>,
     /// Exposed resources.
     pub resources: Vec<Resource>,
+}
+
+/// One named consumption budget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateClass {
+    /// Snake-case name resources and actions reference.
+    pub name: String,
+    /// Units allowed per caller per minute. A listing costs its row
+    /// limit; every other operation costs one.
+    pub units_per_minute: u64,
 }
 
 /// Ceilings on what one operation may cost. The served GraphQL schema
@@ -85,6 +101,10 @@ pub struct Resource {
     /// why they are not resources of their own.
     #[serde(default)]
     pub sub_resources: Vec<SubResource>,
+    /// The rate class metering reads of this resource: list, get,
+    /// sub-collections, and watch opens. Absent means unmetered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_class: Option<String>,
     /// Scopes a caller must hold to READ this resource: list, get,
     /// sub-collections, and watching all check them. Empty means open
     /// to any caller the middleware admits, which is every existing
@@ -243,6 +263,11 @@ pub struct Action {
     /// open, which is every existing contract's behavior.
     #[serde(default)]
     pub requires: Vec<String>,
+    /// The rate class metering this action. Absent means unmetered;
+    /// there is no fallback to the resource's class, because an
+    /// action's cost profile rarely matches its resource's reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_class: Option<String>,
 }
 
 impl Action {
@@ -390,6 +415,7 @@ mod tests {
             version: "1.0.0".into(),
             ir_revision: 1,
             limits: None,
+            rate_classes: vec![],
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
@@ -415,10 +441,12 @@ mod tests {
                     description: Some("Issue a signed URL.".into()),
                     graphql_field: None,
                     requires: vec![],
+                    rate_class: None,
                 }],
                 graphql: None,
                 watchable: false,
                 reads_require: vec![],
+                rate_class: None,
                 sub_resources: vec![],
             }],
         };

@@ -24,6 +24,7 @@ pub mod dispatch;
 pub mod error;
 pub mod middleware;
 pub mod principal;
+pub mod rate;
 pub mod resolvers;
 
 #[cfg(feature = "graphql")]
@@ -35,4 +36,5 @@ pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;
 pub use middleware::{Middleware, Next, Operation, OperationKind, Outcome, Payload};
 pub use principal::Principal;
+pub use rate::{MemoryRateStore, RateStore};
 pub use resolvers::{BoxFuture, Resolvers, RowStream};

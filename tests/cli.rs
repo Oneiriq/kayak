@@ -30,6 +30,7 @@ fn contract() -> Contract {
         version: "0.1.0".into(),
         ir_revision: 1,
         limits: None,
+        rate_classes: vec![],
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -46,6 +47,7 @@ fn contract() -> Contract {
             graphql: None,
             watchable: false,
             reads_require: vec![],
+            rate_class: None,
             sub_resources: vec![],
             actions: vec![Action {
                 name: "issue_url".into(),
@@ -61,6 +63,7 @@ fn contract() -> Contract {
                 description: None,
                 graphql_field: None,
                 requires: vec![],
+                rate_class: None,
             }],
         }],
     }

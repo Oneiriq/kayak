@@ -19,6 +19,7 @@ use crate::runtime::middleware::{
     Middleware, Next, Operation, OperationKind, Outcome, Payload, Terminal,
 };
 use crate::runtime::principal::Principal;
+use crate::runtime::rate::RateStore;
 use crate::runtime::resolvers::{Resolvers, RowStream};
 
 /// Why a runtime could not be assembled.
@@ -38,6 +39,11 @@ pub enum RuntimeBuildError {
         "resource {0}: watch resolver registered, but the contract does not mark it watchable"
     )]
     UnwatchedResolver(String),
+    #[error(
+        "{scope}: rate class {class} declared, but no rate store is registered; \
+         use Dispatcher::with_rate_store"
+    )]
+    UnmeteredRateClass { scope: String, class: String },
 }
 
 /// The executable heart of the runtime. Cheap to clone via `Arc`.
@@ -45,6 +51,7 @@ pub struct Dispatcher {
     contract: Arc<Contract>,
     resolvers: Resolvers,
     middleware: Arc<[Arc<dyn Middleware>]>,
+    rate_store: Option<Arc<dyn RateStore>>,
 }
 
 impl Dispatcher {
@@ -55,6 +62,46 @@ impl Dispatcher {
         resolvers: Resolvers,
         middleware: Vec<Arc<dyn Middleware>>,
     ) -> Result<Self, RuntimeBuildError> {
+        Self::build(contract, resolvers, middleware, None)
+    }
+
+    /// Assemble a dispatcher with a consumption ledger. Required
+    /// whenever the contract names a rate class: a declared budget
+    /// with nothing keeping the ledger would be policy that silently
+    /// meters nobody.
+    pub fn with_rate_store(
+        contract: Arc<Contract>,
+        resolvers: Resolvers,
+        middleware: Vec<Arc<dyn Middleware>>,
+        rate_store: Arc<dyn RateStore>,
+    ) -> Result<Self, RuntimeBuildError> {
+        Self::build(contract, resolvers, middleware, Some(rate_store))
+    }
+
+    fn build(
+        contract: Arc<Contract>,
+        resolvers: Resolvers,
+        middleware: Vec<Arc<dyn Middleware>>,
+        rate_store: Option<Arc<dyn RateStore>>,
+    ) -> Result<Self, RuntimeBuildError> {
+        if rate_store.is_none() {
+            for resource in &contract.resources {
+                if let Some(class) = &resource.rate_class {
+                    return Err(RuntimeBuildError::UnmeteredRateClass {
+                        scope: format!("resource {}", resource.name),
+                        class: class.clone(),
+                    });
+                }
+                for action in &resource.actions {
+                    if let Some(class) = &action.rate_class {
+                        return Err(RuntimeBuildError::UnmeteredRateClass {
+                            scope: format!("resource {} action {}", resource.name, action.name),
+                            class: class.clone(),
+                        });
+                    }
+                }
+            }
+        }
         for resource in &contract.resources {
             if !resolvers.list.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingList(resource.name.clone()));
@@ -101,6 +148,7 @@ impl Dispatcher {
             contract,
             resolvers,
             middleware: middleware.into(),
+            rate_store,
         })
     }
 
@@ -133,10 +181,16 @@ impl Dispatcher {
     fn chain(&self) -> Next {
         let resolvers = self.resolvers.clone();
         let contract = self.contract.clone();
+        let rate_store = self.rate_store.clone();
         let terminal: Terminal = Arc::new(move |operation: Operation, ctx, payload| {
             let resolvers = resolvers.clone();
             let contract = contract.clone();
+            let rate_store = rate_store.clone();
             Box::pin(async move {
+                // The ledger is charged first: a caller past its
+                // budget learns nothing else about the request, and an
+                // unauthorized prober spends budget on its probes.
+                charge_rate(&contract, &operation, &ctx, rate_store.as_deref(), &payload).await?;
                 // Scopes are checked here, after the whole middleware
                 // chain, so an auth layer that resolves the principal
                 // mid-chain still counts, and checked before the
@@ -348,6 +402,68 @@ impl Dispatcher {
                 "resolver returned a mismatched outcome".into(),
             )),
         }
+    }
+}
+
+/// Charge the operation's cost against its declared rate class, when
+/// one is declared and a ledger is present. Listings cost their
+/// clamped row limit; everything else costs one, which is the
+/// proportionality a per-request count cannot express.
+async fn charge_rate(
+    contract: &Contract,
+    operation: &Operation,
+    ctx: &JanusContext,
+    store: Option<&dyn RateStore>,
+    payload: &Payload,
+) -> Result<(), JanusError> {
+    let Some(store) = store else { return Ok(()) };
+    let Some(resource) = contract
+        .resources
+        .iter()
+        .find(|r| r.name == operation.resource)
+    else {
+        return Ok(());
+    };
+    let class_name = match operation.kind {
+        OperationKind::List
+        | OperationKind::Get
+        | OperationKind::SubList
+        | OperationKind::Watch => resource.rate_class.as_deref(),
+        OperationKind::Action => operation
+            .action
+            .as_deref()
+            .and_then(|name| resource.actions.iter().find(|a| a.name == name))
+            .and_then(|a| a.rate_class.as_deref()),
+    };
+    let Some(class_name) = class_name else {
+        return Ok(());
+    };
+    let Some(class) = contract.rate_classes.iter().find(|c| c.name == class_name) else {
+        // Validation refuses this shape at generation; a runtime that
+        // reaches it anyway fails closed rather than metering nobody.
+        return Err(JanusError::Internal(format!(
+            "rate class {class_name} is not defined",
+        )));
+    };
+    let units = match payload {
+        Payload::List(args) => u64::from(args.limit).max(1),
+        Payload::SubList(args) => u64::from(args.limit).max(1),
+        Payload::Get(_) | Payload::Action(_) | Payload::Watch(_) => 1,
+    };
+    // Anonymous callers share one bucket by design: without an
+    // identity there is nothing fairer to key on, and the shared
+    // bucket still bounds what anonymity can extract.
+    let subject = ctx
+        .get::<Principal>()
+        .map(|p| p.subject.as_str())
+        .unwrap_or("anonymous");
+    let bucket = format!("{class_name}:{subject}");
+    if store.charge(&bucket, units, class.units_per_minute).await? {
+        Ok(())
+    } else {
+        Err(JanusError::TooManyRequests(format!(
+            "rate class {class_name} exhausted; retry next minute",
+        )))
     }
 }
 

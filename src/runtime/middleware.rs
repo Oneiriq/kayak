@@ -11,10 +11,10 @@
 
 use std::sync::Arc;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput};
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
-use crate::runtime::resolvers::BoxFuture;
+use crate::runtime::resolvers::{BoxFuture, RowStream};
 
 /// Which kind of operation is being dispatched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +22,9 @@ pub enum OperationKind {
     List,
     Get,
     Action,
+    /// Opening a subscription. The chain runs once, at open; the rows
+    /// that follow do not pass through it.
+    Watch,
 }
 
 /// The identity of one dispatched operation.
@@ -39,14 +42,28 @@ pub enum Payload {
     List(ListArgs),
     Get(GetArgs),
     Action(ActionArgs),
+    Watch(WatchArgs),
 }
 
 /// What came back from the resolver.
-#[derive(Debug, Clone)]
 pub enum Outcome {
     List(ListOutput),
     Get(Option<serde_json::Value>),
     Action(Option<serde_json::Value>),
+    /// The opened stream. A middleware may replace it (to meter or
+    /// bound it) but cannot read it without consuming rows.
+    Watch(RowStream),
+}
+
+impl std::fmt::Debug for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::List(output) => f.debug_tuple("List").field(output).finish(),
+            Self::Get(row) => f.debug_tuple("Get").field(row).finish(),
+            Self::Action(value) => f.debug_tuple("Action").field(value).finish(),
+            Self::Watch(_) => f.debug_tuple("Watch").field(&"<stream>").finish(),
+        }
+    }
 }
 
 /// One layer of the chain.

@@ -10,6 +10,13 @@
 //! `graphql` feature's dynamic schema; a service's own REST handlers)
 //! all funnel through the same dispatcher, so policy lives in exactly
 //! one place.
+//!
+//! Watching is the one long-lived operation. A resource the contract
+//! marks watchable registers a resolver returning a [`RowStream`], and
+//! the chain runs once, when the subscription opens. Rows travel from
+//! the resolver to the subscriber without passing through middleware
+//! again, so a stream that must end on a revoked credential has to
+//! check that per row inside the resolver.
 
 pub mod args;
 pub mod context;
@@ -21,9 +28,9 @@ pub mod resolvers;
 #[cfg(feature = "graphql")]
 pub mod graphql;
 
-pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection};
+pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection, WatchArgs};
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;
 pub use middleware::{Middleware, Next, Operation, OperationKind, Outcome, Payload};
-pub use resolvers::{BoxFuture, Resolvers};
+pub use resolvers::{BoxFuture, Resolvers, RowStream};

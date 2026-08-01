@@ -31,6 +31,14 @@ pub struct GetArgs {
     pub id: String,
 }
 
+/// Arguments to a watch operation: the filters narrowing the stream,
+/// keyed by COLUMN name like [`ListArgs::filters`]. There is no limit
+/// or cursor; a stream is not a page.
+#[derive(Debug, Clone, Default)]
+pub struct WatchArgs {
+    pub filters: BTreeMap<String, serde_json::Value>,
+}
+
 /// Arguments to an action: the instance id when the action targets
 /// one, plus the declared inputs.
 #[derive(Debug, Clone, Default)]
@@ -60,6 +68,27 @@ pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<
         if !resource.sortable.iter().any(|c| c == column) {
             return Err(JanusError::BadRequest(format!(
                 "sorting on {column} is not allowed",
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Check watch arguments against the resource's declarations. A
+/// resource that never declared itself watchable refuses here, so a
+/// protocol layer that offers the field by mistake cannot open a
+/// stream.
+pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<(), JanusError> {
+    if !resource.watchable {
+        return Err(JanusError::BadRequest(format!(
+            "{} cannot be watched",
+            resource.name,
+        )));
+    }
+    for column in args.filters.keys() {
+        if !resource.filterable.iter().any(|c| c == column) {
+            return Err(JanusError::BadRequest(format!(
+                "filtering on {column} is not allowed",
             )));
         }
     }
@@ -131,6 +160,7 @@ mod tests {
             max_page_size: 100,
             actions: vec![],
             graphql: None,
+            watchable: false,
         }
     }
 

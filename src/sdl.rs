@@ -109,6 +109,34 @@ pub fn generate_sdl(
         body.push_str("}\n");
     }
 
+    // Subscription root, only when any resource is watchable. Watchers
+    // take the filter arguments list takes, minus paging: a stream has
+    // no page to size or cursor into.
+    let has_watchers = contract.resources.iter().any(|r| r.watchable);
+    if has_watchers {
+        body.push_str("\ntype Subscription {\n");
+        for resource in contract.resources.iter().filter(|r| r.watchable) {
+            let type_name = resource.graphql_type_name();
+            let field = resource.graphql_watch_field();
+            let arguments = resource
+                .filterable
+                .iter()
+                .map(|column| format!("{}: String", camel(column)))
+                .collect::<Vec<_>>();
+            if arguments.is_empty() {
+                writeln!(body, "  {field}: {type_name}!").unwrap();
+            } else {
+                writeln!(
+                    body,
+                    "  {field}({args}): {type_name}!",
+                    args = arguments.join(", "),
+                )
+                .unwrap();
+            }
+        }
+        body.push_str("}\n");
+    }
+
     let mut document = String::new();
     if uses_datetime {
         document.push_str("scalar DateTime\n");

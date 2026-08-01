@@ -10,14 +10,15 @@ use std::sync::Arc;
 
 use crate::ir::{Action, Contract, Resource};
 use crate::runtime::args::{
-    validate_action, validate_list, ActionArgs, GetArgs, ListArgs, ListOutput,
+    validate_action, validate_list, validate_watch, ActionArgs, GetArgs, ListArgs, ListOutput,
+    WatchArgs,
 };
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 use crate::runtime::middleware::{
     Middleware, Next, Operation, OperationKind, Outcome, Payload, Terminal,
 };
-use crate::runtime::resolvers::Resolvers;
+use crate::runtime::resolvers::{Resolvers, RowStream};
 
 /// Why a runtime could not be assembled.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -28,6 +29,12 @@ pub enum RuntimeBuildError {
     MissingGet(String),
     #[error("resource {resource}: action {action}: no resolver registered")]
     MissingAction { resource: String, action: String },
+    #[error("resource {0}: watchable, but no watch resolver registered")]
+    MissingWatch(String),
+    #[error(
+        "resource {0}: watch resolver registered, but the contract does not mark it watchable"
+    )]
+    UnwatchedResolver(String),
 }
 
 /// The executable heart of the runtime. Cheap to clone via `Arc`.
@@ -52,6 +59,9 @@ impl Dispatcher {
             if !resolvers.get.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingGet(resource.name.clone()));
             }
+            if resource.watchable && !resolvers.watch.contains_key(&resource.name) {
+                return Err(RuntimeBuildError::MissingWatch(resource.name.clone()));
+            }
             for action in &resource.actions {
                 let key = (resource.name.clone(), action.name.clone());
                 if !resolvers.action.contains_key(&key) {
@@ -60,6 +70,19 @@ impl Dispatcher {
                         action: action.name.clone(),
                     });
                 }
+            }
+        }
+        // The converse, which only watching can get wrong: list and get
+        // are always declared, so a stray resolver for them is
+        // impossible. A watch resolver on a resource nobody may watch is
+        // dead code that reads as live.
+        for name in resolvers.watch.keys() {
+            if !contract
+                .resources
+                .iter()
+                .any(|r| &r.name == name && r.watchable)
+            {
+                return Err(RuntimeBuildError::UnwatchedResolver(name.clone()));
             }
         }
         Ok(Self {
@@ -128,6 +151,14 @@ impl Dispatcher {
                             .expect("completeness-checked at build")
                             .clone();
                         resolver(ctx, args).await.map(Outcome::Action)
+                    }
+                    (Payload::Watch(args), OperationKind::Watch) => {
+                        let resolver = resolvers
+                            .watch
+                            .get(&operation.resource)
+                            .expect("completeness-checked at build")
+                            .clone();
+                        resolver(ctx, args).await.map(Outcome::Watch)
                     }
                     _ => Err(JanusError::Internal(
                         "payload does not match operation kind".into(),
@@ -209,6 +240,32 @@ impl Dispatcher {
             .await?
         {
             Outcome::Action(value) => Ok(value),
+            _ => Err(JanusError::Internal(
+                "resolver returned a mismatched outcome".into(),
+            )),
+        }
+    }
+
+    /// Open a subscription. The chain runs once, here; the rows that
+    /// follow flow straight from the resolver to the subscriber.
+    pub async fn watch(
+        &self,
+        resource: &str,
+        ctx: JanusContext,
+        args: WatchArgs,
+    ) -> Result<RowStream, JanusError> {
+        validate_watch(self.resource(resource)?, &args)?;
+        let operation = Operation {
+            resource: resource.to_owned(),
+            kind: OperationKind::Watch,
+            action: None,
+        };
+        match self
+            .chain()
+            .run(operation, ctx, Payload::Watch(args))
+            .await?
+        {
+            Outcome::Watch(stream) => Ok(stream),
             _ => Err(JanusError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),

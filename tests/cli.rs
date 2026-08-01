@@ -43,6 +43,7 @@ fn contract() -> Contract {
             sortable: vec!["created_at".into()],
             max_page_size: 100,
             graphql: None,
+            watchable: false,
             actions: vec![Action {
                 name: "issue_url".into(),
                 method: "POST".into(),

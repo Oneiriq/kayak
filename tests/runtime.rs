@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use async_graphql::futures_util::{stream, StreamExt as _};
 use janus::runtime::graphql::build_schema;
 use janus::runtime::{
-    Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, Middleware, Next, Operation,
-    Outcome, Payload, Principal, Resolvers, RowStream, SortDirection, SubListArgs, WatchArgs,
+    Dispatcher, JanusContext, JanusError, ListArgs, ListOutput, MemoryRateStore, Middleware, Next,
+    Operation, Outcome, Payload, Principal, Resolvers, RowStream, SortDirection, SubListArgs,
+    WatchArgs,
 };
 use janus::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource,
@@ -76,6 +77,7 @@ fn contract() -> Contract {
         version: "0.1.0".into(),
         ir_revision: 1,
         limits: None,
+        rate_classes: vec![],
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -92,6 +94,7 @@ fn contract() -> Contract {
             graphql: None,
             watchable: false,
             reads_require: vec![],
+            rate_class: None,
             sub_resources: vec![],
             actions: vec![
                 Action {
@@ -108,6 +111,7 @@ fn contract() -> Contract {
                     description: None,
                     graphql_field: None,
                     requires: vec![],
+                    rate_class: None,
                 },
                 Action {
                     name: "remove".into(),
@@ -118,6 +122,7 @@ fn contract() -> Contract {
                     description: None,
                     graphql_field: None,
                     requires: vec![],
+                    rate_class: None,
                 },
             ],
         }],
@@ -955,4 +960,145 @@ fn scope_tightening_is_breaking_and_visible() {
     assert!(doc["paths"]["/v1/files/{id}/url"]["post"]
         .get("x-requires-scopes")
         .is_none());
+}
+
+/// The contract with a metered read class: 25 units a minute, so one
+/// ten-row page fits twice and a third exhausts it.
+fn metered_contract() -> Contract {
+    let mut contract = contract();
+    contract.rate_classes = vec![janus::RateClass {
+        name: "reads".into(),
+        units_per_minute: 25,
+    }];
+    contract.resources[0].rate_class = Some("reads".into());
+    contract
+}
+
+/// A fixture over a dispatcher built with the given rate store.
+fn metered_fixture(contract: Contract) -> Fixture {
+    let seen_list_args = Arc::new(Mutex::new(None));
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let capture = seen_list_args.clone();
+    let resolvers = Resolvers::new()
+        .list("files", move |_ctx, args: ListArgs| {
+            let capture = capture.clone();
+            async move {
+                *capture.lock().unwrap() = Some(args.clone());
+                Ok(ListOutput::default())
+            }
+        })
+        .get("files", |_ctx, _args| async { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async {
+            Ok(Some(serde_json::json!({})))
+        })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) });
+    let dispatcher = Dispatcher::with_rate_store(
+        Arc::new(contract),
+        resolvers,
+        vec![Arc::new(RequireTenant) as Arc<dyn Middleware>],
+        Arc::new(MemoryRateStore::new()),
+    )
+    .unwrap();
+    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
+    Fixture {
+        schema,
+        seen_list_args,
+        seen_watch_args: Arc::new(Mutex::new(None)),
+        recorded,
+    }
+}
+
+#[tokio::test]
+async fn a_metered_read_spends_its_row_limit_and_exhausts() {
+    let fixture = metered_fixture(metered_contract());
+    let query = r#"{ files(limit: 10) { items { id } } }"#;
+
+    // Two ten-row pages fit a 25-unit budget; the third refuses with
+    // the retryable code, naming the class.
+    for _ in 0..2 {
+        let response = fixture.schema.execute(scoped_request(query, &[])).await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+    }
+    let response = fixture.schema.execute(scoped_request(query, &[])).await;
+    let error = &response.errors[0];
+    assert!(error.message.contains("reads"), "{error:?}");
+    let code = error
+        .extensions
+        .as_ref()
+        .and_then(|x| x.get("code"))
+        .map(|v| format!("{v}"));
+    assert_eq!(code.as_deref(), Some("\"too_many_requests\""));
+
+    // The refusal happened before the resolver: only two listings ran.
+    // A different principal has its own bucket and still passes.
+    let principal = Principal::new("key-02", std::iter::empty());
+    let other = async_graphql::Request::new(query).data(
+        JanusContext::new()
+            .with(Tenant("acme".into()))
+            .with(principal),
+    );
+    let response = fixture.schema.execute(other).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+
+    // Unmetered operations spend nothing whoever asks.
+    let response = fixture
+        .schema
+        .execute(scoped_request(r#"mutation { fileRemove(id: "01A") }"#, &[]))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+}
+
+#[test]
+fn a_metered_contract_refuses_to_build_without_a_ledger() {
+    let resolvers = Resolvers::new()
+        .list("files", |_ctx, _args| async { Ok(ListOutput::default()) })
+        .get("files", |_ctx, _args| async { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async { Ok(None) });
+    let error = Dispatcher::new(Arc::new(metered_contract()), resolvers, vec![]).unwrap_err();
+    assert!(
+        error.to_string().contains("no rate store is registered"),
+        "{error}",
+    );
+}
+
+#[test]
+fn rate_movement_diffs_and_undefined_classes_refuse() {
+    let open = contract();
+    let metered = metered_contract();
+
+    // Attaching a class to unmetered reads introduces refusals.
+    let changes = janus::diff(&open, &metered);
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.is_breaking() && c.message().contains("now metered by rate class reads")),
+        "{changes:?}",
+    );
+    // Shrinking a budget is breaking; growing it refuses nothing.
+    let mut shrunk = metered_contract();
+    shrunk.rate_classes[0].units_per_minute = 10;
+    let changes = janus::diff(&metered, &shrunk);
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.is_breaking() && c.message().contains("budget lowered 25 -> 10")),
+        "{changes:?}",
+    );
+    let changes = janus::diff(&shrunk, &metered);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+    let changes = janus::diff(&metered, &open);
+    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+
+    // A reference to a class the contract never defines refuses at
+    // validation, by name.
+    let mut dangling = contract();
+    dangling.resources[0].rate_class = Some("phantom".into());
+    let violations = janus::validate(&dangling, &[file_table()]);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.to_string().contains("undefined rate class")),
+        "{violations:?}",
+    );
 }

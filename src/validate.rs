@@ -103,6 +103,50 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
         }
     }
 
+    // Rate classes: names sound and unique, references resolvable. A
+    // reference to a class the contract never defines would meter
+    // against a budget nobody wrote down.
+    let mut class_names = std::collections::BTreeSet::new();
+    for class in &contract.rate_classes {
+        if !is_wire_ident(&class.name, false) {
+            violations.push(Violation::InvalidName {
+                scope: format!("rate class {}", class.name),
+                name: class.name.clone(),
+                problem: "must be lowercase snake case".into(),
+            });
+        }
+        if !class_names.insert(class.name.clone()) {
+            violations.push(Violation::InvalidName {
+                scope: format!("rate class {}", class.name),
+                name: class.name.clone(),
+                problem: "duplicate rate class".into(),
+            });
+        }
+    }
+    let class_exists = |name: &str| contract.rate_classes.iter().any(|c| c.name == name);
+    for resource in &contract.resources {
+        if let Some(class) = &resource.rate_class {
+            if !class_exists(class) {
+                violations.push(Violation::InvalidName {
+                    scope: format!("resource {}", resource.name),
+                    name: class.clone(),
+                    problem: "references an undefined rate class".into(),
+                });
+            }
+        }
+        for action in &resource.actions {
+            if let Some(class) = &action.rate_class {
+                if !class_exists(class) {
+                    violations.push(Violation::InvalidName {
+                        scope: format!("resource {} action {}", resource.name, action.name),
+                        name: class.clone(),
+                        problem: "references an undefined rate class".into(),
+                    });
+                }
+            }
+        }
+    }
+
     // GraphQL type names are schema-global; two surfaces landing on
     // the same effective type name would shadow each other.
     let mut type_names = std::collections::BTreeMap::new();

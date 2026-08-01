@@ -116,6 +116,28 @@ may each carry a `versions` collection without colliding. Filters and page
 ceilings belong to the sub-resource. Declaring `sortable` on `files` says
 nothing about what `versions` may sort on.
 
+## Rate classes
+
+A rate class is a named consumption budget, defined once and
+referenced by the operations it bounds:
+
+```rust
+rate_classes: vec![RateClass { name: "reads".into(), units_per_minute: 6000 }],
+resources: vec![Resource { rate_class: Some("reads".into()), /* ... */ }],
+```
+
+`rate_class` on a resource meters its reads (list, get,
+sub-collections, watch opens); on an action it meters that action,
+with no fallback to the resource's class. A listing costs its clamped
+row limit and everything else costs one, so a caller asking for
+hundred-row pages spends its budget a hundred times faster than one
+probing single rows. Exhaustion refuses with `too_many_requests`,
+which is retryable after waiting.
+
+References to undefined classes refuse at validation. The differ
+treats attaching a class to an unmetered operation or shrinking a
+budget as breaking, and detaching or growing as compatible.
+
 ## Scopes
 
 `reads_require` on a resource names the scopes a caller must hold to

@@ -205,6 +205,7 @@ mod tests {
             graphql: None,
             watchable: false,
             reads_require: vec![],
+            rate_class: None,
             sub_resources: vec![],
         }
     }
@@ -232,6 +233,7 @@ mod tests {
             description: None,
             graphql_field: None,
             requires: vec![],
+            rate_class: None,
         }
     }
 

@@ -33,6 +33,26 @@ impl Change {
 pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
     let mut changes = Vec::new();
 
+    // Rate classes: shrinking a budget refuses callers that used to
+    // pass; growing one refuses nothing. A class appearing or leaving
+    // matters only through the operations that reference it, which the
+    // per-resource rules below catch.
+    for new_class in &new.rate_classes {
+        if let Some(old_class) = old.rate_classes.iter().find(|c| c.name == new_class.name) {
+            if new_class.units_per_minute < old_class.units_per_minute {
+                changes.push(Change::Breaking(format!(
+                    "rate class {}: budget lowered {} -> {}",
+                    new_class.name, old_class.units_per_minute, new_class.units_per_minute,
+                )));
+            } else if new_class.units_per_minute > old_class.units_per_minute {
+                changes.push(Change::Compatible(format!(
+                    "rate class {}: budget raised {} -> {}",
+                    new_class.name, old_class.units_per_minute, new_class.units_per_minute,
+                )));
+            }
+        }
+    }
+
     // Ceilings: introducing or lowering one refuses operations that
     // used to run. Raising or removing one refuses nothing.
     let old_limits = old.limits.unwrap_or_default();
@@ -223,6 +243,18 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         }
     }
 
+    // Metering: attaching a class to unmetered reads introduces
+    // refusals; detaching one removes them.
+    match (&old.rate_class, &new.rate_class) {
+        (None, Some(class)) => changes.push(Change::Breaking(format!(
+            "{scope}: reads now metered by rate class {class}",
+        ))),
+        (Some(class), None) => changes.push(Change::Compatible(format!(
+            "{scope}: reads no longer metered (was {class})",
+        ))),
+        _ => {}
+    }
+
     // Scopes: a new requirement refuses callers that used to pass.
     for required in &new.reads_require {
         if !old.reads_require.contains(required) {
@@ -288,6 +320,15 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
 
 fn diff_action(scope: &str, old: &Action, new: &Action, changes: &mut Vec<Change>) {
     let name = &old.name;
+    match (&old.rate_class, &new.rate_class) {
+        (None, Some(class)) => changes.push(Change::Breaking(format!(
+            "{scope}: action {name} now metered by rate class {class}",
+        ))),
+        (Some(class), None) => changes.push(Change::Compatible(format!(
+            "{scope}: action {name} no longer metered (was {class})",
+        ))),
+        _ => {}
+    }
     for required in &new.requires {
         if !old.requires.contains(required) {
             changes.push(Change::Breaking(format!(

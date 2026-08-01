@@ -11,6 +11,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Rate classes and the dispatch limiter.** A contract defines named budgets
+  (`rate_classes`) and attaches them to resource reads or individual actions.
+  The dispatcher charges the ledger before anything else runs: listings cost
+  their clamped row limit, everything else costs one, buckets key on the
+  principal's subject, and exhaustion is `too_many_requests`. A metered
+  contract refuses to build without a registered `RateStore`; the in-memory
+  store covers one process and a shared implementation covers a fleet. The
+  differ treats new metering or a shrunken budget as breaking.
 - **Principal and scopes.** A `Principal` (subject plus scopes) rides the
   context; `reads_require` on a resource gates list, get, sub-collections,
   and watching, and `requires` on an action gates invoking it. Enforcement

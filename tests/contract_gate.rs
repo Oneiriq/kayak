@@ -49,6 +49,7 @@ fn files_resource() -> Resource {
         graphql: None,
         watchable: false,
         reads_require: vec![],
+        rate_class: None,
         sub_resources: vec![],
         actions: vec![],
     }
@@ -60,6 +61,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
         version: "0.1.0".into(),
         ir_revision: 1,
         limits: None,
+        rate_classes: vec![],
         resources,
     }
 }
@@ -151,6 +153,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         graphql: None,
         watchable: false,
         reads_require: vec![],
+        rate_class: None,
         sub_resources: vec![],
         actions: vec![],
     };

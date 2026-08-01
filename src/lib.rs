@@ -24,7 +24,7 @@ pub use diff::{diff, Change};
 pub use generate::generate_all;
 pub use ir::{
     Action, ActionField, ActionOutput, Contract, ContractLimits, FieldExposure, GraphqlNames,
-    Resource, SubGraphqlNames, SubResource, TypeRef,
+    RateClass, Resource, SubGraphqlNames, SubResource, TypeRef,
 };
 pub use openapi::{generate_openapi, GenerateError};
 pub use reserved::is_reserved;

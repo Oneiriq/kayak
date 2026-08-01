@@ -66,6 +66,30 @@ It dispatches as its own operation (`OperationKind::SubList`), so middleware
 sees the parent listing and the sub-listing separately and can authorize them
 separately.
 
+## Rate limiting
+
+The dispatcher is the one layer that can meter GraphQL accurately: a
+proxy counts requests, and one POST can carry many aliased operations.
+A contract that names a rate class refuses to build without a ledger:
+
+```rust
+let dispatcher = Dispatcher::with_rate_store(
+    contract.into(), resolvers, middleware,
+    Arc::new(MemoryRateStore::new()),
+)?;
+```
+
+The ledger is charged first, before scope checks and resolvers, so a
+caller past its budget learns nothing else about the request and an
+unauthorized prober spends budget on its probes. Buckets key on the
+principal's subject; anonymous callers share one bucket, which still
+bounds what anonymity can extract.
+
+`MemoryRateStore` meters one process over fixed one-minute windows,
+which admit up to double the budget across a boundary; the tradeoff
+buys a ledger with no background task. A multi-node deployment
+implements [`RateStore`] over its shared database instead.
+
 ## The principal
 
 A tenant says whose data a request touches; a [`Principal`] says what

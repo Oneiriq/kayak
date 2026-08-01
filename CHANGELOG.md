@@ -11,6 +11,13 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Sub-resources.** A collection belonging to one parent instance (a file's
+  versions, an endpoint's deliveries) is declared on the parent and reaches
+  every face from that one declaration: `GET /v1/files/{id}/versions`, a field
+  on the parent's GraphQL type, an OpenAPI path, and a method on all four
+  clients. The index rulebook is shared with resources, with `parent_key`
+  credited as equality-bound, and the GraphQL type name composes with the
+  parent so two parents may each carry a `versions` collection.
 - **Watchable resources and the subscription seam.** A resource may declare
   itself `watchable`, which adds a GraphQL Subscription field over a stream
   resolver the service registers. REST, OpenAPI, and the four generated clients

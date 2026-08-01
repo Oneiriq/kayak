@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use futures_core::Stream;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, WatchArgs};
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, SubListArgs, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 
@@ -47,6 +47,12 @@ pub(crate) type ActionResolver = Arc<
         + Sync,
 >;
 
+pub(crate) type SubListResolver = Arc<
+    dyn Fn(JanusContext, SubListArgs) -> BoxFuture<'static, Result<ListOutput, JanusError>>
+        + Send
+        + Sync,
+>;
+
 pub(crate) type WatchResolver = Arc<
     dyn Fn(JanusContext, WatchArgs) -> BoxFuture<'static, Result<RowStream, JanusError>>
         + Send
@@ -60,6 +66,7 @@ pub struct Resolvers {
     pub(crate) get: BTreeMap<String, GetResolver>,
     pub(crate) action: BTreeMap<(String, String), ActionResolver>,
     pub(crate) watch: BTreeMap<String, WatchResolver>,
+    pub(crate) sub_list: BTreeMap<(String, String), SubListResolver>,
 }
 
 impl Resolvers {
@@ -112,6 +119,21 @@ impl Resolvers {
         self
     }
 
+    /// Register the list resolver for one sub-resource. The closure
+    /// receives the parent id alongside clamped, allowlist-checked
+    /// arguments, and returns one page in wire shape.
+    pub fn sub_list<F, Fut>(mut self, resource: &str, sub: &str, f: F) -> Self
+    where
+        F: Fn(JanusContext, SubListArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ListOutput, JanusError>> + Send + 'static,
+    {
+        self.sub_list.insert(
+            (resource.to_owned(), sub.to_owned()),
+            Arc::new(move |ctx, args| Box::pin(f(ctx, args))),
+        );
+        self
+    }
+
     /// Register the watch resolver for `resource`, required of every
     /// resource the contract marks watchable.
     ///
@@ -141,6 +163,7 @@ impl std::fmt::Debug for Resolvers {
             .field("get", &self.get.keys().collect::<Vec<_>>())
             .field("action", &self.action.keys().collect::<Vec<_>>())
             .field("watch", &self.watch.keys().collect::<Vec<_>>())
+            .field("sub_list", &self.sub_list.keys().collect::<Vec<_>>())
             .finish()
     }
 }

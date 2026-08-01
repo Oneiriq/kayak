@@ -23,7 +23,7 @@ use async_graphql::Value as GqlValue;
 use surql::schema::{FieldType, TableDefinition};
 
 use crate::ir::{ActionOutput, TypeRef};
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, SortDirection, WatchArgs};
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, SortDirection, SubListArgs, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::JanusError;
@@ -125,6 +125,163 @@ pub fn schema_builder(
                     field_from_row(row, &key)
                 })
             }));
+        }
+        // Sub-collections: a field on the parent that dispatches with
+        // the parent row's own id, so the collection cannot be reached
+        // without one.
+        for sub in &resource.sub_resources {
+            let sub_table = schema
+                .iter()
+                .find(|t| t.name == sub.table)
+                .expect("validated: table exists");
+            let sub_type = sub.graphql_type_name(resource);
+            let sub_page = format!("{sub_type}Page");
+
+            let mut sub_object = Object::new(&sub_type);
+            sub_object = sub_object.field(Field::new("id", Gql::named_nn(Gql::ID), |ctx| {
+                FieldFuture::new(async move {
+                    let row = parent_row(&ctx)?;
+                    Ok(row
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|id| FieldValue::value(GqlValue::String(id.to_owned()))))
+                })
+            }));
+            for exposure in &sub.fields {
+                let field_def = sub_table
+                    .fields
+                    .iter()
+                    .find(|f| f.name == exposure.column)
+                    .expect("validated: column exists");
+                let (base, datetime, json) = graphql_scalar(&field_def.field_type);
+                uses_datetime |= datetime;
+                uses_json |= json;
+                let type_ref = if field_def.nullable {
+                    Gql::named(base)
+                } else {
+                    Gql::named_nn(base)
+                };
+                let api_name = exposure.api_name().to_owned();
+                sub_object = sub_object.field(Field::new(api_name.clone(), type_ref, move |ctx| {
+                    let key = api_name.clone();
+                    FieldFuture::new(async move {
+                        let row = parent_row(&ctx)?;
+                        field_from_row(row, &key)
+                    })
+                }));
+            }
+            builder = builder.register(sub_object);
+
+            let sub_item = sub_type.clone();
+            let mut page = Object::new(&sub_page);
+            page = page.field(Field::new(
+                "items",
+                Gql::named_nn_list_nn(&sub_item),
+                |ctx| {
+                    FieldFuture::new(async move {
+                        let row = parent_row(&ctx)?;
+                        let items = row
+                            .get("items")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(Some(FieldValue::list(
+                            items.into_iter().map(FieldValue::owned_any),
+                        )))
+                    })
+                },
+            ));
+            page = page.field(Field::new("nextCursor", Gql::named(Gql::STRING), |ctx| {
+                FieldFuture::new(async move {
+                    let row = parent_row(&ctx)?;
+                    field_from_row(row, "next_cursor")
+                })
+            }));
+            builder = builder.register(page);
+
+            if !sub.sortable.is_empty() {
+                let mut sort_enum = Enum::new(format!("{sub_type}Sort"));
+                for column in &sub.sortable {
+                    let upper = column.to_ascii_uppercase();
+                    sort_enum = sort_enum.item(format!("{upper}_ASC"));
+                    sort_enum = sort_enum.item(format!("{upper}_DESC"));
+                }
+                builder = builder.register(sort_enum);
+            }
+
+            let sub_dispatcher = dispatcher.clone();
+            let sub_parent = resource.name.clone();
+            let sub_name = sub.name.clone();
+            let sub_filterable = sub.filterable.clone();
+            let sub_sortable = sub.sortable.clone();
+            let mut sub_field =
+                Field::new(sub.graphql_field(), Gql::named_nn(&sub_page), move |ctx| {
+                    let dispatcher = sub_dispatcher.clone();
+                    let parent = sub_parent.clone();
+                    let sub = sub_name.clone();
+                    let filterable = sub_filterable.clone();
+                    let sortable = sub_sortable.clone();
+                    FieldFuture::new(async move {
+                        let parent_id = parent_row(&ctx)?
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_owned();
+                        let mut args = SubListArgs {
+                            parent_id,
+                            limit: ctx
+                                .args
+                                .get("limit")
+                                .and_then(|v| v.u64().ok())
+                                .and_then(|v| u32::try_from(v).ok())
+                                .unwrap_or(u32::MAX),
+                            cursor: ctx
+                                .args
+                                .get("cursor")
+                                .and_then(|v| v.string().ok().map(str::to_owned)),
+                            ..Default::default()
+                        };
+                        for column in &filterable {
+                            if let Some(value) = ctx.args.get(crate::naming::camel(column).as_str())
+                            {
+                                args.filters.insert(
+                                    column.clone(),
+                                    serde_json::Value::String(value.string()?.to_owned()),
+                                );
+                            }
+                        }
+                        if let Some(value) = ctx.args.get("sort") {
+                            args.sort = Some(parse_sort(value.enum_name()?, &sortable)?);
+                        }
+                        let jctx = request_context(&ctx);
+                        let output = dispatcher
+                            .sub_list(&parent, &sub, jctx, args)
+                            .await
+                            .map_err(to_graphql_error)?;
+                        Ok(Some(FieldValue::owned_any(serde_json::json!({
+                            "items": output.items,
+                            "next_cursor": output.next_cursor,
+                        }))))
+                    })
+                })
+                .argument(
+                    InputValue::new("limit", Gql::named(Gql::INT))
+                        .default_value(GqlValue::from(sub.max_page_size)),
+                )
+                .argument(InputValue::new("cursor", Gql::named(Gql::STRING)));
+            for column in &sub.filterable {
+                sub_field = sub_field.argument(InputValue::new(
+                    crate::naming::camel(column),
+                    Gql::named(Gql::STRING),
+                ));
+            }
+            if !sub.sortable.is_empty() {
+                sub_field = sub_field.argument(InputValue::new(
+                    "sort",
+                    Gql::named(format!("{sub_type}Sort")),
+                ));
+            }
+            object = object.field(sub_field);
         }
         builder = builder.register(object);
 

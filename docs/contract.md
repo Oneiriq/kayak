@@ -30,6 +30,7 @@ Contract {
         watchable: false,
         graphql: None,
         actions: vec![/* see below */],
+        sub_resources: vec![/* see below */],
     }],
 }
 ```
@@ -81,6 +82,39 @@ Action {
 A literal `{id}` in the path marks an instance action and becomes a required
 id parameter on every surface: the OpenAPI path, the mutation argument, each
 client method signature.
+
+## Sub-resources
+
+A collection that belongs to one instance of a parent is a sub-resource: a
+file's versions, an endpoint's deliveries. It lists and pages like a resource
+and has no id-addressable form of its own, because everything about it is
+reached through the parent.
+
+```rust
+sub_resources: vec![SubResource {
+    name: "versions".into(),
+    table: "file_version".into(),
+    parent_key: "file".into(),   // server-bound, credited like `pinned`
+    fields: vec![FieldExposure::column("ordinal")],
+    pinned: vec![],
+    filterable: vec![],
+    sortable: vec!["created_at".into()],
+    max_page_size: 50,
+    description: Some("Every stored version of this file.".into()),
+    graphql: None,
+}],
+```
+
+`GET /v1/files/{id}/versions` on REST, `file(id) { versions { items { ... } } }`
+on GraphQL, and a `list_versions_files` method on each generated client. The
+same index rules apply to the sub table, with `parent_key` credited as
+equality-bound, so a sort of `created_at` needs an index holding it after
+`file`.
+
+The GraphQL type name composes with the parent (`FileVersion`), so two parents
+may each carry a `versions` collection without colliding. Filters and page
+ceilings belong to the sub-resource. Declaring `sortable` on `files` says
+nothing about what `versions` may sort on.
 
 ## Watching
 
@@ -136,8 +170,9 @@ classifies every change. Breaking: a removed resource, field, filter, or
 sort; a field re-pointed to a different column under the same wire name; a
 lowered page ceiling; a moved action; a changed output; an input that became
 required or changed type; any effective GraphQL rename; a resource that
-stopped being watchable. Compatible: additions, a resource that became
-watchable, and removal of an optional input.
+stopped being watchable; a removed sub-resource, or one that lost a field,
+filter, sort, or page headroom. Compatible: additions, a resource that became
+watchable, a new sub-resource, and removal of an optional input.
 
 The CLI exits non-zero on breaking changes (`janus diff old.json new.json`),
 which makes the gate one line of CI.

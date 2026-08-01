@@ -31,6 +31,19 @@ pub struct GetArgs {
     pub id: String,
 }
 
+/// Arguments to a sub-list operation: the parent instance, plus the
+/// same paging and narrowing a list takes.
+#[derive(Debug, Clone, Default)]
+pub struct SubListArgs {
+    /// The parent id the collection hangs off. Always present; a
+    /// sub-resource has no collection-wide form.
+    pub parent_id: String,
+    pub limit: u32,
+    pub cursor: Option<String>,
+    pub filters: BTreeMap<String, serde_json::Value>,
+    pub sort: Option<(String, SortDirection)>,
+}
+
 /// Arguments to a watch operation: the filters narrowing the stream,
 /// keyed by COLUMN name like [`ListArgs::filters`]. There is no limit
 /// or cursor; a stream is not a page.
@@ -66,6 +79,36 @@ pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<
     }
     if let Some((column, _)) = &args.sort {
         if !resource.sortable.iter().any(|c| c == column) {
+            return Err(JanusError::BadRequest(format!(
+                "sorting on {column} is not allowed",
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Clamp and check sub-list arguments against the sub-resource's own
+/// declarations, which are separate from the parent's.
+pub(crate) fn validate_sub_list(
+    sub: &crate::ir::SubResource,
+    args: &mut SubListArgs,
+) -> Result<(), JanusError> {
+    if args.parent_id.is_empty() {
+        return Err(JanusError::BadRequest(format!(
+            "{} is reached through a parent id",
+            sub.name,
+        )));
+    }
+    args.limit = args.limit.clamp(1, sub.max_page_size);
+    for column in args.filters.keys() {
+        if !sub.filterable.iter().any(|c| c == column) {
+            return Err(JanusError::BadRequest(format!(
+                "filtering on {column} is not allowed",
+            )));
+        }
+    }
+    if let Some((column, _)) = &args.sort {
+        if !sub.sortable.iter().any(|c| c == column) {
             return Err(JanusError::BadRequest(format!(
                 "sorting on {column} is not allowed",
             )));
@@ -161,6 +204,7 @@ mod tests {
             actions: vec![],
             graphql: None,
             watchable: false,
+            sub_resources: vec![],
         }
     }
 

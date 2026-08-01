@@ -69,39 +69,20 @@ pub fn generate_client_rs(
     out.push_str("use serde::Deserialize;\nuse serde_json::Value;\n\n");
 
     for (resource, table) in &resources {
-        let name = type_name(&resource.name);
-        writeln!(out, "#[derive(Debug, Clone, Deserialize)]").unwrap();
-        writeln!(out, "pub struct {name} {{").unwrap();
-        writeln!(out, "    pub id: String,").unwrap();
-        for exposure in &resource.fields {
-            let field = column(table, &exposure.column);
-            let base = match field.field_type {
-                FieldType::Int => "i64",
-                FieldType::Float | FieldType::Decimal | FieldType::Number => "f64",
-                FieldType::Bool => "bool",
-                FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => {
-                    "Value"
-                }
-                _ => "String",
-            };
-            let ty = if field.nullable {
-                format!("Option<{base}>")
-            } else {
-                base.to_owned()
-            };
-            let api = exposure.api_name();
-            if field.nullable {
-                writeln!(out, "    #[serde(default)]").unwrap();
-            }
-            writeln!(out, "    pub {}: {ty},", snake(api)).unwrap();
+        rust_struct(
+            &mut out,
+            &type_name(&resource.name),
+            &resource.fields,
+            table,
+        );
+        for sub in &resource.sub_resources {
+            rust_struct(
+                &mut out,
+                &sub_type_name(resource, sub),
+                &sub.fields,
+                sub_table(schema, sub),
+            );
         }
-        writeln!(out, "}}\n").unwrap();
-        writeln!(out, "#[derive(Debug, Clone, Deserialize)]").unwrap();
-        writeln!(out, "pub struct {name}Page {{").unwrap();
-        writeln!(out, "    pub items: Vec<{name}>,").unwrap();
-        writeln!(out, "    #[serde(default)]").unwrap();
-        writeln!(out, "    pub next_cursor: Option<String>,").unwrap();
-        writeln!(out, "}}\n").unwrap();
     }
 
     out.push_str(
@@ -173,6 +154,36 @@ pub fn generate_client_rs(
         .unwrap();
         out.push_str("    }\n\n");
 
+        // One list method per sub-collection, reached through the
+        // parent id.
+        for sub in &resource.sub_resources {
+            let sub_name = sub_type_name(resource, sub);
+            writeln!(
+                out,
+                "    pub async fn {stem}(&self, id: &str, limit: Option<u32>, cursor: Option<&str>)                  -> Result<{sub_name}Page, Error> {{",
+                stem = sub_method_stem(resource, sub),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        let mut url = format!(\"{{}}/v1/{}/{{id}}/{}\", self.base_url);",
+                resource.name, sub.name,
+            )
+            .unwrap();
+            out.push_str(
+                "        let mut query: Vec<(String, String)> = Vec::new();
+                         if let Some(limit) = limit { query.push((\"limit\".into(), limit.to_string())); }
+                         if let Some(cursor) = cursor { query.push((\"cursor\".into(), cursor.to_string())); }
+                         if !query.is_empty() {
+                             let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();
+                             url = format!(\"{url}?{}\", joined.join(\"&\"));
+                         }
+                         Ok(self.http.get(url).header(\"x-copal-tenant\", &self.tenant)                 .send().await?.error_for_status()?.json().await?)
+    }
+
+",
+            );
+        }
         for action in &resource.actions {
             let method_fn = format!(
                 "{}_{}",
@@ -251,29 +262,20 @@ pub fn generate_client_ts(
     .unwrap();
 
     for (resource, table) in &resources {
-        let name = type_name(&resource.name);
-        writeln!(out, "export interface {name} {{").unwrap();
-        writeln!(out, "  id: string").unwrap();
-        for exposure in &resource.fields {
-            let field = column(table, &exposure.column);
-            let base = match field.field_type {
-                FieldType::Int | FieldType::Float | FieldType::Decimal | FieldType::Number => {
-                    "number"
-                }
-                FieldType::Bool => "boolean",
-                FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => {
-                    "unknown"
-                }
-                _ => "string",
-            };
-            let optional = if field.nullable { "?" } else { "" };
-            writeln!(out, "  {}{optional}: {base}", camel(exposure.api_name())).unwrap();
+        ts_interface(
+            &mut out,
+            &type_name(&resource.name),
+            &resource.fields,
+            table,
+        );
+        for sub in &resource.sub_resources {
+            ts_interface(
+                &mut out,
+                &sub_type_name(resource, sub),
+                &sub.fields,
+                sub_table(schema, sub),
+            );
         }
-        writeln!(out, "}}\n").unwrap();
-        writeln!(out, "export interface {name}Page {{").unwrap();
-        writeln!(out, "  items: {name}[]").unwrap();
-        writeln!(out, "  next_cursor?: string | null").unwrap();
-        writeln!(out, "}}\n").unwrap();
     }
 
     out.push_str(
@@ -323,6 +325,30 @@ pub fn generate_client_ts(
         .unwrap();
         out.push_str("  }\n\n");
 
+        for sub in &resource.sub_resources {
+            let sub_name = sub_type_name(resource, sub);
+            writeln!(
+                out,
+                "  {stem}(id: string, limit?: number, cursor?: string): Promise<{sub_name}Page> {{",
+                stem = camel(&sub_method_stem(resource, sub)),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    const query = new URLSearchParams()
+                     if (limit !== undefined) query.set('limit', String(limit))
+                     if (cursor !== undefined) query.set('cursor', cursor)
+                     const suffix = query.size > 0 ? `?${{query}}` : ''
+                     return this.request('GET', `/v1/{}/${{id}}/{}${{suffix}}`)",
+                resource.name, sub.name,
+            )
+            .unwrap();
+            out.push_str(
+                "  }
+
+",
+            );
+        }
         for action in &resource.actions {
             let method_fn = camel(&format!(
                 "{}_{}",
@@ -391,38 +417,20 @@ pub fn generate_client_py(
     );
 
     for (resource, table) in &resources {
-        let name = type_name(&resource.name);
-        writeln!(out, "@dataclass\nclass {name}:").unwrap();
-        writeln!(out, "  id: str").unwrap();
-        // Required fields precede defaulted ones: dataclass rules.
-        let mut required_lines = Vec::new();
-        let mut optional_lines = Vec::new();
-        for exposure in &resource.fields {
-            let schema_field = column(table, &exposure.column);
-            let base = match schema_field.field_type {
-                FieldType::Int => "int",
-                FieldType::Float | FieldType::Decimal | FieldType::Number => "float",
-                FieldType::Bool => "bool",
-                FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => {
-                    "Any"
-                }
-                _ => "str",
-            };
-            let attribute = snake(exposure.api_name());
-            if schema_field.nullable {
-                optional_lines.push(format!("  {attribute}: {base} | None = None"));
-            } else {
-                required_lines.push(format!("  {attribute}: {base}"));
-            }
+        py_dataclass(
+            &mut out,
+            &type_name(&resource.name),
+            &resource.fields,
+            table,
+        );
+        for sub in &resource.sub_resources {
+            py_dataclass(
+                &mut out,
+                &sub_type_name(resource, sub),
+                &sub.fields,
+                sub_table(schema, sub),
+            );
         }
-        for line in required_lines.into_iter().chain(optional_lines) {
-            writeln!(out, "{line}").unwrap();
-        }
-        out.push('\n');
-        writeln!(out, "@dataclass\nclass {name}Page:").unwrap();
-        writeln!(out, "  items: list[{name}] = field(default_factory=list)").unwrap();
-        writeln!(out, "  next_cursor: str | None = None").unwrap();
-        out.push('\n');
     }
 
     out.push_str(
@@ -477,6 +485,32 @@ pub fn generate_client_py(
         )
         .unwrap();
 
+        for sub in &resource.sub_resources {
+            let sub_name = sub_type_name(resource, sub);
+            let sub_from = format!(
+                "{sub_name}(**{{k: v for k, v in item.items() if k in                  {sub_name}.__dataclass_fields__}})"
+            );
+            writeln!(
+                out,
+                "  def {stem}(self, id: str, limit: int | None = None, cursor: str | None = None) -> {sub_name}Page:",
+                stem = snake(&sub_method_stem(resource, sub)),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    query = {{k: v for k, v in {{'limit': limit, 'cursor': cursor}}.items() if v is not None}}
+                     suffix = f'?{{urllib.parse.urlencode(query)}}' if query else ''
+                     payload = self._request('GET', f'/v1/{parent}/{{id}}/{child}{{suffix}}')
+                     return {sub_name}Page(
+                       items=[{sub_from} for item in payload.get('items', [])],
+                       next_cursor=payload.get('next_cursor'),
+                     )
+",
+                parent = resource.name,
+                child = sub.name,
+            )
+            .unwrap();
+        }
         for action in &resource.actions {
             let method_fn = format!(
                 "{}_{}",
@@ -562,33 +596,20 @@ pub fn generate_client_go(
     );
 
     for (resource, table) in &resources {
-        let name = type_name(&resource.name);
-        writeln!(out, "type {name} struct {{").unwrap();
-        writeln!(out, "\tID string `json:\"id\"`").unwrap();
-        for exposure in &resource.fields {
-            let field = column(table, &exposure.column);
-            let base = match field.field_type {
-                FieldType::Int => "int64",
-                FieldType::Float | FieldType::Decimal | FieldType::Number => "float64",
-                FieldType::Bool => "bool",
-                FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => {
-                    "any"
-                }
-                _ => "string",
-            };
-            let go_type = if field.nullable && base != "any" {
-                format!("*{base}")
-            } else {
-                base.to_owned()
-            };
-            let api = exposure.api_name();
-            writeln!(out, "\t{} {go_type} `json:\"{api}\"`", pascal(&snake(api)),).unwrap();
+        go_struct(
+            &mut out,
+            &type_name(&resource.name),
+            &resource.fields,
+            table,
+        );
+        for sub in &resource.sub_resources {
+            go_struct(
+                &mut out,
+                &sub_type_name(resource, sub),
+                &sub.fields,
+                sub_table(schema, sub),
+            );
         }
-        writeln!(out, "}}\n").unwrap();
-        writeln!(out, "type {name}Page struct {{").unwrap();
-        writeln!(out, "\tItems []{name} `json:\"items\"`").unwrap();
-        writeln!(out, "\tNextCursor *string `json:\"next_cursor\"`").unwrap();
-        writeln!(out, "}}\n").unwrap();
     }
 
     out.push_str(
@@ -676,6 +697,39 @@ pub fn generate_client_go(
         )
         .unwrap();
 
+        for sub in &resource.sub_resources {
+            let sub_name = sub_type_name(resource, sub);
+            writeln!(
+                out,
+                "func (c *Client) {stem}(id string, limit int, cursor string) (*{sub_name}Page, error) {{",
+                stem = pascal(&sub_method_stem(resource, sub)),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "	query := url.Values{{}}
+                 	if limit > 0 {{
+                 		query.Set(\"limit\", fmt.Sprint(limit))
+                 	}}
+                 	if cursor != \"\" {{
+                 		query.Set(\"cursor\", cursor)
+                 	}}
+                 	path := \"/v1/{parent}/\" + id + \"/{child}\"
+                 	if encoded := query.Encode(); encoded != \"\" {{
+                 		path += \"?\" + encoded
+                 	}}
+                 	var page {sub_name}Page
+                 	if err := c.request(\"GET\", path, nil, &page); err != nil {{
+                 		return nil, err
+                 	}}
+                 	return &page, nil
+}}
+",
+                parent = resource.name,
+                child = sub.name,
+            )
+            .unwrap();
+        }
         for action in &resource.actions {
             let method_name = format!(
                 "{}{}",
@@ -756,4 +810,167 @@ fn go_path_expr(path: &str) -> String {
         expression.push_str(&format!(" + \"{after}\""));
     }
     expression
+}
+
+/// The schema table a sub-resource reads, resolved after validation
+/// has already proved it exists.
+fn sub_table<'a>(
+    schema: &'a [TableDefinition],
+    sub: &crate::ir::SubResource,
+) -> &'a TableDefinition {
+    schema
+        .iter()
+        .find(|t| t.name == sub.table)
+        .expect("validated: table exists")
+}
+
+/// The generated type name for a sub-resource, composed with the
+/// parent so two parents may each carry a `versions` collection.
+fn sub_type_name(parent: &crate::ir::Resource, sub: &crate::ir::SubResource) -> String {
+    format!("{}{}", type_name(&parent.name), type_name(&sub.name))
+}
+
+/// The method stem that reaches a sub-collection: `versions` under
+/// `files` becomes `list_versions_files`, matching the OpenAPI
+/// operationId.
+fn sub_method_stem(parent: &crate::ir::Resource, sub: &crate::ir::SubResource) -> String {
+    format!("list_{}_{}", snake(&sub.name), snake(&parent.name))
+}
+
+/// One Rust struct plus its page envelope.
+fn rust_struct(
+    out: &mut String,
+    name: &str,
+    fields: &[crate::ir::FieldExposure],
+    table: &TableDefinition,
+) {
+    writeln!(out, "#[derive(Debug, Clone, Deserialize)]").unwrap();
+    writeln!(out, "pub struct {name} {{").unwrap();
+    writeln!(out, "    pub id: String,").unwrap();
+    for exposure in fields {
+        let field = column(table, &exposure.column);
+        let base = match field.field_type {
+            FieldType::Int => "i64",
+            FieldType::Float | FieldType::Decimal | FieldType::Number => "f64",
+            FieldType::Bool => "bool",
+            FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => "Value",
+            _ => "String",
+        };
+        let ty = if field.nullable {
+            format!("Option<{base}>")
+        } else {
+            base.to_owned()
+        };
+        let api = exposure.api_name();
+        if field.nullable {
+            writeln!(out, "    #[serde(default)]").unwrap();
+        }
+        writeln!(out, "    pub {}: {ty},", snake(api)).unwrap();
+    }
+    writeln!(out, "}}\n").unwrap();
+    writeln!(out, "#[derive(Debug, Clone, Deserialize)]").unwrap();
+    writeln!(out, "pub struct {name}Page {{").unwrap();
+    writeln!(out, "    pub items: Vec<{name}>,").unwrap();
+    writeln!(out, "    #[serde(default)]").unwrap();
+    writeln!(out, "    pub next_cursor: Option<String>,").unwrap();
+    writeln!(out, "}}\n").unwrap();
+}
+
+/// One TypeScript interface plus its page envelope.
+fn ts_interface(
+    out: &mut String,
+    name: &str,
+    fields: &[crate::ir::FieldExposure],
+    table: &TableDefinition,
+) {
+    writeln!(out, "export interface {name} {{").unwrap();
+    writeln!(out, "  id: string").unwrap();
+    for exposure in fields {
+        let field = column(table, &exposure.column);
+        let base = match field.field_type {
+            FieldType::Int | FieldType::Float | FieldType::Decimal | FieldType::Number => "number",
+            FieldType::Bool => "boolean",
+            FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => {
+                "unknown"
+            }
+            _ => "string",
+        };
+        let optional = if field.nullable { "?" } else { "" };
+        writeln!(out, "  {}{optional}: {base}", camel(exposure.api_name())).unwrap();
+    }
+    writeln!(out, "}}\n").unwrap();
+    writeln!(out, "export interface {name}Page {{").unwrap();
+    writeln!(out, "  items: {name}[]").unwrap();
+    writeln!(out, "  next_cursor?: string | null").unwrap();
+    writeln!(out, "}}\n").unwrap();
+}
+
+/// One Python dataclass plus its page envelope. Required attributes
+/// precede defaulted ones, which dataclass rules demand.
+fn py_dataclass(
+    out: &mut String,
+    name: &str,
+    fields: &[crate::ir::FieldExposure],
+    table: &TableDefinition,
+) {
+    writeln!(out, "@dataclass\nclass {name}:").unwrap();
+    writeln!(out, "  id: str").unwrap();
+    let mut required_lines = Vec::new();
+    let mut optional_lines = Vec::new();
+    for exposure in fields {
+        let schema_field = column(table, &exposure.column);
+        let base = match schema_field.field_type {
+            FieldType::Int => "int",
+            FieldType::Float | FieldType::Decimal | FieldType::Number => "float",
+            FieldType::Bool => "bool",
+            FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => "Any",
+            _ => "str",
+        };
+        let attribute = snake(exposure.api_name());
+        if schema_field.nullable {
+            optional_lines.push(format!("  {attribute}: {base} | None = None"));
+        } else {
+            required_lines.push(format!("  {attribute}: {base}"));
+        }
+    }
+    for line in required_lines.into_iter().chain(optional_lines) {
+        writeln!(out, "{line}").unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "@dataclass\nclass {name}Page:").unwrap();
+    writeln!(out, "  items: list[{name}] = field(default_factory=list)").unwrap();
+    writeln!(out, "  next_cursor: str | None = None\n").unwrap();
+}
+
+/// One Go struct plus its page envelope.
+fn go_struct(
+    out: &mut String,
+    name: &str,
+    fields: &[crate::ir::FieldExposure],
+    table: &TableDefinition,
+) {
+    writeln!(out, "type {name} struct {{").unwrap();
+    writeln!(out, "\tID string `json:\"id\"`").unwrap();
+    for exposure in fields {
+        let field = column(table, &exposure.column);
+        let base = match field.field_type {
+            FieldType::Int => "int64",
+            FieldType::Float | FieldType::Decimal | FieldType::Number => "float64",
+            FieldType::Bool => "bool",
+            FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any => "any",
+            _ => "string",
+        };
+        let go_type = if field.nullable && base != "any" {
+            format!("*{base}")
+        } else {
+            base.to_owned()
+        };
+        let api = exposure.api_name();
+        writeln!(out, "\t{} {go_type} `json:\"{api}\"`", pascal(&snake(api))).unwrap();
+    }
+    writeln!(out, "}}\n").unwrap();
+    writeln!(out, "type {name}Page struct {{").unwrap();
+    writeln!(out, "\tItems []{name} `json:\"items\"`").unwrap();
+    writeln!(out, "\tNextCursor *string `json:\"next_cursor\"`").unwrap();
+    writeln!(out, "}}\n").unwrap();
 }

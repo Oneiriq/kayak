@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, WatchArgs};
+use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, SubListArgs, WatchArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 use crate::runtime::resolvers::{BoxFuture, RowStream};
@@ -22,6 +22,8 @@ pub enum OperationKind {
     List,
     Get,
     Action,
+    /// Listing a collection that hangs off one parent instance.
+    SubList,
     /// Opening a subscription. The chain runs once, at open; the rows
     /// that follow do not pass through it.
     Watch,
@@ -34,6 +36,9 @@ pub struct Operation {
     pub kind: OperationKind,
     /// Set when `kind` is [`OperationKind::Action`].
     pub action: Option<String>,
+    /// Set when `kind` is [`OperationKind::SubList`]: which collection
+    /// of the parent is being listed.
+    pub sub: Option<String>,
 }
 
 /// The validated arguments travelling through the chain.
@@ -42,6 +47,7 @@ pub enum Payload {
     List(ListArgs),
     Get(GetArgs),
     Action(ActionArgs),
+    SubList(SubListArgs),
     Watch(WatchArgs),
 }
 

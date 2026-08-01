@@ -63,6 +63,19 @@ pub fn generate_openapi(
             format!("/v1/{}/{{id}}", resource.name),
             get_path(resource, &schema_name),
         );
+        for sub in &resource.sub_resources {
+            let sub_table = schema
+                .iter()
+                .find(|t| t.name == sub.table)
+                .expect("validated: table exists");
+            let sub_schema = format!("{schema_name}{}", component_name(&sub.name));
+            schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table));
+            schemas.insert(format!("{sub_schema}Page"), page_schema(&sub_schema));
+            paths.insert(
+                format!("/v1/{}/{{id}}/{}", resource.name, sub.name),
+                sub_list_path(resource, sub, &sub_schema),
+            );
+        }
         for action in &resource.actions {
             let path = format!("/v1/{}{}", resource.name, action.path);
             let entry = paths
@@ -120,6 +133,106 @@ fn component_name(resource: &str) -> String {
             }
         })
         .collect()
+}
+
+/// The object schema for a sub-resource, identical in shape to a
+/// resource's: an opaque id plus the exposed columns.
+fn sub_resource_schema(sub: &crate::ir::SubResource, table: &TableDefinition) -> Value {
+    let mut properties = Map::new();
+    let mut required = vec![json!("id")];
+    properties.insert("id".into(), json!({"type": "string"}));
+    for exposure in &sub.fields {
+        let field = table
+            .fields
+            .iter()
+            .find(|f| f.name == exposure.column)
+            .expect("validated: column exists");
+        properties.insert(exposure.api_name().to_owned(), field_schema(field));
+        if !field.nullable {
+            required.push(json!(exposure.api_name()));
+        }
+    }
+    json!({
+        "type": "object",
+        "properties": Value::Object(properties),
+        "required": required,
+    })
+}
+
+/// `GET /v1/{parent}/{id}/{sub}`: the parent id is a path parameter,
+/// and the rest mirrors a list endpoint.
+fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &str) -> Value {
+    let mut parameters = vec![
+        json!({
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"},
+            "description": format!("Identifier of the parent {}.", parent.name),
+        }),
+        json!({
+            "name": "limit",
+            "in": "query",
+            "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": sub.max_page_size,
+                "default": sub.max_page_size,
+            },
+        }),
+        json!({
+            "name": "cursor",
+            "in": "query",
+            "schema": {"type": "string"},
+            "description": "Opaque cursor from a previous page's next_cursor.",
+        }),
+    ];
+    for column in &sub.filterable {
+        parameters.push(json!({
+            "name": column,
+            "in": "query",
+            "schema": {"type": "string"},
+            "description": format!("Filter by {column} (indexed)."),
+        }));
+    }
+    if !sub.sortable.is_empty() {
+        let values: Vec<Value> = sub
+            .sortable
+            .iter()
+            .flat_map(|column| {
+                [
+                    json!(format!("{column}:asc")),
+                    json!(format!("{column}:desc")),
+                ]
+            })
+            .collect();
+        parameters.push(json!({
+            "name": "sort",
+            "in": "query",
+            "schema": {"type": "string", "enum": values},
+            "description": "Sort order; every value is backed by an index.",
+        }));
+    }
+    let mut operation = json!({
+        "operationId": format!(
+            "list_{}_{}",
+            sub.name.replace('-', "_"),
+            parent.name.replace('-', "_"),
+        ),
+        "parameters": parameters,
+        "responses": {
+            "200": {
+                "description": "Page of sub-resources.",
+                "content": {"application/json": {"schema": {
+                    "$ref": format!("#/components/schemas/{schema_name}Page"),
+                }}},
+            },
+        },
+    });
+    if let Some(description) = &sub.description {
+        operation["description"] = json!(description);
+    }
+    json!({ "get": operation })
 }
 
 fn resource_schema(resource: &Resource, table: &TableDefinition) -> Value {

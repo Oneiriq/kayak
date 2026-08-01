@@ -58,6 +58,12 @@ pub struct Resource {
     /// contract only describes its wire shape.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// Collections that hang off ONE instance of this resource: a
+    /// file's versions, an endpoint's deliveries. They read like a
+    /// resource and are reachable only through a parent id, which is
+    /// why they are not resources of their own.
+    #[serde(default)]
+    pub sub_resources: Vec<SubResource>,
     /// Whether callers may watch this resource for changes. A watchable
     /// resource gains a GraphQL Subscription field and requires a watch
     /// resolver; it changes nothing about REST, which has no long-lived
@@ -92,6 +98,92 @@ pub struct GraphqlNames {
     /// watchable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch_field: Option<String>,
+}
+
+/// A collection belonging to one instance of a parent resource.
+///
+/// It lists and pages like a resource, but it has no id-addressable
+/// form of its own and no actions: everything about it is reached
+/// through the parent. `GET /v1/files/{id}/versions` on REST, a field
+/// on the parent object type in GraphQL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubResource {
+    /// API-facing name, plural. Becomes the path segment and the
+    /// GraphQL field on the parent.
+    pub name: String,
+    /// Backing table in the schema.
+    pub table: String,
+    /// Column on `table` holding the parent's id. The server always
+    /// equality-binds it, so index validation credits it the way it
+    /// credits `pinned`.
+    pub parent_key: String,
+    /// Projected fields. Nothing is exposed that is not listed.
+    pub fields: Vec<FieldExposure>,
+    /// Further server-bound columns, beyond `parent_key`.
+    #[serde(default)]
+    pub pinned: Vec<String>,
+    /// Columns callers may filter on. Validated against indexes.
+    #[serde(default)]
+    pub filterable: Vec<String>,
+    /// Columns callers may sort on. Validated against index prefixes.
+    #[serde(default)]
+    pub sortable: Vec<String>,
+    /// Page-size ceiling.
+    #[serde(default = "default_max_page_size")]
+    pub max_page_size: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// GraphQL-scoped name overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql: Option<SubGraphqlNames>,
+}
+
+/// GraphQL name overrides for one sub-resource.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubGraphqlNames {
+    /// Object type name (default: parent singular + sub singular, e.g.
+    /// `FileVersion`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    /// Field on the parent object (default: camelCase sub name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+impl SubResource {
+    /// The GraphQL object type name: the override, or PascalCase
+    /// singular of the parent and of this name (`files` + `versions`
+    /// -> `FileVersion`). Composing with the parent is what keeps two
+    /// parents with a `versions` collection from colliding.
+    pub fn graphql_type_name(&self, parent: &Resource) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.type_name.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    crate::naming::type_name(&parent.name),
+                    crate::naming::type_name(&self.name),
+                )
+            })
+    }
+
+    /// The field on the parent object type: the override, or camelCase
+    /// of this name (`versions`).
+    pub fn graphql_field(&self) -> String {
+        self.graphql
+            .as_ref()
+            .and_then(|g| g.field.clone())
+            .unwrap_or_else(|| crate::naming::camel(&self.name))
+    }
+
+    /// Columns the server equality-binds before any caller input:
+    /// `parent_key` always, plus anything explicitly pinned.
+    pub fn bound_columns(&self) -> Vec<&str> {
+        std::iter::once(self.parent_key.as_str())
+            .chain(self.pinned.iter().map(String::as_str))
+            .collect()
+    }
 }
 
 /// One verb on a resource.
@@ -292,6 +384,7 @@ mod tests {
                 }],
                 graphql: None,
                 watchable: false,
+                sub_resources: vec![],
             }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();

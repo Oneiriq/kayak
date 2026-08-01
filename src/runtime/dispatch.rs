@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use crate::ir::{Action, Contract, Resource};
+use crate::ir::{Action, Contract, Resource, SubResource};
 use crate::runtime::args::{
-    validate_action, validate_list, validate_watch, ActionArgs, GetArgs, ListArgs, ListOutput,
-    WatchArgs,
+    validate_action, validate_list, validate_sub_list, validate_watch, ActionArgs, GetArgs,
+    ListArgs, ListOutput, SubListArgs, WatchArgs,
 };
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
@@ -29,6 +29,8 @@ pub enum RuntimeBuildError {
     MissingGet(String),
     #[error("resource {resource}: action {action}: no resolver registered")]
     MissingAction { resource: String, action: String },
+    #[error("resource {resource}: sub-resource {sub}: no list resolver registered")]
+    MissingSubList { resource: String, sub: String },
     #[error("resource {0}: watchable, but no watch resolver registered")]
     MissingWatch(String),
     #[error(
@@ -58,6 +60,15 @@ impl Dispatcher {
             }
             if !resolvers.get.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingGet(resource.name.clone()));
+            }
+            for sub in &resource.sub_resources {
+                let key = (resource.name.clone(), sub.name.clone());
+                if !resolvers.sub_list.contains_key(&key) {
+                    return Err(RuntimeBuildError::MissingSubList {
+                        resource: resource.name.clone(),
+                        sub: sub.name.clone(),
+                    });
+                }
             }
             if resource.watchable && !resolvers.watch.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingWatch(resource.name.clone()));
@@ -152,6 +163,18 @@ impl Dispatcher {
                             .clone();
                         resolver(ctx, args).await.map(Outcome::Action)
                     }
+                    (Payload::SubList(args), OperationKind::SubList) => {
+                        let sub = operation
+                            .sub
+                            .clone()
+                            .expect("sub-list operations carry the sub-resource name");
+                        let resolver = resolvers
+                            .sub_list
+                            .get(&(operation.resource.clone(), sub))
+                            .expect("completeness-checked at build")
+                            .clone();
+                        resolver(ctx, args).await.map(Outcome::List)
+                    }
                     (Payload::Watch(args), OperationKind::Watch) => {
                         let resolver = resolvers
                             .watch
@@ -185,6 +208,7 @@ impl Dispatcher {
             resource: resource.to_owned(),
             kind: OperationKind::List,
             action: None,
+            sub: None,
         };
         match self
             .chain()
@@ -210,6 +234,7 @@ impl Dispatcher {
             resource: resource.to_owned(),
             kind: OperationKind::Get,
             action: None,
+            sub: None,
         };
         match self.chain().run(operation, ctx, Payload::Get(args)).await? {
             Outcome::Get(row) => Ok(row),
@@ -233,6 +258,7 @@ impl Dispatcher {
             resource: resource.to_owned(),
             kind: OperationKind::Action,
             action: Some(action.to_owned()),
+            sub: None,
         };
         match self
             .chain()
@@ -240,6 +266,49 @@ impl Dispatcher {
             .await?
         {
             Outcome::Action(value) => Ok(value),
+            _ => Err(JanusError::Internal(
+                "resolver returned a mismatched outcome".into(),
+            )),
+        }
+    }
+
+    fn sub_of<'a>(resource: &'a Resource, name: &str) -> Result<&'a SubResource, JanusError> {
+        resource
+            .sub_resources
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| {
+                JanusError::BadRequest(format!(
+                    "unknown sub-resource {name} on resource {}",
+                    resource.name,
+                ))
+            })
+    }
+
+    /// Dispatch a sub-resource listing: one parent instance's
+    /// collection, validated against that collection's own
+    /// declarations rather than the parent's.
+    pub async fn sub_list(
+        &self,
+        resource: &str,
+        sub: &str,
+        ctx: JanusContext,
+        mut args: SubListArgs,
+    ) -> Result<ListOutput, JanusError> {
+        let declared = Self::sub_of(self.resource(resource)?, sub)?;
+        validate_sub_list(declared, &mut args)?;
+        let operation = Operation {
+            resource: resource.to_owned(),
+            kind: OperationKind::SubList,
+            action: None,
+            sub: Some(sub.to_owned()),
+        };
+        match self
+            .chain()
+            .run(operation, ctx, Payload::SubList(args))
+            .await?
+        {
+            Outcome::List(output) => Ok(output),
             _ => Err(JanusError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
@@ -259,6 +328,7 @@ impl Dispatcher {
             resource: resource.to_owned(),
             kind: OperationKind::Watch,
             action: None,
+            sub: None,
         };
         match self
             .chain()

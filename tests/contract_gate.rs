@@ -48,6 +48,7 @@ fn files_resource() -> Resource {
         max_page_size: 100,
         graphql: None,
         watchable: false,
+        sub_resources: vec![],
         actions: vec![],
     }
 }
@@ -147,6 +148,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         max_page_size: 10,
         graphql: None,
         watchable: false,
+        sub_resources: vec![],
         actions: vec![],
     };
     let violations = validate(&contract(vec![resource]), &[file_table()]);

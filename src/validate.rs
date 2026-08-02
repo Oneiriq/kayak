@@ -180,6 +180,52 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
             }
         }
     }
+    // Queries: names sound and unique, rate classes resolvable, and
+    // paths absolute. A query is a wire surface like any other, so it
+    // answers to the same naming rules.
+    let mut query_names = std::collections::BTreeSet::new();
+    for query in &contract.queries {
+        if !is_wire_ident(&query.name, false) {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: query.name.clone(),
+                problem: "must be lowercase snake case".into(),
+            });
+        }
+        if !query_names.insert(query.name.clone()) {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: query.name.clone(),
+                problem: "duplicate query".into(),
+            });
+        }
+        if !query.path.starts_with('/') {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: query.path.clone(),
+                problem: "path must be absolute".into(),
+            });
+        }
+        if let Some(class) = &query.rate_class {
+            if !class_exists(class) {
+                violations.push(Violation::InvalidName {
+                    scope: format!("query {}", query.name),
+                    name: class.clone(),
+                    problem: "references an undefined rate class".into(),
+                });
+            }
+        }
+        for field in &query.input {
+            if !is_wire_ident(&field.name, false) {
+                violations.push(Violation::InvalidName {
+                    scope: format!("query {} input", query.name),
+                    name: field.name.clone(),
+                    problem: "must be lowercase snake case".into(),
+                });
+            }
+        }
+    }
+
     violations
 }
 

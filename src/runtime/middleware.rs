@@ -11,7 +11,9 @@
 
 use std::sync::Arc;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, SubListArgs, WatchArgs};
+use crate::runtime::args::{
+    ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
+};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 use crate::runtime::resolvers::{BoxFuture, RowStream};
@@ -27,11 +29,17 @@ pub enum OperationKind {
     /// Opening a subscription. The chain runs once, at open; the rows
     /// that follow do not pass through it.
     Watch,
+    /// A contract query: a read that answers a question rather than
+    /// paging a collection. It names no resource, so scope and rate
+    /// declarations come from the query itself.
+    Query,
 }
 
 /// The identity of one dispatched operation.
 #[derive(Debug, Clone)]
 pub struct Operation {
+    /// The resource this operation belongs to, or the query name when
+    /// `kind` is [`OperationKind::Query`], which belongs to none.
     pub resource: String,
     pub kind: OperationKind,
     /// Set when `kind` is [`OperationKind::Action`].
@@ -49,6 +57,8 @@ pub enum Payload {
     Action(ActionArgs),
     SubList(SubListArgs),
     Watch(WatchArgs),
+    /// A contract query's parameters.
+    Query(QueryArgs),
 }
 
 /// What came back from the resolver.
@@ -59,6 +69,8 @@ pub enum Outcome {
     /// The opened stream. A middleware may replace it (to meter or
     /// bound it) but cannot read it without consuming rows.
     Watch(RowStream),
+    /// A contract query's answer.
+    Query(serde_json::Value),
 }
 
 impl std::fmt::Debug for Outcome {
@@ -67,6 +79,7 @@ impl std::fmt::Debug for Outcome {
             Self::List(output) => f.debug_tuple("List").field(output).finish(),
             Self::Get(row) => f.debug_tuple("Get").field(row).finish(),
             Self::Action(value) => f.debug_tuple("Action").field(value).finish(),
+            Self::Query(value) => f.debug_tuple("Query").field(value).finish(),
             Self::Watch(_) => f.debug_tuple("Watch").field(&"<stream>").finish(),
         }
     }

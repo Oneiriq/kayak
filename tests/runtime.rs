@@ -14,7 +14,7 @@ use janus::runtime::{
     SubListArgs, WatchArgs,
 };
 use janus::{
-    Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Resource,
+    Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Query, Resource,
     SubResource, TypeRef,
 };
 use surql::schema::{
@@ -126,6 +126,7 @@ fn contract() -> Contract {
                 },
             ],
         }],
+        queries: vec![],
     }
 }
 
@@ -244,6 +245,24 @@ fn fixture(contract: Contract) -> Fixture {
             assert!(args.id.is_some());
             Ok(None)
         });
+
+    for declared in &contract.queries.clone() {
+        let name = declared.name.clone();
+        resolvers = resolvers.query(&name, move |_ctx, args| {
+            let term = args
+                .input
+                .get("q")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_owned();
+            async move {
+                Ok(serde_json::json!({
+                    "mode": "hybrid",
+                    "items": [{ "file": "01A", "excerpt": term }],
+                }))
+            }
+        });
+    }
 
     for sub in &contract.resources[0].sub_resources.clone() {
         let sub_name = sub.name.clone();
@@ -1512,4 +1531,131 @@ async fn the_watch_ceiling_holds_and_slots_free_on_drop() {
         "{:?}",
         reopened.iter().map(|r| &r.errors).collect::<Vec<_>>(),
     );
+}
+
+fn searching_contract() -> Contract {
+    let mut contract = contract();
+    contract.queries = vec![Query {
+        name: "search".into(),
+        path: "/v1/search".into(),
+        input: vec![
+            ActionField {
+                name: "q".into(),
+                kind: TypeRef::String,
+                required: true,
+                description: None,
+            },
+            ActionField {
+                name: "limit".into(),
+                kind: TypeRef::Int,
+                required: false,
+                description: None,
+            },
+        ],
+        description: Some("Retrieval across the tenant's text.".into()),
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+    }];
+    contract
+}
+
+fn scoped_searching_contract() -> Contract {
+    let mut contract = searching_contract();
+    contract.queries[0].requires = vec!["read".into()];
+    contract
+}
+
+/// A query answers on the GraphQL face through the same dispatcher
+/// every other operation uses, with its declared arguments checked.
+#[tokio::test]
+async fn contract_queries_answer_on_the_graphql_face() {
+    let fixture = fixture(searching_contract());
+    let response = fixture
+        .schema
+        .execute(tenant_request(r#"{ search(q: "invoice", limit: 5) }"#))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["search"]["items"][0]["excerpt"], "invoice");
+
+    // The chain ran around it, so middleware, scopes, and metering
+    // apply to queries exactly as they apply to listings.
+    let recorded = fixture.recorded.lock().unwrap().clone();
+    assert_eq!(recorded, vec!["enter:search:Query", "exit:search:Query"]);
+}
+
+/// The declaration is the contract: a missing required parameter and
+/// an undeclared one both refuse before any resolver runs.
+#[tokio::test]
+async fn query_parameters_answer_to_their_declaration() {
+    let fixture = fixture(searching_contract());
+    let response = fixture.schema.execute(tenant_request("{ search }")).await;
+    assert!(
+        !response.errors.is_empty(),
+        "a required argument is missing"
+    );
+
+    let response = fixture
+        .schema
+        .execute(tenant_request(r#"{ search(q: "x", nope: 1) }"#))
+        .await;
+    assert!(!response.errors.is_empty(), "an undeclared argument");
+}
+
+/// Both directions of the completeness gate: a declared query with no
+/// resolver refuses to build, and a resolver for a query the contract
+/// never declared refuses too.
+#[test]
+fn query_resolvers_are_gated_in_both_directions() {
+    let contract = searching_contract();
+    let err = Dispatcher::new(Arc::new(contract.clone()), Resolvers::new(), vec![]).unwrap_err();
+    assert!(format!("{err}").contains("no list resolver"), "{err}");
+
+    let complete = Resolvers::new()
+        .list("files", |_ctx, _args: ListArgs| async move {
+            Ok(ListOutput::default())
+        })
+        .get("files", |_ctx, _args| async move { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async move { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async move { Ok(None) })
+        .sub_list("files", "versions", |_ctx, _args: SubListArgs| async move {
+            Ok(ListOutput::default())
+        });
+    let err = Dispatcher::new(Arc::new(contract.clone()), complete, vec![]).unwrap_err();
+    assert!(format!("{err}").contains("query search"), "{err}");
+
+    let stray = Resolvers::new()
+        .list("files", |_ctx, _args: ListArgs| async move {
+            Ok(ListOutput::default())
+        })
+        .get("files", |_ctx, _args| async move { Ok(None) })
+        .action("files", "issue_url", |_ctx, _args| async move { Ok(None) })
+        .action("files", "remove", |_ctx, _args| async move { Ok(None) })
+        .sub_list("files", "versions", |_ctx, _args: SubListArgs| async move {
+            Ok(ListOutput::default())
+        })
+        .query(
+            "search",
+            |_ctx, _args| async move { Ok(serde_json::json!({})) },
+        )
+        .query(
+            "nowhere",
+            |_ctx, _args| async move { Ok(serde_json::json!({})) },
+        );
+    let err = Dispatcher::new(Arc::new(contract), stray, vec![]).unwrap_err();
+    assert!(format!("{err}").contains("nowhere"), "{err}");
+}
+
+/// A query's scopes are enforced by the same path resources use: an
+/// unidentified caller is refused before the resolver runs.
+#[tokio::test]
+async fn query_scopes_refuse_unidentified_callers() {
+    let fixture = fixture(scoped_searching_contract());
+    let response = fixture
+        .schema
+        .execute(tenant_request(r#"{ search(q: "invoice") }"#))
+        .await;
+    let message = format!("{:?}", response.errors);
+    assert!(message.contains("unauthorized"), "{message}");
 }

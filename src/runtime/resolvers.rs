@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use futures_core::Stream;
 
-use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, ListOutput, SubListArgs, WatchArgs};
+use crate::runtime::args::{
+    ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
+};
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
 
@@ -38,6 +40,17 @@ pub(crate) type GetResolver = Arc<
         + Send
         + Sync,
 >;
+/// A contract query's resolver: parameters in, JSON answer out.
+pub(crate) type QueryResolver = Arc<
+    dyn Fn(
+            JanusContext,
+            QueryArgs,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, JanusError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 pub(crate) type ActionResolver = Arc<
     dyn Fn(
             JanusContext,
@@ -65,6 +78,7 @@ pub struct Resolvers {
     pub(crate) list: BTreeMap<String, ListResolver>,
     pub(crate) get: BTreeMap<String, GetResolver>,
     pub(crate) action: BTreeMap<(String, String), ActionResolver>,
+    pub(crate) query: BTreeMap<String, QueryResolver>,
     pub(crate) watch: BTreeMap<String, WatchResolver>,
     pub(crate) sub_list: BTreeMap<(String, String), SubListResolver>,
 }
@@ -114,6 +128,21 @@ impl Resolvers {
     {
         self.action.insert(
             (resource.to_owned(), action.to_owned()),
+            Arc::new(move |ctx, args| Box::pin(f(ctx, args))),
+        );
+        self
+    }
+
+    /// Register the resolver for one contract query. The closure
+    /// receives the declared parameters, already checked against the
+    /// declaration, and returns the answer.
+    pub fn query<F, Fut>(mut self, name: &str, f: F) -> Self
+    where
+        F: Fn(JanusContext, QueryArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<serde_json::Value, JanusError>> + Send + 'static,
+    {
+        self.query.insert(
+            name.to_owned(),
             Arc::new(move |ctx, args| Box::pin(f(ctx, args))),
         );
         self

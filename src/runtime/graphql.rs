@@ -541,6 +541,56 @@ pub fn schema_builder(
         }
     }
 
+    // Contract queries join the Query root beside the resource
+    // listings: same dispatcher, same middleware, same scope and rate
+    // enforcement, answering JSON because the answer's shape is the
+    // resolver's business rather than a projected table.
+    for declared in &contract.queries {
+        uses_json = true;
+        let query_dispatcher = dispatcher.clone();
+        let query_name = declared.name.clone();
+        let inputs: Vec<String> = declared.input.iter().map(|f| f.name.clone()).collect();
+        let mut field = Field::new(
+            declared.graphql_field_name(),
+            Gql::named_nn("JSON"),
+            move |ctx| {
+                let dispatcher = query_dispatcher.clone();
+                let name = query_name.clone();
+                let inputs = inputs.clone();
+                FieldFuture::new(async move {
+                    let mut args = crate::runtime::args::QueryArgs::default();
+                    for input in &inputs {
+                        if let Some(value) = ctx.args.get(crate::naming::camel(input).as_str()) {
+                            args.input
+                                .insert(input.clone(), value.deserialize::<serde_json::Value>()?);
+                        }
+                    }
+                    let jctx = request_context(&ctx);
+                    let value = dispatcher
+                        .query(&name, jctx, args)
+                        .await
+                        .map_err(to_graphql_error)?;
+                    Ok(Some(FieldValue::value(GqlValue::from_json(value)?)))
+                })
+            },
+        );
+        for input in &declared.input {
+            let base = match input.kind {
+                TypeRef::String => Gql::STRING.to_owned(),
+                TypeRef::Int => Gql::INT.to_owned(),
+                TypeRef::Bool => Gql::BOOLEAN.to_owned(),
+                TypeRef::Json => "JSON".to_owned(),
+            };
+            let type_ref = if input.required {
+                Gql::named_nn(base)
+            } else {
+                Gql::named(base)
+            };
+            field = field.argument(InputValue::new(crate::naming::camel(&input.name), type_ref));
+        }
+        query = query.field(field);
+    }
+
     if uses_datetime {
         builder = builder.register(Scalar::new("DateTime"));
     }

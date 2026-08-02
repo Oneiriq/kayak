@@ -11,6 +11,22 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Contract queries: reads that answer a question.** A listing
+  cannot express a search, because relevance is not a sort column and
+  a query string is not a filter. `Contract.queries` declares named
+  reads with typed parameters; they render as GraphQL query fields
+  and REST `GET`s, dispatch through the same chain every other
+  operation uses, and carry the same scope and rate declarations. The
+  answer is JSON, since its shape belongs to the resolver rather than
+  to a projected table. Resolvers are gated in both directions: a
+  declared query without one refuses to build, and a resolver for a
+  query nobody declared refuses too. The differ treats them like
+  actions, so removing one, renaming its field, moving its path,
+  tightening its scopes, or gaining a required parameter all read as
+  breaking.
+
+### Added
+
 - **Per-principal watch ceilings.** `limits.max_watches_per_principal` caps
   concurrently open subscriptions per caller; the slot is taken before the
   resolver runs, so a refused open never starts a live query, and it rides

@@ -66,6 +66,7 @@ fn contract() -> Contract {
                 rate_class: None,
             }],
         }],
+        queries: vec![],
     }
 }
 

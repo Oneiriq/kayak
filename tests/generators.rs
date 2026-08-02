@@ -97,6 +97,7 @@ fn contract() -> Contract {
                 },
             ],
         }],
+        queries: vec![],
     }
 }
 

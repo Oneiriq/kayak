@@ -90,6 +90,59 @@ pub fn generate_openapi(
         }
     }
 
+    // Contract queries are REST surfaces too: the path they declare,
+    // their parameters as query strings, and a free-form JSON answer.
+    for query in &contract.queries {
+        let parameters: Vec<Value> = query
+            .input
+            .iter()
+            .filter(|field| !query.path.contains(&format!("{{{}}}", field.name)))
+            .map(|field| {
+                json!({
+                    "name": field.name,
+                    "in": "query",
+                    "required": field.required,
+                    "description": field.description,
+                    "schema": { "type": type_name(field.kind) },
+                })
+            })
+            .collect();
+        let mut path_parameters: Vec<Value> = query
+            .input
+            .iter()
+            .filter(|field| query.path.contains(&format!("{{{}}}", field.name)))
+            .map(|field| {
+                json!({
+                    "name": field.name,
+                    "in": "path",
+                    "required": true,
+                    "description": field.description,
+                    "schema": { "type": type_name(field.kind) },
+                })
+            })
+            .collect();
+        path_parameters.extend(parameters);
+        let entry = paths
+            .entry(query.path.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(object) = entry.as_object_mut() {
+            object.insert(
+                "get".to_owned(),
+                json!({
+                    "operationId": query.name,
+                    "summary": query.description,
+                    "parameters": path_parameters,
+                    "responses": {
+                        "200": {
+                            "description": "the answer",
+                            "content": { "application/json": { "schema": { "type": "object" } } },
+                        },
+                    },
+                }),
+            );
+        }
+    }
+
     let mut document = json!({
         "openapi": "3.1.0",
         "info": {
@@ -498,4 +551,14 @@ fn get_path(resource: &Resource, schema_name: &str) -> Value {
     });
     attach_scopes(&mut operation, &resource.reads_require);
     json!({ "get": operation })
+}
+
+/// The OpenAPI type name for a wire type.
+fn type_name(kind: crate::ir::TypeRef) -> &'static str {
+    match kind {
+        crate::ir::TypeRef::String => "string",
+        crate::ir::TypeRef::Int => "integer",
+        crate::ir::TypeRef::Bool => "boolean",
+        crate::ir::TypeRef::Json => "object",
+    }
 }

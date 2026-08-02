@@ -23,7 +23,9 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   query nobody declared refuses too. The differ treats them like
   actions, so removing one, renaming its field, moving its path,
   tightening its scopes, or gaining a required parameter all read as
-  breaking.
+  breaking. Queries also render into OpenAPI as `GET` operations,
+  with declared parameters split between path and query string, so
+  the REST face of a query is published rather than merely served.
 
 ### Added
 

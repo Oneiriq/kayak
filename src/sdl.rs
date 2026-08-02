@@ -143,6 +143,14 @@ pub fn generate_sdl(
         .unwrap();
         writeln!(body, "  {singular}(id: ID!): {type_name}").unwrap();
     }
+    // Contract queries join the same root: a question with typed
+    // arguments answers as JSON, because the answer's shape is the
+    // resolver's business rather than a projected table.
+    for query in &contract.queries {
+        let (field, json) = query_field(query);
+        uses_json |= json;
+        writeln!(body, "  {field}").unwrap();
+    }
     body.push_str("}\n");
 
     // Mutation root, only when any resource declares actions.
@@ -244,6 +252,29 @@ fn graphql_type(field: &FieldDefinition, guarded: bool) -> (String, bool, bool) 
 }
 
 /// One Mutation field for an action; returns (line, uses_json).
+/// One contract query as a GraphQL query field.
+fn query_field(query: &crate::ir::Query) -> (String, bool) {
+    let mut arguments = Vec::new();
+    for field in &query.input {
+        let base = match field.kind {
+            TypeRef::String => "String",
+            TypeRef::Int => "Int",
+            TypeRef::Bool => "Boolean",
+            TypeRef::Json => "JSON",
+        };
+        let bang = if field.required { "!" } else { "" };
+        arguments.push(format!("{}: {base}{bang}", camel(&field.name)));
+    }
+    let name = query.graphql_field_name();
+    let rendered = if arguments.is_empty() {
+        format!("{name}: JSON!")
+    } else {
+        format!("{name}({}): JSON!", arguments.join(", "))
+    };
+    // A query always answers JSON, so the scalar is always in play.
+    (rendered, true)
+}
+
 fn mutation_field(resource: &Resource, action: &Action) -> (String, bool) {
     let name = action.graphql_field_name(resource);
     let mut arguments = Vec::new();

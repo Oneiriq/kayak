@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::ir::{Action, Contract, Resource, SubResource};
 use crate::runtime::args::{
-    validate_action, validate_list, validate_sub_list, validate_watch, ActionArgs, GetArgs,
-    ListArgs, ListOutput, SubListArgs, WatchArgs,
+    validate_action, validate_list, validate_query, validate_sub_list, validate_watch, ActionArgs,
+    GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
 };
 use crate::runtime::context::JanusContext;
 use crate::runtime::error::JanusError;
@@ -26,6 +26,10 @@ use crate::runtime::resolvers::{Resolvers, RowStream};
 /// Why a runtime could not be assembled.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RuntimeBuildError {
+    #[error("query {0}: no resolver registered")]
+    MissingQuery(String),
+    #[error("query resolver {0} registered, but the contract declares no such query")]
+    UndeclaredQuery(String),
     #[error("resource {0}: no list resolver registered")]
     MissingList(String),
     #[error("resource {0}: no get resolver registered")]
@@ -216,6 +220,29 @@ impl Dispatcher {
                 return Err(RuntimeBuildError::UnwatchedResolver(name.clone()));
             }
         }
+
+        // Queries are gated in both directions for the same reason
+        // watch resolvers are: a declared query without a resolver is
+        // a schema field that answers nothing, and a resolver without
+        // a declaration is a surface the differ never sees.
+        for query in &contract.queries {
+            if !resolvers.query.contains_key(&query.name) {
+                return Err(RuntimeBuildError::MissingQuery(query.name.clone()));
+            }
+            if rate_store.is_none() {
+                if let Some(class) = &query.rate_class {
+                    return Err(RuntimeBuildError::UnmeteredRateClass {
+                        scope: format!("query {}", query.name),
+                        class: class.clone(),
+                    });
+                }
+            }
+        }
+        for name in resolvers.query.keys() {
+            if !contract.queries.iter().any(|q| &q.name == name) {
+                return Err(RuntimeBuildError::UndeclaredQuery(name.clone()));
+            }
+        }
         Ok(Self {
             contract,
             resolvers,
@@ -298,6 +325,14 @@ impl Dispatcher {
                             .expect("completeness-checked at build")
                             .clone();
                         resolver(ctx, args).await.map(Outcome::Get)
+                    }
+                    (Payload::Query(args), OperationKind::Query) => {
+                        let resolver = resolvers
+                            .query
+                            .get(&operation.resource)
+                            .expect("completeness-checked at build")
+                            .clone();
+                        resolver(ctx, args).await.map(Outcome::Query)
                     }
                     (Payload::Action(args), OperationKind::Action) => {
                         let action = operation
@@ -401,6 +436,38 @@ impl Dispatcher {
         };
         match self.chain().run(operation, ctx, Payload::Get(args)).await? {
             Outcome::Get(row) => Ok(row),
+            _ => Err(JanusError::Internal(
+                "resolver returned a mismatched outcome".into(),
+            )),
+        }
+    }
+
+    /// Dispatch a contract query.
+    pub async fn query(
+        &self,
+        name: &str,
+        ctx: JanusContext,
+        mut args: QueryArgs,
+    ) -> Result<serde_json::Value, JanusError> {
+        let declared = self
+            .contract
+            .queries
+            .iter()
+            .find(|q| q.name == name)
+            .ok_or_else(|| JanusError::BadRequest(format!("no query {name}")))?;
+        validate_query(declared, &mut args)?;
+        let operation = Operation {
+            resource: name.to_owned(),
+            kind: OperationKind::Query,
+            action: None,
+            sub: None,
+        };
+        match self
+            .chain()
+            .run(operation, ctx, Payload::Query(args))
+            .await?
+        {
+            Outcome::Query(value) => Ok(value),
             _ => Err(JanusError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
@@ -678,6 +745,11 @@ fn project_hidden(outcome: Outcome, hidden: Vec<(String, String)>) -> Outcome {
             }
             Outcome::List(output)
         }
+        // A query's answer is the resolver's own shape, so field
+        // projection has no columns to strip: a resolver that returns
+        // guarded columns projects them itself, the way the REST
+        // handlers do.
+        Outcome::Query(value) => Outcome::Query(value),
         Outcome::Get(mut row) => {
             if let Some(row) = row.as_mut() {
                 strip(row);
@@ -735,6 +807,37 @@ async fn charge_rate(
     payload: &Payload,
 ) -> Result<(), JanusError> {
     let Some(store) = store else { return Ok(()) };
+    let class_name = if operation.kind == OperationKind::Query {
+        contract
+            .queries
+            .iter()
+            .find(|q| q.name == operation.resource)
+            .and_then(|q| q.rate_class.clone())
+    } else {
+        None
+    };
+    if operation.kind == OperationKind::Query {
+        let Some(class_name) = class_name else {
+            return Ok(());
+        };
+        let Some(class) = contract.rate_classes.iter().find(|c| c.name == class_name) else {
+            return Err(JanusError::Internal(format!(
+                "rate class {class_name} is not defined",
+            )));
+        };
+        let subject = ctx
+            .get::<Principal>()
+            .map(|p| p.subject.as_str())
+            .unwrap_or("anonymous");
+        let bucket = format!("{class_name}:{subject}");
+        return if store.charge(&bucket, 1, class.units_per_minute).await? {
+            Ok(())
+        } else {
+            Err(JanusError::TooManyRequests(format!(
+                "rate class {class_name} exhausted; retry next minute",
+            )))
+        };
+    }
     let Some(resource) = contract
         .resources
         .iter()
@@ -743,6 +846,9 @@ async fn charge_rate(
         return Ok(());
     };
     let class_name = match operation.kind {
+        // Queries meter from their own declaration; the resource
+        // lookup above never applies to them.
+        OperationKind::Query => None,
         OperationKind::List
         | OperationKind::Get
         | OperationKind::SubList
@@ -766,7 +872,7 @@ async fn charge_rate(
     let units = match payload {
         Payload::List(args) => u64::from(args.limit).max(1),
         Payload::SubList(args) => u64::from(args.limit).max(1),
-        Payload::Get(_) | Payload::Action(_) | Payload::Watch(_) => 1,
+        Payload::Get(_) | Payload::Action(_) | Payload::Watch(_) | Payload::Query(_) => 1,
     };
     // Anonymous callers share one bucket by design: without an
     // identity there is nothing fairer to key on, and the shared
@@ -788,6 +894,14 @@ async fn charge_rate(
 /// The scopes `operation` demands, per the contract: reads check the
 /// resource's requirement, actions their own.
 fn required_scopes<'a>(contract: &'a Contract, operation: &Operation) -> &'a [String] {
+    if operation.kind == OperationKind::Query {
+        return contract
+            .queries
+            .iter()
+            .find(|q| q.name == operation.resource)
+            .map(|q| q.requires.as_slice())
+            .unwrap_or(&[]);
+    }
     let Some(resource) = contract
         .resources
         .iter()
@@ -796,6 +910,7 @@ fn required_scopes<'a>(contract: &'a Contract, operation: &Operation) -> &'a [St
         return &[];
     };
     match operation.kind {
+        OperationKind::Query => &[],
         OperationKind::List
         | OperationKind::Get
         | OperationKind::SubList

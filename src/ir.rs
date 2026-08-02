@@ -33,6 +33,55 @@ pub struct Contract {
     pub limits: Option<ContractLimits>,
     /// Exposed resources.
     pub resources: Vec<Resource>,
+    /// Reads that are not listings: a question with typed inputs and
+    /// an answer, ordered by whatever the resolver decides. Search is
+    /// the shape that motivated them, and a listing cannot express
+    /// one: relevance is not a sort column and a query string is not
+    /// a filter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queries: Vec<Query>,
+}
+
+/// One named read that answers a question rather than paging a
+/// collection.
+///
+/// Queries render as GraphQL query fields and REST `GET`s, carry the
+/// same scope and rate declarations resources and actions carry, and
+/// the differ treats them the way it treats actions: adding one is
+/// additive, removing or renaming one breaks, and tightening what it
+/// requires breaks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Query {
+    /// Snake-case name; generators derive per-language method and
+    /// GraphQL field names from it.
+    pub name: String,
+    /// REST path, absolute under the API root (`"/v1/search"`).
+    pub path: String,
+    /// Parameters, which arrive as query-string values on REST and
+    /// as field arguments on GraphQL.
+    #[serde(default)]
+    pub input: Vec<ActionField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// GraphQL field name override (default: camelCase of the name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql_field: Option<String>,
+    /// Scopes a caller must hold. Empty means open.
+    #[serde(default)]
+    pub requires: Vec<String>,
+    /// The rate class metering this query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_class: Option<String>,
+}
+
+impl Query {
+    /// The GraphQL field name: the override, or camelCase of the
+    /// query name (`file_text` -> `fileText`).
+    pub fn graphql_field_name(&self) -> String {
+        self.graphql_field
+            .clone()
+            .unwrap_or_else(|| crate::naming::camel(&self.name))
+    }
 }
 
 /// One named consumption budget.
@@ -470,6 +519,7 @@ mod tests {
                 rate_class: None,
                 sub_resources: vec![],
             }],
+            queries: vec![],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();
         let back: Contract = serde_json::from_str(&json).unwrap();

@@ -104,7 +104,102 @@ pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
             )));
         }
     }
+    // Queries answer the same rules actions do: removal and renaming
+    // break, tightening what a caller must hold breaks, and gaining a
+    // required input breaks.
+    for old_query in &old.queries {
+        match new.queries.iter().find(|q| q.name == old_query.name) {
+            None => changes.push(Change::Breaking(format!(
+                "query {} removed",
+                old_query.name,
+            ))),
+            Some(new_query) => diff_query(old_query, new_query, &mut changes),
+        }
+    }
+    for new_query in &new.queries {
+        if !old.queries.iter().any(|q| q.name == new_query.name) {
+            changes.push(Change::Compatible(format!(
+                "query {} added",
+                new_query.name,
+            )));
+        }
+    }
+
     changes
+}
+
+fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<Change>) {
+    let name = &old.name;
+    if old.graphql_field_name() != new.graphql_field_name() {
+        changes.push(Change::Breaking(format!(
+            "query {name} graphql field renamed {} -> {}",
+            old.graphql_field_name(),
+            new.graphql_field_name(),
+        )));
+    }
+    if old.path != new.path {
+        changes.push(Change::Breaking(format!(
+            "query {name} moved ({} -> {})",
+            old.path, new.path,
+        )));
+    }
+    match (&old.rate_class, &new.rate_class) {
+        (None, Some(class)) => changes.push(Change::Breaking(format!(
+            "query {name} now metered by rate class {class}",
+        ))),
+        (Some(class), None) => changes.push(Change::Compatible(format!(
+            "query {name} no longer metered (was {class})",
+        ))),
+        _ => {}
+    }
+    for required in &new.requires {
+        if !old.requires.contains(required) {
+            changes.push(Change::Breaking(format!(
+                "query {name} now requires scope {required}",
+            )));
+        }
+    }
+    for required in &old.requires {
+        if !new.requires.contains(required) {
+            changes.push(Change::Compatible(format!(
+                "query {name} no longer requires scope {required}",
+            )));
+        }
+    }
+    for field in &new.input {
+        match old.input.iter().find(|f| f.name == field.name) {
+            None if field.required => changes.push(Change::Breaking(format!(
+                "query {name} gained required input {}",
+                field.name,
+            ))),
+            None => changes.push(Change::Compatible(format!(
+                "query {name} gained optional input {}",
+                field.name,
+            ))),
+            Some(previous) => {
+                if !previous.required && field.required {
+                    changes.push(Change::Breaking(format!(
+                        "query {name} input {} became required",
+                        field.name,
+                    )));
+                }
+                if previous.kind != field.kind {
+                    changes.push(Change::Breaking(format!(
+                        "query {name} input {} changed type",
+                        field.name,
+                    )));
+                }
+            }
+        }
+    }
+    for field in &old.input {
+        if !new.input.iter().any(|f| f.name == field.name) {
+            changes.push(Change::Breaking(format!(
+                "query {name} lost input {}",
+                field.name,
+            )));
+        }
+    }
 }
 
 fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {

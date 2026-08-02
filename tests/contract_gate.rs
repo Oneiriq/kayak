@@ -63,6 +63,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
         limits: None,
         rate_classes: vec![],
         resources,
+        queries: vec![],
     }
 }
 

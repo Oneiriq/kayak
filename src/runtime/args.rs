@@ -60,6 +60,13 @@ pub struct ActionArgs {
     pub input: serde_json::Map<String, serde_json::Value>,
 }
 
+/// What a contract query receives: its declared parameters, already
+/// checked against the declaration.
+#[derive(Debug, Clone, Default)]
+pub struct QueryArgs {
+    pub input: serde_json::Map<String, serde_json::Value>,
+}
+
 /// What a list resolver returns: one page in wire shape.
 #[derive(Debug, Clone, Default)]
 pub struct ListOutput {
@@ -142,6 +149,52 @@ pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<()
 /// input types. Unknown input keys are dropped; the
 /// differ promises that removing an optional input is compatible, and
 /// that only holds if servers ignore fields they no longer declare.
+/// Check a query's parameters against its declaration: required ones
+/// present, declared types honoured, undeclared ones refused. The
+/// same discipline actions get, because a query is a wire surface
+/// like any other.
+pub(crate) fn validate_query(
+    query: &crate::ir::Query,
+    args: &mut QueryArgs,
+) -> Result<(), JanusError> {
+    let mut checked = serde_json::Map::new();
+    for field in &query.input {
+        match args.input.get(&field.name) {
+            None | Some(serde_json::Value::Null) if field.required => {
+                return Err(JanusError::BadRequest(format!(
+                    "input {} is required",
+                    field.name,
+                )));
+            }
+            None | Some(serde_json::Value::Null) => {}
+            Some(value) => {
+                let ok = match field.kind {
+                    TypeRef::String => value.is_string(),
+                    TypeRef::Int => value.is_i64() || value.is_u64(),
+                    TypeRef::Bool => value.is_boolean(),
+                    TypeRef::Json => true,
+                };
+                if !ok {
+                    return Err(JanusError::BadRequest(format!(
+                        "input {} has the wrong type",
+                        field.name,
+                    )));
+                }
+                checked.insert(field.name.clone(), value.clone());
+            }
+        }
+    }
+    // Undeclared parameters are refused rather than ignored: a caller
+    // who thinks a filter applies deserves to hear that it does not.
+    for name in args.input.keys() {
+        if !query.input.iter().any(|f| &f.name == name) {
+            return Err(JanusError::BadRequest(format!("no input named {name}")));
+        }
+    }
+    args.input = checked;
+    Ok(())
+}
+
 pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<(), JanusError> {
     if action.takes_id() && args.id.is_none() {
         return Err(JanusError::BadRequest(format!(

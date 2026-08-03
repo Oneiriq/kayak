@@ -488,7 +488,7 @@ pub fn generate_client_py(
         for sub in &resource.sub_resources {
             let sub_name = sub_type_name(resource, sub);
             let sub_from = format!(
-                "{sub_name}(**{{k: v for k, v in item.items() if k in                  {sub_name}.__dataclass_fields__}})"
+                "{sub_name}(**{{k: v for k, v in item.items() if k in {sub_name}.__dataclass_fields__}})"
             );
             writeln!(
                 out,
@@ -496,20 +496,21 @@ pub fn generate_client_py(
                 stem = snake(&sub_method_stem(resource, sub)),
             )
             .unwrap();
-            writeln!(
-                out,
-                "    query = {{k: v for k, v in {{'limit': limit, 'cursor': cursor}}.items() if v is not None}}
-                     suffix = f'?{{urllib.parse.urlencode(query)}}' if query else ''
-                     payload = self._request('GET', f'/v1/{parent}/{{id}}/{child}{{suffix}}')
-                     return {sub_name}Page(
-                       items=[{sub_from} for item in payload.get('items', [])],
-                       next_cursor=payload.get('next_cursor'),
-                     )
-",
-                parent = resource.name,
-                child = sub.name,
-            )
-            .unwrap();
+            let body = [
+                "    query = {k: v for k, v in {'limit': limit, 'cursor': cursor}.items() if v is not None}"
+                    .to_owned(),
+                "    suffix = f'?{urllib.parse.urlencode(query)}' if query else ''".to_owned(),
+                format!(
+                    "    payload = self._request('GET', f'/v1/{parent}/{{id}}/{child}{{suffix}}')",
+                    parent = resource.name,
+                    child = sub.name,
+                ),
+                format!("    return {sub_name}Page("),
+                format!("      items=[{sub_from} for item in payload.get('items', [])],"),
+                "      next_cursor=payload.get('next_cursor'),".to_owned(),
+                "    )".to_owned(),
+            ];
+            writeln!(out, "{}", body.join("\n")).unwrap();
         }
         for action in &resource.actions {
             let method_fn = format!(

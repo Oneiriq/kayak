@@ -5,7 +5,9 @@
 
 use janus::diff::{diff, Change};
 use janus::generate::{generate_all, TARGETS};
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Resource, TypeRef};
+use janus::{
+    Action, ActionField, ActionOutput, Contract, FieldExposure, Resource, SubResource, TypeRef,
+};
 use surql::schema::{
     datetime_field, index, int_field, object_field, string_field, table_schema, unique_index,
     TableDefinition, TableMode,
@@ -433,4 +435,61 @@ fn content_faces_are_documented_and_governed() {
         changes.iter().all(|c| !c.is_breaking()),
         "adding a face is compatible: {changes:?}",
     );
+}
+
+#[test]
+fn python_client_indentation_survives_sub_resources() {
+    // The sub-resource page template once carried its Rust source
+    // indentation into the generated Python, which is an
+    // IndentationError there. Generate from a contract that has a
+    // sub-resource and hold every line to the client's real indent
+    // budget.
+    let mut contract = contract();
+    contract.resources[0].sub_resources.push(SubResource {
+        name: "revisions".into(),
+        table: "doc_revision".into(),
+        parent_key: "doc".into(),
+        fields: vec![
+            FieldExposure::column("number"),
+            FieldExposure::column("created_at"),
+        ],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec![],
+        sortable: vec![],
+        max_page_size: 100,
+        description: None,
+        graphql: None,
+    });
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    let revision_table = table_schema("doc_revision")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("tenant_id")),
+            built(string_field("doc")),
+            built(int_field("number")),
+            built(datetime_field("created_at")),
+        ])
+        .with_indexes([index("idx_revisions", ["tenant_id", "doc", "created_at"])]);
+    let python = janus::clients::generate_client_py(&contract, &[file_table(), revision_table])
+        .expect("python renders");
+    assert!(
+        python.contains("def list_revisions_"),
+        "the sub-resource method renders",
+    );
+    for (index, line) in python.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        assert!(
+            indent <= 8,
+            "line {} over-indented ({indent}): {line:?}",
+            index + 1,
+        );
+        assert!(
+            !line.trim_start().contains("          "),
+            "line {} carries an interior whitespace run: {line:?}",
+            index + 1,
+        );
+    }
 }

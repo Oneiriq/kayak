@@ -27,6 +27,7 @@ pub mod middleware;
 pub mod principal;
 pub mod rate;
 pub mod resolvers;
+pub mod rest;
 
 #[cfg(feature = "graphql")]
 pub mod graphql;
@@ -44,3 +45,4 @@ pub use middleware::{Middleware, Next, Operation, OperationKind, Outcome, Payloa
 pub use principal::Principal;
 pub use rate::{MemoryRateStore, RateStore};
 pub use resolvers::{BoxFuture, Resolvers, RowStream};
+pub use rest::{RestAnswer, RestRouter};

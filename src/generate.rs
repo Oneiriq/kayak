@@ -18,6 +18,7 @@ use crate::sdl::generate_sdl;
 pub const TARGETS: &[&str] = &[
     "openapi",
     "sdl",
+    "mcp",
     "client-rs",
     "client-ts",
     "client-py",
@@ -33,6 +34,15 @@ pub fn generate_all(
     let mut artifacts = BTreeMap::new();
     for target in targets {
         let (filename, content) = match *target {
+            "mcp" => (
+                "mcp-tools.json".to_owned(),
+                format!(
+                    "{}
+",
+                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract))
+                        .expect("mcp manifest serializes"),
+                ),
+            ),
             "openapi" => (
                 "openapi.json".to_owned(),
                 format!(

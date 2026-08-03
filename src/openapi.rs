@@ -76,6 +76,54 @@ pub fn generate_openapi(
                 sub_list_path(resource, sub, &sub_schema),
             );
         }
+        if let Some(content) = &resource.content {
+            let mut operations = Map::new();
+            if content.upload {
+                operations.insert(
+                    "put".to_owned(),
+                    json!({
+                        "operationId": format!("{}_upload_content", crate::naming::singular(&resource.name)),
+                        "summary": "Upload the content bytes; the stored digest becomes the ETag.",
+                        "parameters": [ {
+                            "name": "id", "in": "path", "required": true,
+                            "schema": { "type": "string" },
+                        } ],
+                        "requestBody": {
+                            "required": true,
+                            "content": { "application/octet-stream": {
+                                "schema": { "type": "string", "format": "binary" },
+                            } },
+                        },
+                        "responses": { "200": { "description": "stored" } },
+                    }),
+                );
+            }
+            if content.download {
+                operations.insert(
+                    "get".to_owned(),
+                    json!({
+                        "operationId": format!("{}_download_content", crate::naming::singular(&resource.name)),
+                        "summary": "Serve the content bytes, with ETag, Range, and conditional requests.",
+                        "parameters": [ {
+                            "name": "id", "in": "path", "required": true,
+                            "schema": { "type": "string" },
+                        } ],
+                        "responses": { "200": {
+                            "description": "the bytes",
+                            "content": { "application/octet-stream": {
+                                "schema": { "type": "string", "format": "binary" },
+                            } },
+                        } },
+                    }),
+                );
+            }
+            if !operations.is_empty() {
+                paths.insert(
+                    format!("/v1/{}/{{id}}/content", resource.name),
+                    Value::Object(operations),
+                );
+            }
+        }
         for action in &resource.actions {
             let path = format!("/v1/{}{}", resource.name, action.path);
             let entry = paths

@@ -218,6 +218,7 @@ mod tests {
                     requires: vec!["write".into()],
                     rate_class: Some("mutations".into()),
                 }],
+                content: None,
             }],
             queries: vec![Query {
                 name: "search".into(),

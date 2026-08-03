@@ -11,6 +11,16 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Content faces.** A resource may declare `content: { upload,
+  download }`, and the byte paths render into the OpenAPI document
+  as octet-stream operations (`PUT/GET /v1/{resource}/{id}/content`)
+  under the differ's governance: removing a face is breaking. Bytes
+  are streams rather than JSON, so these stay off the GraphQL and
+  MCP shapes; the grant actions remain the agent path to the same
+  content.
+
+### Added
+
 - **The MCP tool manifest.** `generate_mcp_tools` derives an MCP
   `tools/list` document from the contract: every resource's list and
   get, every action, and every query becomes a tool with a JSON

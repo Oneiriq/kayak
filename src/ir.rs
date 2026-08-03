@@ -150,6 +150,15 @@ pub struct Resource {
     /// contract only describes its wire shape.
     #[serde(default)]
     pub actions: Vec<Action>,
+    /// The resource's byte faces, when it has content: an upload
+    /// path, a download path, or both. Bytes are streams rather than
+    /// JSON, so these render into the OpenAPI document as
+    /// octet-stream operations instead of becoming GraphQL or MCP
+    /// shapes; the grant actions are the agent path to the same
+    /// bytes. Declaring them here puts the write half of a service
+    /// under the differ: removing a face is breaking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentFaces>,
     /// Collections that hang off ONE instance of this resource: a
     /// file's versions, an endpoint's deliveries. They read like a
     /// resource and are reachable only through a parent id, which is
@@ -287,6 +296,17 @@ impl SubResource {
             .chain(self.pinned.iter().map(String::as_str))
             .collect()
     }
+}
+
+/// A resource's byte faces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentFaces {
+    /// `PUT /v1/{resource}/{id}/content` accepts the bytes.
+    #[serde(default)]
+    pub upload: bool,
+    /// `GET /v1/{resource}/{id}/content` serves them.
+    #[serde(default)]
+    pub download: bool,
 }
 
 /// One verb on a resource.
@@ -518,6 +538,7 @@ mod tests {
                 reads_require: vec![],
                 rate_class: None,
                 sub_resources: vec![],
+                content: None,
             }],
             queries: vec![],
         };

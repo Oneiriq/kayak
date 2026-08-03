@@ -9,6 +9,19 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **Field guards see the row.** A guard now receives
+  `Option<&serde_json::Value>` beside the context: `Some(row)` when
+  projecting, `None` when the question precedes rows (filter and
+  sort narrowing). Ownership guards become expressible: show a
+  caller their own rows' values while hiding the rest, within one
+  listing, on every face. The rowless form still gates narrowing,
+  because a caller who only partially sees a column must not filter
+  by it. `guarded_fields` and `strip_guarded` join the shared
+  projection API so hand-written faces project row-by-row exactly as
+  the dispatcher does.
+
 ### Added
 
 - **Contract queries: reads that answer a question.** A listing

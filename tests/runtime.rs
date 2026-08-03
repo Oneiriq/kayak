@@ -197,6 +197,7 @@ impl Middleware for Recorder {
 
 struct Fixture {
     schema: async_graphql::dynamic::Schema,
+    dispatcher: Arc<Dispatcher>,
     seen_list_args: Arc<Mutex<Option<ListArgs>>>,
     seen_watch_args: Arc<Mutex<Option<WatchArgs>>>,
     recorded: Arc<Mutex<Vec<String>>>,
@@ -324,9 +325,11 @@ fn fixture(contract: Contract) -> Fixture {
         ],
     )
     .unwrap();
-    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
+    let dispatcher = Arc::new(dispatcher);
+    let schema = build_schema(&[file_table(), version_table()], dispatcher.clone()).unwrap();
     Fixture {
         schema,
+        dispatcher,
         seen_list_args,
         seen_watch_args,
         recorded,
@@ -1021,9 +1024,11 @@ fn metered_fixture(contract: Contract) -> Fixture {
         Arc::new(MemoryRateStore::new()),
     )
     .unwrap();
-    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
+    let dispatcher = Arc::new(dispatcher);
+    let schema = build_schema(&[file_table(), version_table()], dispatcher.clone()).unwrap();
     Fixture {
         schema,
+        dispatcher,
         seen_list_args,
         seen_watch_args: Arc::new(Mutex::new(None)),
         recorded,
@@ -1200,9 +1205,11 @@ fn guarded_fixture() -> Fixture {
         guards,
     )
     .unwrap();
-    let schema = build_schema(&[file_table(), version_table()], Arc::new(dispatcher)).unwrap();
+    let dispatcher = Arc::new(dispatcher);
+    let schema = build_schema(&[file_table(), version_table()], dispatcher.clone()).unwrap();
     Fixture {
         schema,
+        dispatcher,
         seen_list_args: Arc::new(Mutex::new(None)),
         seen_watch_args,
         recorded,
@@ -1745,5 +1752,127 @@ async fn ownership_guards_project_row_by_row() {
     assert!(
         !response.errors.is_empty(),
         "filtering a partially visible column must refuse",
+    );
+}
+
+fn tenant_ctx() -> JanusContext {
+    JanusContext::new().with(Tenant("acme".into()))
+}
+
+fn rest(fixture: &Fixture) -> janus::runtime::RestRouter {
+    janus::runtime::RestRouter::new(fixture.dispatcher.clone())
+}
+
+/// The REST face routes what the contract declares, through the same
+/// dispatcher and middleware chain as every other face.
+#[tokio::test]
+async fn rest_lists_gets_and_acts_from_the_declaration() {
+    let fixture = fixture(contract_with_versions());
+    let router = rest(&fixture);
+
+    let listed = router
+        .handle(
+            "GET",
+            "/v1/files",
+            "limit=1&state=ready",
+            None,
+            tenant_ctx(),
+        )
+        .await;
+    assert_eq!(listed.status, 200, "{:?}", listed.body);
+    assert_eq!(listed.body["items"].as_array().unwrap().len(), 1);
+    let seen = fixture.seen_list_args.lock().unwrap().clone().unwrap();
+    assert_eq!(seen.limit, 1);
+    assert_eq!(
+        seen.filters.get("state"),
+        Some(&serde_json::Value::String("ready".into())),
+        "query pairs beyond paging become filters",
+    );
+
+    let fetched = router
+        .handle("GET", "/v1/files/01A", "", None, tenant_ctx())
+        .await;
+    assert_eq!(fetched.status, 200);
+    assert_eq!(fetched.body["id"], serde_json::json!("01A"));
+
+    let absent = router
+        .handle("GET", "/v1/files/nope", "", None, tenant_ctx())
+        .await;
+    assert_eq!(absent.status, 404);
+
+    let acted = router
+        .handle(
+            "POST",
+            "/v1/files/01A/url",
+            "",
+            Some(serde_json::json!({ "ttl_secs": 60 })),
+            tenant_ctx(),
+        )
+        .await;
+    assert_eq!(acted.status, 200, "{:?}", acted.body);
+
+    let subbed = router
+        .handle(
+            "GET",
+            "/v1/files/01A/versions",
+            "limit=5",
+            None,
+            tenant_ctx(),
+        )
+        .await;
+    assert_eq!(subbed.status, 200, "{:?}", subbed.body);
+    assert!(subbed.body["items"].is_array());
+}
+
+/// Refusals carry REST statuses: unknown paths 404, known paths with
+/// the wrong method 405, refused identity as the middleware decides,
+/// malformed paging 400.
+#[tokio::test]
+async fn rest_refuses_with_status_shaped_answers() {
+    let fixture = fixture(contract());
+    let router = rest(&fixture);
+
+    let unknown = router
+        .handle("GET", "/v1/nothing", "", None, tenant_ctx())
+        .await;
+    assert_eq!(unknown.status, 404);
+
+    let wrong_method = router
+        .handle("DELETE", "/v1/files", "", None, tenant_ctx())
+        .await;
+    assert_eq!(wrong_method.status, 405);
+
+    let anonymous = router
+        .handle("GET", "/v1/files", "", None, JanusContext::new())
+        .await;
+    assert_eq!(anonymous.status, 401, "{:?}", anonymous.body);
+
+    let garbled = router
+        .handle("GET", "/v1/files", "limit=many", None, tenant_ctx())
+        .await;
+    assert_eq!(garbled.status, 400);
+}
+
+/// A contract query serves at its declared path with its declared
+/// parameter types coerced from the query string.
+#[tokio::test]
+async fn rest_serves_contract_queries_with_typed_parameters() {
+    let fixture = fixture(searching_contract());
+    let router = rest(&fixture);
+
+    let answered = router
+        .handle(
+            "GET",
+            "/v1/search",
+            "q=hello%20world&limit=3",
+            None,
+            tenant_ctx(),
+        )
+        .await;
+    assert_eq!(answered.status, 200, "{:?}", answered.body);
+    assert_eq!(
+        answered.body["items"][0]["excerpt"],
+        serde_json::json!("hello world"),
+        "the percent-decoded term reached the resolver",
     );
 }

@@ -413,6 +413,25 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         (false, false) => {}
     }
 
+    {
+        let before = old.content.unwrap_or_default();
+        let after = new.content.unwrap_or_default();
+        if before.upload && !after.upload {
+            changes.push(Change::Breaking(format!(
+                "{scope}: the content upload face was removed",
+            )));
+        }
+        if before.download && !after.download {
+            changes.push(Change::Breaking(format!(
+                "{scope}: the content download face was removed",
+            )));
+        }
+        if (!before.upload && after.upload) || (!before.download && after.download) {
+            changes.push(Change::Compatible(format!(
+                "{scope}: a content face was added"
+            )));
+        }
+    }
     for old_action in &old.actions {
         match new.actions.iter().find(|a| a.name == old_action.name) {
             None => changes.push(Change::Breaking(format!(

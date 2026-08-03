@@ -65,6 +65,7 @@ fn contract() -> Contract {
                 requires: vec![],
                 rate_class: None,
             }],
+            content: None,
         }],
         queries: vec![],
     }

@@ -96,6 +96,7 @@ fn contract() -> Contract {
                     rate_class: None,
                 },
             ],
+            content: None,
         }],
         queries: vec![],
     }
@@ -401,4 +402,35 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
     let changes = diff(&capped, &open);
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+}
+
+/// Content faces render into the OpenAPI document and answer to the
+/// differ: bytes join the artifact, and removing a face breaks.
+#[test]
+fn content_faces_are_documented_and_governed() {
+    let mut with_content = contract();
+    with_content.resources[0].content = Some(janus::ContentFaces {
+        upload: true,
+        download: true,
+    });
+    let document = janus::generate_openapi(&with_content, &[file_table()]).unwrap();
+    let content = &document["paths"]["/v1/files/{id}/content"];
+    assert!(content["put"]["requestBody"]["content"]["application/octet-stream"].is_object());
+    assert!(content["get"]["responses"]["200"]["content"]["application/octet-stream"].is_object());
+
+    let mut without = with_content.clone();
+    without.resources[0].content = Some(janus::ContentFaces {
+        upload: false,
+        download: true,
+    });
+    let changes = diff(&with_content, &without);
+    assert!(
+        changes.iter().any(|c| c.is_breaking()),
+        "removing the upload face must break: {changes:?}",
+    );
+    let changes = diff(&without, &with_content);
+    assert!(
+        changes.iter().all(|c| !c.is_breaking()),
+        "adding a face is compatible: {changes:?}",
+    );
 }

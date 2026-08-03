@@ -260,6 +260,7 @@ mod tests {
             reads_require: vec![],
             rate_class: None,
             sub_resources: vec![],
+            content: None,
         }
     }
 

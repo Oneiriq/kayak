@@ -52,6 +52,7 @@ fn files_resource() -> Resource {
         rate_class: None,
         sub_resources: vec![],
         actions: vec![],
+        content: None,
     }
 }
 
@@ -157,6 +158,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         rate_class: None,
         sub_resources: vec![],
         actions: vec![],
+        content: None,
     };
     let violations = validate(&contract(vec![resource]), &[file_table()]);
     let text = violations

@@ -35,7 +35,9 @@ pub use args::{ActionArgs, GetArgs, ListArgs, ListOutput, SortDirection, SubList
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;
-pub use guards::{hidden_fields, strip_hidden, Guards, HiddenField};
+pub use guards::{
+    guarded_fields, hidden_fields, strip_guarded, strip_hidden, GuardedField, Guards, HiddenField,
+};
 pub use middleware::{Middleware, Next, Operation, OperationKind, Outcome, Payload};
 pub use principal::Principal;
 pub use rate::{MemoryRateStore, RateStore};

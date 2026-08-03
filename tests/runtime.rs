@@ -1188,7 +1188,7 @@ fn guarded_fixture() -> Fixture {
                 Ok(Box::pin(stream::iter(items)) as RowStream)
             }
         });
-    let guards = Guards::new().guard("audit_only", |ctx| {
+    let guards = Guards::new().guard("audit_only", |ctx, _row| {
         ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
     });
     let dispatcher = Dispatcher::with_policies(
@@ -1354,7 +1354,7 @@ fn guards_are_declared_and_registered_together_or_not_at_all() {
     // Registered, unreferenced: dead policy that reads as live.
     let mut open = contract_with_versions();
     open.resources[0].watchable = true;
-    let guards = Guards::new().guard("audit_only", |_| true);
+    let guards = Guards::new().guard("audit_only", |_, _| true);
     let error =
         Dispatcher::with_policies(Arc::new(open), resolvers(), vec![], None, guards).unwrap_err();
     assert!(
@@ -1444,7 +1444,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
 #[test]
 fn a_hand_written_face_computes_the_same_hidden_set() {
     let contract = guarded_contract();
-    let guards = Guards::new().guard("audit_only", |ctx: &JanusContext| {
+    let guards = Guards::new().guard("audit_only", |ctx: &JanusContext, _row| {
         ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
     });
 
@@ -1658,4 +1658,91 @@ async fn query_scopes_refuse_unidentified_callers() {
         .await;
     let message = format!("{:?}", response.errors);
     assert!(message.contains("unauthorized"), "{message}");
+}
+
+/// An ownership guard sees each row: the caller keeps the field on
+/// rows they own and loses it on the rest, within one listing. The
+/// rowless form still refuses narrowing, because a caller who only
+/// partially sees a column must not filter by it.
+#[tokio::test]
+async fn ownership_guards_project_row_by_row() {
+    let mut contract = guarded_contract();
+    contract.resources[0].fields = vec![
+        FieldExposure::column("path"),
+        FieldExposure::column("state").with_guard("owner_or_admin"),
+    ];
+    contract.resources[0].filterable = vec!["state".into()];
+    // The inherited fixture guards its versions sub-collection with a
+    // different guard and declares watchability; this test is about
+    // the resource's own fields.
+    contract.resources[0].sub_resources.clear();
+    contract.resources[0].watchable = false;
+    contract.resources[0].actions.clear();
+    let resolvers = Resolvers::new()
+        .list("files", |_ctx, _args: ListArgs| async move {
+            Ok(ListOutput {
+                items: vec![
+                    serde_json::json!({
+                        "id": "01A", "path": "mine.txt", "state": "ready",
+                        "created_by": "alice",
+                    }),
+                    serde_json::json!({
+                        "id": "01B", "path": "theirs.txt", "state": "ready",
+                        "created_by": "bob",
+                    }),
+                ],
+                next_cursor: None,
+            })
+        })
+        .get("files", |_ctx, _args| async move { Ok(None) });
+    let guards = Guards::new().guard("owner_or_admin", |ctx, row| {
+        let Some(principal) = ctx.get::<Principal>() else {
+            return false;
+        };
+        if principal.has("admin") {
+            return true;
+        }
+        row.and_then(|r| r.get("created_by"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|owner| owner == principal.subject)
+    });
+    let dispatcher = Dispatcher::with_policies(
+        Arc::new(contract),
+        resolvers,
+        vec![Arc::new(RequireTenant) as Arc<dyn Middleware>],
+        None,
+        guards,
+    )
+    .unwrap();
+    let schema = build_schema(&[file_table()], Arc::new(dispatcher)).unwrap();
+
+    let alice = |query: &str| {
+        async_graphql::Request::new(query.to_owned()).data(
+            JanusContext::new()
+                .with(Tenant("acme".into()))
+                .with(Principal::new("alice", ["read".to_owned()])),
+        )
+    };
+
+    let response = schema
+        .execute(alice(r#"{ files { items { path state } } }"#))
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    let items = data["files"]["items"].as_array().unwrap();
+    assert_eq!(items[0]["path"], "mine.txt");
+    assert_eq!(items[0]["state"], "ready", "the owner keeps the field");
+    assert!(
+        items[1]["state"].is_null(),
+        "the stranger loses it: {items:?}"
+    );
+
+    // Narrowing by the guarded column refuses for the partial viewer.
+    let response = schema
+        .execute(alice(r#"{ files(state: "ready") { items { path } } }"#))
+        .await;
+    assert!(
+        !response.errors.is_empty(),
+        "filtering a partially visible column must refuse",
+    );
 }

@@ -301,14 +301,19 @@ impl Dispatcher {
                 // mid-chain still counts, and checked before the
                 // resolver, so no guarded data is touched on a refusal.
                 enforce_scopes(&contract, &operation, &ctx)?;
-                // Guard evaluation happens once per operation: which
-                // fields this caller sees does not vary by row. The
-                // hidden set refuses filters and sorts BEFORE the
-                // resolver, because narrowing by a value is reading
-                // it, and projects rows AFTER, so a guarded value
-                // cannot leave through any face.
+                // Guards run in two moments. Before the resolver,
+                // the rowless form refuses filters and sorts, because
+                // narrowing by a value is reading it, and a guard the
+                // caller does not pass outright must not narrow at
+                // all. After the resolver, every row projects through
+                // the guards individually, so an ownership guard can
+                // show a caller their own rows while hiding the rest.
                 let hidden = hidden_fields(&contract, &operation, &ctx, &guards);
                 refuse_hidden_narrowing(&hidden, &payload)?;
+                let guarded = guarded_for(&contract, &operation, &guards);
+                // The resolver consumes the context; projection needs
+                // it after, so it keeps its own copy.
+                let projection_ctx = ctx.clone();
                 let outcome = match (payload, operation.kind) {
                     (Payload::List(args), OperationKind::List) => {
                         let resolver = resolvers
@@ -384,7 +389,7 @@ impl Dispatcher {
                         "payload does not match operation kind".into(),
                     )),
                 }?;
-                Ok(project_hidden(outcome, hidden))
+                Ok(project_guarded(outcome, guarded, &projection_ctx))
             })
         });
         Next {
@@ -644,20 +649,20 @@ fn acquire_watch_slot(
 
 /// The wire names and columns this caller may NOT see for the
 /// operation's row shape, evaluated once per operation.
-fn hidden_fields(
-    contract: &Contract,
+/// The exposures one operation projects, resolved by kind exactly as
+/// [`hidden_fields`] resolves them.
+fn operation_fields<'a>(
+    contract: &'a Contract,
     operation: &Operation,
-    ctx: &JanusContext,
-    guards: &Guards,
-) -> Vec<(String, String)> {
+) -> &'a [crate::ir::FieldExposure] {
     let Some(resource) = contract
         .resources
         .iter()
         .find(|r| r.name == operation.resource)
     else {
-        return Vec::new();
+        return &[];
     };
-    let fields: &[crate::ir::FieldExposure] = match operation.kind {
+    match operation.kind {
         OperationKind::SubList => operation
             .sub
             .as_deref()
@@ -667,7 +672,8 @@ fn hidden_fields(
         // An action that returns the resource row shares the
         // resource's shape, so it shares its projection. A Json
         // action is free-form: its keys are not the resource's, so a
-        // coincidental name must not be stripped.
+        // coincidental name must not be stripped. A query's answer is
+        // its resolver's own shape likewise.
         OperationKind::Action => {
             let returns_resource = operation
                 .action
@@ -680,9 +686,28 @@ fn hidden_fields(
                 &[]
             }
         }
+        OperationKind::Query => &[],
         _ => &resource.fields,
-    };
-    crate::runtime::guards::hidden_in(fields, guards, ctx)
+    }
+}
+
+/// The guarded fields of one operation, deciders included, for
+/// row-by-row projection.
+fn guarded_for(
+    contract: &Contract,
+    operation: &Operation,
+    guards: &Guards,
+) -> Vec<crate::runtime::guards::GuardedField> {
+    crate::runtime::guards::guarded_in(operation_fields(contract, operation), guards)
+}
+
+fn hidden_fields(
+    contract: &Contract,
+    operation: &Operation,
+    ctx: &JanusContext,
+    guards: &Guards,
+) -> Vec<(String, String)> {
+    crate::runtime::guards::hidden_in(operation_fields(contract, operation), guards, ctx)
         .into_iter()
         .map(|hidden| (hidden.api_name, hidden.column))
         .collect()
@@ -727,16 +752,17 @@ fn refuse_hidden_narrowing(
 /// omit the keys rather than nulling them, so a redacted value and a
 /// stored null are distinguishable to the service and identical on
 /// wire faces that render omissions as null.
-fn project_hidden(outcome: Outcome, hidden: Vec<(String, String)>) -> Outcome {
-    if hidden.is_empty() {
+fn project_guarded(
+    outcome: Outcome,
+    guarded: Vec<crate::runtime::guards::GuardedField>,
+    ctx: &JanusContext,
+) -> Outcome {
+    if guarded.is_empty() {
         return outcome;
     }
+    let ctx = ctx.clone();
     let strip = move |row: &mut serde_json::Value| {
-        if let Some(object) = row.as_object_mut() {
-            for (api_name, _) in &hidden {
-                object.remove(api_name);
-            }
-        }
+        crate::runtime::guards::strip_guarded(row, &guarded, &ctx);
     };
     match outcome {
         Outcome::List(mut output) => {
@@ -745,10 +771,9 @@ fn project_hidden(outcome: Outcome, hidden: Vec<(String, String)>) -> Outcome {
             }
             Outcome::List(output)
         }
-        // A query's answer is the resolver's own shape, so field
-        // projection has no columns to strip: a resolver that returns
-        // guarded columns projects them itself, the way the REST
-        // handlers do.
+        // A query's answer is the resolver's own shape, so projection
+        // has no columns to strip: a resolver that returns guarded
+        // columns projects them itself, the way the REST handlers do.
         Outcome::Query(value) => Outcome::Query(value),
         Outcome::Get(mut row) => {
             if let Some(row) = row.as_mut() {
@@ -757,31 +782,30 @@ fn project_hidden(outcome: Outcome, hidden: Vec<(String, String)>) -> Outcome {
             Outcome::Get(row)
         }
         Outcome::Action(mut value) => {
-            if let Some(value) = value.as_mut() {
-                strip(value);
+            if let Some(row) = value.as_mut() {
+                strip(row);
             }
             Outcome::Action(value)
         }
         Outcome::Watch(stream) => {
-            use futures_core::Stream;
-            use std::pin::Pin;
-            use std::task::{Context, Poll};
-
-            struct Projected {
-                inner: crate::runtime::resolvers::RowStream,
+            struct Projected<S> {
+                inner: S,
                 strip: Box<dyn FnMut(&mut serde_json::Value) + Send>,
             }
-            impl Stream for Projected {
+            impl<S> futures_core::Stream for Projected<S>
+            where
+                S: futures_core::Stream<Item = Result<serde_json::Value, JanusError>> + Unpin,
+            {
                 type Item = Result<serde_json::Value, JanusError>;
                 fn poll_next(
-                    self: Pin<&mut Self>,
-                    cx: &mut Context<'_>,
-                ) -> Poll<Option<Self::Item>> {
+                    self: std::pin::Pin<&mut Self>,
+                    cx: &mut std::task::Context<'_>,
+                ) -> std::task::Poll<Option<Self::Item>> {
                     let this = self.get_mut();
-                    match Pin::new(&mut this.inner).poll_next(cx) {
-                        Poll::Ready(Some(Ok(mut row))) => {
+                    match std::pin::Pin::new(&mut this.inner).poll_next(cx) {
+                        std::task::Poll::Ready(Some(Ok(mut row))) => {
                             (this.strip)(&mut row);
-                            Poll::Ready(Some(Ok(row)))
+                            std::task::Poll::Ready(Some(Ok(row)))
                         }
                         other => other,
                     }

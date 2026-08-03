@@ -19,8 +19,15 @@ use std::sync::Arc;
 use crate::ir::{Contract, FieldExposure};
 use crate::runtime::context::JanusContext;
 
-/// One visibility decision: does this caller see this field?
-pub(crate) type FieldGuard = Arc<dyn Fn(&JanusContext) -> bool + Send + Sync>;
+/// One visibility decision: does this caller see this field on this
+/// row? The row is absent when the question is asked before any row
+/// exists (may this caller filter or sort by the column), so a guard
+/// that depends on row values answers the rowless form with whether
+/// the caller could see EVERY row. Ownership guards answer false
+/// there for everyone but admins, which refuses narrowing by a
+/// column the caller only partially sees.
+pub(crate) type FieldGuard =
+    Arc<dyn Fn(&JanusContext, Option<&serde_json::Value>) -> bool + Send + Sync>;
 
 /// Registered guards, keyed by the name the contract references.
 #[derive(Default, Clone)]
@@ -34,10 +41,12 @@ impl Guards {
     }
 
     /// Register the guard for `name`. Returning `true` shows the
-    /// field; `false` omits it from the row.
+    /// field; `false` omits it from the row. The row is `None` when
+    /// the question precedes rows (filter and sort narrowing), where
+    /// a row-dependent guard answers for all rows at once.
     pub fn guard<F>(mut self, name: &str, decide: F) -> Self
     where
-        F: Fn(&JanusContext) -> bool + Send + Sync + 'static,
+        F: Fn(&JanusContext, Option<&serde_json::Value>) -> bool + Send + Sync + 'static,
     {
         self.map.insert(name.to_owned(), Arc::new(decide));
         self
@@ -75,7 +84,7 @@ pub fn hidden_in(
         .filter_map(|exposure| {
             let guard = exposure.guard.as_deref()?;
             let decide = guards.map.get(guard)?;
-            if decide(ctx) {
+            if decide(ctx, None) {
                 None
             } else {
                 Some(HiddenField {
@@ -85,6 +94,75 @@ pub fn hidden_in(
             }
         })
         .collect()
+}
+
+/// One guarded field, carrying its decision, for per-row projection.
+#[derive(Clone)]
+pub struct GuardedField {
+    /// The wire name a row carries, which projection removes.
+    pub api_name: String,
+    pub(crate) decide: FieldGuard,
+}
+
+/// The guarded exposures in `fields`, deciders attached.
+pub(crate) fn guarded_in(fields: &[FieldExposure], guards: &Guards) -> Vec<GuardedField> {
+    fields
+        .iter()
+        .filter_map(|exposure| {
+            let guard = exposure.guard.as_deref()?;
+            let decide = guards.map.get(guard)?.clone();
+            Some(GuardedField {
+                api_name: exposure.api_name().to_owned(),
+                decide,
+            })
+        })
+        .collect()
+}
+
+/// The guarded fields of a resource (or one of its sub-collections),
+/// with their deciders, for row-by-row projection. Unknown names
+/// carry no guards, matching the dispatcher.
+pub fn guarded_fields(
+    contract: &Contract,
+    resource: &str,
+    sub: Option<&str>,
+    guards: &Guards,
+) -> Vec<GuardedField> {
+    let Some(resource) = contract.resources.iter().find(|r| r.name == resource) else {
+        return Vec::new();
+    };
+    let fields = match sub {
+        Some(name) => resource
+            .sub_resources
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.fields.as_slice())
+            .unwrap_or(&[]),
+        None => &resource.fields,
+    };
+    guarded_in(fields, guards)
+}
+
+/// Project one wire row through its guards, in place: every guarded
+/// field the decision denies for THIS row is removed. The row omits
+/// the keys rather than nulling them, exactly as the dispatcher
+/// projects.
+pub fn strip_guarded(row: &mut serde_json::Value, guarded: &[GuardedField], ctx: &JanusContext) {
+    if guarded.is_empty() {
+        return;
+    }
+    let decisions: Vec<(usize, bool)> = guarded
+        .iter()
+        .enumerate()
+        .map(|(i, field)| (i, (field.decide)(ctx, Some(row))))
+        .collect();
+    if let Some(object) = row.as_object_mut() {
+        for (i, visible) in decisions {
+            if !visible {
+                object.remove(&guarded[i].api_name);
+            }
+        }
+    }
 }
 
 /// [`hidden_in`] over a contract resource, or one of its

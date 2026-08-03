@@ -1,0 +1,88 @@
+{
+  "tools": [
+    {
+      "name": "files_list",
+      "description": "List files for the authenticated tenant.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Rows per page, at most 100."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Resume from a previous page."
+          },
+          "state": {
+            "type": "string",
+            "description": "Filter by state."
+          },
+          "sort": {
+            "type": "string",
+            "description": "Sort column, one of: created_at. Suffix with :desc for newest first."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {}
+    },
+    {
+      "name": "file_get",
+      "description": "Fetch one of files by id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {}
+    },
+    {
+      "name": "file_issue_url",
+      "description": "Issue a signed URL for a servable file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ttl_secs": {
+            "type": "integer"
+          },
+          "max_uses": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {}
+    },
+    {
+      "name": "file_remove",
+      "description": "Soft-delete the file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {}
+    }
+  ]
+}

@@ -9,6 +9,18 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **The MCP tool manifest.** `generate_mcp_tools` derives an MCP
+  `tools/list` document from the contract: every resource's list and
+  get, every action, and every query becomes a tool with a JSON
+  Schema input derived from the same declarations, and scope and
+  rate classes ride each tool as annotations. The manifest joins
+  `generate_all` as the `mcp` target, so the agent surface is
+  governed by the same drift gate and differ as every other face.
+  `serde_json` now pins `preserve_order` unconditionally, so
+  generated artifacts are byte-stable across feature sets.
+
 ### Changed
 
 - **Field guards see the row.** A guard now receives

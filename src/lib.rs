@@ -11,6 +11,7 @@ pub mod clients;
 pub mod diff;
 pub mod generate;
 pub mod ir;
+pub mod mcp;
 mod naming;
 pub mod openapi;
 pub mod reserved;
@@ -26,6 +27,7 @@ pub use ir::{
     Action, ActionField, ActionOutput, Contract, ContractLimits, FieldExposure, GraphqlNames,
     Query, RateClass, Resource, SubGraphqlNames, SubResource, TypeRef,
 };
+pub use mcp::generate_mcp_tools;
 pub use openapi::{generate_openapi, GenerateError};
 pub use reserved::is_reserved;
 pub use sdl::generate_sdl;

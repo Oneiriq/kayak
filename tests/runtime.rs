@@ -1943,8 +1943,9 @@ mod console_pages {
         );
     }
 
-    /// A submitted action form dispatches and redirects back; an
-    /// anonymous submission refuses with the middleware's status.
+    /// An action that answers shows what it answered, because the
+    /// answer is often the point: a signed URL, a secret that appears
+    /// once. An action that answers nothing redirects back instead.
     #[tokio::test]
     async fn forms_dispatch_actions() {
         let fixture = fixture(contract_with_versions());
@@ -1958,8 +1959,29 @@ mod console_pages {
             )
             .await;
         match outcome {
+            FormOutcome::Page(page) => {
+                assert_eq!(page.status, 200);
+                assert!(
+                    page.html.contains("https://cdn/01A"),
+                    "the answer is shown, never discarded",
+                );
+                assert!(
+                    page.html.contains("/console/r/files/01A?done=issue_url"),
+                    "with a way back to the instance",
+                );
+            }
             FormOutcome::Redirect(target) => {
-                assert!(target.contains("/console/r/files/01A?done=issue_url"));
+                panic!("an answer must not be thrown away: {target}")
+            }
+        }
+
+        // `remove` answers nothing, so the redirect stands.
+        let silent = console
+            .submit("/r/files/01A/a/remove", &[], tenant_ctx())
+            .await;
+        match silent {
+            FormOutcome::Redirect(target) => {
+                assert!(target.contains("/console/r/files/01A?done=remove"));
             }
             FormOutcome::Page(page) => panic!("expected a redirect, got {}", page.status),
         }
@@ -1975,6 +1997,84 @@ mod console_pages {
             FormOutcome::Page(page) => assert_eq!(page.status, 401),
             FormOutcome::Redirect(target) => panic!("expected refusal, got {target}"),
         }
+    }
+
+    /// The confirmation reaches the instance page as well as the
+    /// listing.
+    #[tokio::test]
+    async fn a_silent_action_confirms_on_the_instance() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+        let page = console
+            .page("/r/files/01A", "done=remove", tenant_ctx())
+            .await;
+        assert!(
+            page.html.contains("action remove completed"),
+            "the instance page reads the outcome it was sent back with",
+        );
+    }
+
+    /// The sort control carries what is applied, so the next narrow
+    /// keeps it.
+    #[tokio::test]
+    async fn the_sort_control_remembers() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+        let page = console
+            .page("/r/files", "sort=created_at:desc", tenant_ctx())
+            .await;
+        assert!(
+            page.html
+                .contains(r#"<option value="created_at:desc" selected>"#),
+            "the applied sort is the selected option",
+        );
+        let bare = console.page("/r/files", "", tenant_ctx()).await;
+        assert!(
+            bare.html.contains(r#"<option value="" selected>"#),
+            "declared order is selected when nothing is applied",
+        );
+    }
+
+    /// A JSON-declared field refuses what is not JSON, rather than
+    /// passing a string along for a resolver to store as nonsense.
+    #[tokio::test]
+    async fn a_json_field_refuses_prose() {
+        let mut contract = contract_with_versions();
+        contract.resources[0].actions[0].input.push(ActionField {
+            name: "labels".into(),
+            kind: TypeRef::Json,
+            required: false,
+            description: None,
+        });
+        let fixture = fixture(contract);
+        let console = console(&fixture);
+
+        let refused = console
+            .submit(
+                "/r/files/01A/a/issue_url",
+                &[("labels".to_owned(), "one, two".to_owned())],
+                tenant_ctx(),
+            )
+            .await;
+        match refused {
+            FormOutcome::Page(page) => {
+                assert_eq!(page.status, 400);
+                assert!(page.html.contains("labels takes JSON"));
+            }
+            FormOutcome::Redirect(target) => panic!("expected a refusal, got {target}"),
+        }
+
+        let accepted = console
+            .submit(
+                "/r/files/01A/a/issue_url",
+                &[("labels".to_owned(), r#"["one", "two"]"#.to_owned())],
+                tenant_ctx(),
+            )
+            .await;
+        assert!(
+            matches!(accepted, FormOutcome::Page(ref page) if page.status == 200),
+            "well-formed JSON passes",
+        );
     }
 
     /// The query panel runs a declared query with decoded, typed

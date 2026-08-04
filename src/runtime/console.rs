@@ -106,7 +106,7 @@ impl ConsoleRouter {
         match parts.as_slice() {
             [] => self.overview(),
             ["r", resource] => self.list_page(resource, &pairs, ctx).await,
-            ["r", resource, id] => self.detail_page(resource, &decode(id), ctx).await,
+            ["r", resource, id] => self.detail_page(resource, &decode(id), &pairs, ctx).await,
             ["q", name] => self.query_page(name, &pairs, ctx).await,
             _ => self.error_page(404, "no such console page"),
         }
@@ -142,6 +142,15 @@ impl ConsoleRouter {
                 .iter()
                 .find(|f| f.name == *key)
                 .map(|f| &f.kind);
+            if matches!(kind, Some(TypeRef::Json)) && serde_json::from_str::<Value>(raw).is_err() {
+                return FormOutcome::Page(self.error_page(
+                    400,
+                    &format!(
+                        "{key} takes JSON: a list reads [\"one\", \"two\"] \
+                         and a string reads \"one\"",
+                    ),
+                ));
+            }
             input.insert(key.clone(), coerce(raw.clone(), kind));
         }
         let args = ActionArgs {
@@ -149,18 +158,21 @@ impl ConsoleRouter {
             input,
         };
         match self.dispatcher.action(resource, action, ctx, args).await {
-            Ok(_) => {
-                let back = match id {
+            Ok(answer) => {
+                let back = match &id {
                     Some(id) => format!(
                         "{}/r/{}/{}?done={}",
                         self.config.base,
                         resource,
-                        encode(&id),
+                        encode(id),
                         action
                     ),
                     None => format!("{}/r/{}?done={}", self.config.base, resource, action),
                 };
-                FormOutcome::Redirect(back)
+                match answer.filter(|value| !is_empty(value)) {
+                    Some(value) => FormOutcome::Page(self.answer_page(action, &value, &back)),
+                    None => FormOutcome::Redirect(back),
+                }
             }
             Err(error) => FormOutcome::Page(self.refusal_page(&error)),
         }
@@ -238,10 +250,12 @@ impl ConsoleRouter {
             sort: None,
         };
         let mut done: Option<String> = None;
+        let mut sort_state = String::new();
         for (key, value) in pairs {
             match key.as_str() {
                 "cursor" => args.cursor = Some(value.clone()),
                 "sort" => {
+                    sort_state = value.clone();
                     args.sort = Some(match value.strip_suffix(":desc") {
                         Some(column) => (column.to_owned(), SortDirection::Desc),
                         None => (value.clone(), SortDirection::Asc),
@@ -293,10 +307,18 @@ impl ConsoleRouter {
                         label {
                             "sort"
                             select name="sort" {
-                                option value="" { "declared order" }
+                                option value="" selected[sort_state.is_empty()] {
+                                    "declared order"
+                                }
                                 @for column in &resource.sortable {
-                                    option value=(column) { (column) }
-                                    option value=(format!("{column}:desc")) { (column) ":desc" }
+                                    option value=(column) selected[sort_state == *column] {
+                                        (column)
+                                    }
+                                    @let descending = format!("{column}:desc");
+                                    option value=(descending)
+                                        selected[sort_state == descending] {
+                                        (column) ":desc"
+                                    }
                                 }
                             }
                         }
@@ -346,7 +368,13 @@ impl ConsoleRouter {
         self.shell(200, name, body)
     }
 
-    async fn detail_page(&self, name: &str, id: &str, ctx: JanusContext) -> ConsoleAnswer {
+    async fn detail_page(
+        &self,
+        name: &str,
+        id: &str,
+        pairs: &[(String, String)],
+        ctx: JanusContext,
+    ) -> ConsoleAnswer {
         let Some(resource) = self.resource(name) else {
             return self.error_page(404, "no such declared resource");
         };
@@ -359,6 +387,10 @@ impl ConsoleRouter {
             Ok(None) => return self.error_page(404, "no such instance"),
             Err(error) => return self.refusal_page(&error),
         };
+        let done = pairs
+            .iter()
+            .find(|(key, _)| key == "done")
+            .map(|(_, value)| value.clone());
         let mut subs: Vec<(String, Vec<Value>)> = Vec::new();
         for sub in &resource.sub_resources {
             let args = SubListArgs {
@@ -384,6 +416,9 @@ impl ConsoleRouter {
             .collect();
         let body = html! {
             h1 { (name) " / " (id) }
+            @if let Some(action) = &done {
+                div.banner { "action " (action) " completed" }
+            }
             table {
                 @for field in &resource.fields {
                     tr {
@@ -495,6 +530,30 @@ impl ConsoleRouter {
         }
     }
 
+    /// What an action answered, shown rather than discarded. A
+    /// secret that appears once appears here, and nowhere later.
+    fn answer_page(&self, action: &str, value: &Value, back: &str) -> ConsoleAnswer {
+        let body = html! {
+            h1 { (action) }
+            div.banner { "completed" }
+            @if let Some(map) = value.as_object() {
+                table {
+                    @for (key, field) in map {
+                        tr {
+                            th { (key) }
+                            td { (cell(Some(field))) }
+                        }
+                    }
+                }
+            } @else {
+                pre { code { (pretty(value)) } }
+            }
+            p.dim { "This answer is not stored. Copy anything you need before leaving." }
+            p { a href=(back) { "back" } }
+        };
+        self.shell(200, action, body)
+    }
+
     fn refusal_page(&self, error: &JanusError) -> ConsoleAnswer {
         let status = match error {
             JanusError::BadRequest(_) => 400,
@@ -512,7 +571,7 @@ impl ConsoleRouter {
         let body = html! {
             h1 { "refused" }
             div.banner.error { (message) }
-            p { a href=(format!("{}/", self.config.base)) { "back to the overview" } }
+            p { a href=(&self.config.base) { "back to the overview" } }
         };
         self.shell(status, "refused", body)
     }
@@ -526,12 +585,13 @@ impl ConsoleRouter {
                     meta charset="utf-8";
                     meta name="viewport" content="width=device-width, initial-scale=1";
                     title { (title) " · " (self.config.title) }
+                    link rel="icon" href="data:,";
                     style { (PreEscaped(STYLE)) }
                 }
                 body {
                     header {
                         span.title {
-                            a href=(format!("{}/", self.config.base)) { (self.config.title) }
+                            a href=(&self.config.base) { (self.config.title) }
                         }
                         nav {
                             @for resource in &contract.resources {
@@ -617,6 +677,15 @@ fn cell(value: Option<&Value>) -> Markup {
             let shown: String = compact.chars().take(120).collect();
             html! { code { (shown) @if compact.len() > 120 { "…" } } }
         }
+    }
+}
+
+/// Whether an answer carries nothing worth showing.
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 

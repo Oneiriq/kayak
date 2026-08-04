@@ -8,8 +8,51 @@ object the SDL generator prints, so the served schema and the checked-in
 artifact cannot disagree.
 
 Feature flags keep codegen users free of runtime weight: `runtime` is the
-dispatch core with no added dependencies; `graphql` adds the dynamic schema
-on `async-graphql`.
+dispatch core with no added dependencies, `graphql` adds the dynamic schema
+on `async-graphql`, and `console` adds the HTML renderer on `maud`. The
+REST router lives in the dispatch core, so a host serving REST carries no
+extra dependency at all.
+
+## The chain
+
+Every face lands in the same place. A request becomes an `Operation` and
+a `Payload`, middleware wraps it, the dispatcher enforces what the
+contract declared, and only then does a resolver see it. Writing policy
+once means a GraphQL caller, a REST caller, an agent, and an operator in
+the console are all refused by the same code.
+
+```mermaid
+flowchart LR
+    gql["GraphQL<br/>dynamic schema"]
+    rest["RestRouter<br/>contract-derived routes"]
+    console["ConsoleRouter<br/>contract-derived pages"]
+    host["Host code<br/>direct dispatch"]
+
+    gql --> chain
+    rest --> chain
+    console --> chain
+    host --> chain
+
+    subgraph chain ["Middleware chain, host-supplied"]
+        mw["identity, tenancy,<br/>logging, anything"]
+    end
+
+    chain --> enforce
+
+    subgraph enforce [Dispatcher enforcement]
+        scopes["scopes the operation requires"]
+        args["arguments against the declaration"]
+        rate["rate class and consumption ledger"]
+        guards["row and field guards"]
+    end
+
+    enforce --> resolver["Resolver<br/>the host's data access"]
+    resolver --> answer[Outcome]
+```
+
+A resolver is reached only after the contract is satisfied, which is why
+a resolver can be a plain data read: whether this caller may ask has
+already been answered.
 
 ## Resolvers
 

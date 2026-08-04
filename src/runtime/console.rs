@@ -231,7 +231,7 @@ impl ConsoleRouter {
                 }
             }
         };
-        self.shell(200, &self.config.title.clone(), body)
+        self.shell(200, "overview", body)
     }
 
     async fn list_page(

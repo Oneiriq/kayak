@@ -2014,6 +2014,19 @@ mod console_pages {
         );
     }
 
+    /// The shell appends the console's name, so a page title that
+    /// repeated it read twice in the browser tab.
+    #[tokio::test]
+    async fn the_overview_names_itself_once() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+        let page = console.page("/", "", tenant_ctx()).await;
+        assert!(
+            page.html.contains("<title>overview · test</title>"),
+            "the tab reads the page and the console, each once",
+        );
+    }
+
     /// The sort control carries what is applied, so the next narrow
     /// keeps it.
     #[tokio::test]

@@ -1,12 +1,13 @@
 # Generators and the CLI
 
-One contract and one schema produce six artifacts. Every generator validates
-first; an invalid contract refuses with each violation named.
+One contract and one schema produce seven artifacts. Every generator
+validates first; an invalid contract refuses with each violation named.
 
 | Target | File | Contents |
 | --- | --- | --- |
 | `openapi` | `openapi.json` | OpenAPI 3.1. List endpoints return the `{Type}Page` envelope; actions merge into their path items. |
 | `sdl` | `schema.graphql` | Object types, sort enums, page types, Query and Mutation. Scalars `DateTime` and `JSON` appear only when used. |
+| `mcp` | `mcp-tools.json` | The `tools/list` manifest: one tool per declared operation, with input schemas, and scopes and rate classes as annotations. |
 | `client-rs` | `client.rs` | Rust client on `reqwest` and `serde`. |
 | `client-ts` | `client.ts` | TypeScript client on `fetch`, zero dependencies. |
 | `client-py` | `client.py` | Python client, standard library only. |

@@ -1876,3 +1876,120 @@ async fn rest_serves_contract_queries_with_typed_parameters() {
         "the percent-decoded term reached the resolver",
     );
 }
+
+#[cfg(feature = "console")]
+mod console_pages {
+    use super::*;
+    use janus::runtime::{ConsoleConfig, ConsoleRouter, FormOutcome};
+
+    fn console(fixture: &Fixture) -> ConsoleRouter {
+        ConsoleRouter::new(
+            fixture.dispatcher.clone(),
+            ConsoleConfig {
+                base: "/console".to_owned(),
+                title: "test".to_owned(),
+            },
+        )
+    }
+
+    /// The overview and the resource pages render from the
+    /// declaration, through the dispatcher, with caller input
+    /// escaped on the way back out.
+    #[tokio::test]
+    async fn pages_render_from_the_declaration() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+
+        let overview = console.page("/", "", tenant_ctx()).await;
+        assert_eq!(overview.status, 200);
+        assert!(overview.html.contains("/console/r/files"));
+
+        let listing = console.page("/r/files", "", tenant_ctx()).await;
+        assert_eq!(listing.status, 200);
+        assert!(listing.html.contains("01A"), "fixture rows render");
+        assert!(
+            listing.html.contains("/console/r/files/01A"),
+            "ids link to the detail page",
+        );
+
+        let detail = console.page("/r/files/01A", "", tenant_ctx()).await;
+        assert_eq!(detail.status, 200);
+        assert!(detail.html.contains("a.txt"), "fields render");
+        assert!(detail.html.contains("versions"), "sub-collections render");
+        assert!(
+            detail.html.contains("/console/r/files/01A/a/issue_url"),
+            "declared actions become forms",
+        );
+
+        let absent = console.page("/r/files/nope", "", tenant_ctx()).await;
+        assert_eq!(absent.status, 404);
+    }
+
+    /// A hostile filter value comes back escaped, never as markup.
+    #[tokio::test]
+    async fn caller_input_is_escaped() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+        let page = console
+            .page(
+                "/r/files",
+                "state=%3Cscript%3Ealert(1)%3C/script%3E",
+                tenant_ctx(),
+            )
+            .await;
+        assert!(
+            !page.html.contains("<script>alert"),
+            "markup in caller input must not survive",
+        );
+    }
+
+    /// A submitted action form dispatches and redirects back; an
+    /// anonymous submission refuses with the middleware's status.
+    #[tokio::test]
+    async fn forms_dispatch_actions() {
+        let fixture = fixture(contract_with_versions());
+        let console = console(&fixture);
+
+        let outcome = console
+            .submit(
+                "/r/files/01A/a/issue_url",
+                &[("ttl_secs".to_owned(), "60".to_owned())],
+                tenant_ctx(),
+            )
+            .await;
+        match outcome {
+            FormOutcome::Redirect(target) => {
+                assert!(target.contains("/console/r/files/01A?done=issue_url"));
+            }
+            FormOutcome::Page(page) => panic!("expected a redirect, got {}", page.status),
+        }
+
+        let refused = console
+            .submit(
+                "/r/files/01A/a/issue_url",
+                &[("ttl_secs".to_owned(), "60".to_owned())],
+                JanusContext::new(),
+            )
+            .await;
+        match refused {
+            FormOutcome::Page(page) => assert_eq!(page.status, 401),
+            FormOutcome::Redirect(target) => panic!("expected refusal, got {target}"),
+        }
+    }
+
+    /// The query panel runs a declared query with decoded, typed
+    /// parameters.
+    #[tokio::test]
+    async fn the_query_panel_answers() {
+        let fixture = fixture(searching_contract());
+        let console = console(&fixture);
+        let page = console
+            .page("/q/search", "q=hello+world&limit=3", tenant_ctx())
+            .await;
+        assert_eq!(page.status, 200);
+        assert!(
+            page.html.contains("hello world"),
+            "the decoded term reached the resolver and rendered",
+        );
+    }
+}

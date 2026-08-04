@@ -19,6 +19,8 @@
 //! check that per row inside the resolver.
 
 pub mod args;
+#[cfg(feature = "console")]
+pub mod console;
 pub mod context;
 pub mod dispatch;
 pub mod error;
@@ -35,6 +37,8 @@ pub mod graphql;
 pub use args::{
     ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SortDirection, SubListArgs, WatchArgs,
 };
+#[cfg(feature = "console")]
+pub use console::{ConsoleAnswer, ConsoleConfig, ConsoleRouter, FormOutcome};
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;

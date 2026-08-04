@@ -22,12 +22,15 @@ default = []
 runtime = []
 # The live GraphQL face over the runtime (async-graphql dynamic schema).
 graphql = ["runtime", "dep:async-graphql"]
+# The contract-driven operator console renderer over the runtime.
+console = ["runtime", "dep:maud"]
 
 [dependencies]
 async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] }
 # The Stream trait alone, so a watch resolver has a return type without
 # pulling an executor or a combinator library into the runtime.
 futures-core = "0.3"
+maud = { version = "0.27", optional = true }
 oneiriq-surql = { version = "0.31", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

@@ -5,7 +5,7 @@
 
 use std::process::Command;
 
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Resource, TypeRef};
+use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
 use surql::schema::{
     datetime_field, index, int_field, string_field, table_schema, TableDefinition, TableMode,
 };
@@ -67,7 +67,46 @@ fn contract() -> Contract {
             }],
             content: None,
         }],
-        queries: vec![],
+        // Both query shapes, so the real Python and Go toolchains
+        // below parse what the generators emit for them.
+        queries: vec![
+            Query {
+                name: "search".into(),
+                path: "/v1/search".into(),
+                input: vec![
+                    ActionField {
+                        name: "q".into(),
+                        kind: TypeRef::String,
+                        required: true,
+                        description: None,
+                    },
+                    ActionField {
+                        name: "limit".into(),
+                        kind: TypeRef::Int,
+                        required: false,
+                        description: None,
+                    },
+                ],
+                description: None,
+                graphql_field: None,
+                requires: vec![],
+                rate_class: None,
+            },
+            Query {
+                name: "file_text".into(),
+                path: "/v1/files/{id}/text".into(),
+                input: vec![ActionField {
+                    name: "id".into(),
+                    kind: TypeRef::String,
+                    required: true,
+                    description: None,
+                }],
+                description: None,
+                graphql_field: None,
+                requires: vec![],
+                rate_class: None,
+            },
+        ],
     }
 }
 

@@ -61,3 +61,11 @@ class Client:
   def remove_file(self, id: str) -> None:
     return self._request('DELETE', f'/v1/files/{id}')
 
+  def search(self, q: str, limit: int | None = None) -> Any:
+    query = {k: v for k, v in {'q': q, 'limit': limit}.items() if v is not None}
+    suffix = f'?{urllib.parse.urlencode(query)}' if query else ''
+    return self._request('GET', f'/v1/search{suffix}')
+
+  def file_text(self, id: str) -> Any:
+    return self._request('GET', f'/v1/files/{id}/text')
+

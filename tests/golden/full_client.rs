@@ -73,4 +73,22 @@ impl Client {
         Ok(())
     }
 
+    pub async fn search(&self, q: &str, limit: Option<i64>) -> Result<Value, Error> {
+        let url = format!("{}/v1/search", self.base_url);
+        let mut request = self.http.get(url)
+            .header("x-copal-tenant", &self.tenant);
+        request = request.query(&[("q", q)]);
+        if let Some(value) = limit {
+            request = request.query(&[("limit", value)]);
+        }
+        Ok(request.send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn file_text(&self, id: &str) -> Result<Value, Error> {
+        let url = format!("{}/v1/files/{id}/text", self.base_url);
+        let request = self.http.get(url)
+            .header("x-copal-tenant", &self.tenant);
+        Ok(request.send().await?.error_for_status()?.json().await?)
+    }
+
 }

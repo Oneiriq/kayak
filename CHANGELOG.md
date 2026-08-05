@@ -9,6 +9,30 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The generated clients carry queries.** `Contract.queries` reached
+  OpenAPI, the SDL, the MCP manifest, the console, and both runtime
+  routers; the four client generators never read it. A service could
+  declare a search, publish it on every other face, and hand out an
+  SDK with no way to call it. Copal was in that position: `search` and
+  `file_text` were absent from all four clients.
+
+  Each query now emits a method taking the path parameter, if the path
+  spells one, and its remaining inputs as named typed parameters, the
+  way listings already read. The answer is the language's open JSON
+  type, because the IR declares no shape for a query and inventing a
+  struct would invent a promise. Required parameters are ordered ahead
+  of optional ones, since TypeScript and Python both refuse the other
+  order. A query with nothing to encode builds no query string, which
+  also keeps the Rust binding free of an unused `mut`.
+
+  The Rust client encodes through reqwest rather than joining pairs by
+  hand, because a search term carries spaces and ampersands. Both
+  query shapes are in the shared test fixtures now, so the goldens
+  record them and the CLI test's real Python and Go toolchains parse
+  what the generators emit.
+
 ### Added
 
 - **`janus scaffold`, for services that already have a database.**

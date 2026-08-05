@@ -20,6 +20,8 @@ contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
         |-- client.ts         fetch, zero dependencies
         |-- client.py         standard library only
         |-- client.go         net/http only
+        |                     (each carries resources, actions, and
+        |                      queries)
         |
         |-- runtime           the contract, executed: resolvers,
                               middleware, live GraphQL

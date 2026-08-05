@@ -181,6 +181,35 @@
         }
       }
     },
+    "/v1/files/{id}/text": {
+      "get": {
+        "operationId": "file_text",
+        "parameters": [
+          {
+            "description": null,
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the answer"
+          }
+        },
+        "summary": null
+      }
+    },
     "/v1/files/{id}/url": {
       "post": {
         "description": "Issue a signed URL for a servable file.",
@@ -226,6 +255,44 @@
             "description": "Action result."
           }
         }
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "What to look for.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": null,
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the answer"
+          }
+        },
+        "summary": "Retrieval across the tenant's text."
       }
     }
   }

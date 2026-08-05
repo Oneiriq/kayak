@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 
 use surql::schema::{FieldDefinition, FieldType, TableDefinition};
 
-use crate::ir::{ActionOutput, Contract};
+use crate::ir::{ActionOutput, Contract, Query, TypeRef};
 use crate::naming::{camel, pascal, singular, snake, type_name};
 use crate::openapi::GenerateError;
 use crate::validate::validate;
@@ -241,11 +241,122 @@ pub fn generate_client_rs(
             out.push_str("    }\n\n");
         }
     }
+    // Queries: declared reads that are not listings. They reach REST
+    // as GETs with their inputs in the query string, which is why they
+    // carry no body and return open JSON.
+    for query in &contract.queries {
+        let mut parameters = vec!["&self".to_owned()];
+        if query_takes_id(query) {
+            parameters.push("id: &str".to_owned());
+        }
+        for field in query_params(query) {
+            let kind = query_kind(field.kind, "rs");
+            parameters.push(if field.required {
+                format!("{}: {kind}", snake(&field.name))
+            } else {
+                format!("{}: Option<{kind}>", snake(&field.name))
+            });
+        }
+        writeln!(
+            out,
+            "    pub async fn {}({}) -> Result<Value, Error> {{",
+            snake(&query.name),
+            parameters.join(", "),
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        let url = format!(\"{{}}{}\", self.base_url);",
+            query.path,
+        )
+        .unwrap();
+        // `mut` only when something reassigns it, so a query with no
+        // parameters does not generate a warning in the client.
+        let binding = if query_params(query).is_empty() {
+            "let request"
+        } else {
+            "let mut request"
+        };
+        writeln!(
+            out,
+            "        {binding} = self.http.get(url)\n\
+             \x20           .header(\"x-copal-tenant\", &self.tenant);",
+        )
+        .unwrap();
+        for field in query_params(query) {
+            let name = &field.name;
+            let binding = snake(name);
+            if field.required {
+                writeln!(
+                    out,
+                    "        request = request.query(&[(\"{name}\", {binding})]);",
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        if let Some(value) = {binding} {{\n\
+                     \x20           request = request.query(&[(\"{name}\", value)]);\n\
+                     \x20       }}",
+                )
+                .unwrap();
+            }
+        }
+        out.push_str(
+            "        Ok(request.send().await?.error_for_status()?.json().await?)\n    }\n\n",
+        );
+    }
     out.push_str("}\n");
     Ok(out)
 }
 
 // ---------------------------------------------------------- TypeScript
+
+/// Whether a query reads one instance, which is the only path
+/// parameter the IR spells (`{id}`, as actions use).
+fn query_takes_id(query: &Query) -> bool {
+    query.path.contains("{id}")
+}
+
+/// The inputs that travel as query-string values: everything except
+/// the one the path already carries.
+fn query_params(query: &Query) -> Vec<&crate::ir::ActionField> {
+    let mut params: Vec<&crate::ir::ActionField> = query
+        .input
+        .iter()
+        .filter(|field| !(query_takes_id(query) && field.name == "id"))
+        .collect();
+    // TypeScript and Python both refuse a required parameter after an
+    // optional one, so the required ones lead. A stable sort keeps the
+    // contract's order within each group, which keeps goldens stable.
+    params.sort_by_key(|field| !field.required);
+    params
+}
+
+/// A query answers with whatever its resolver decided, and the IR
+/// declares no shape for it, so every generated method returns the
+/// language's open JSON type. Inventing a struct here would be
+/// inventing a promise the contract does not make.
+fn query_kind(kind: TypeRef, language: &str) -> &'static str {
+    match (language, kind) {
+        ("rs", TypeRef::Int) => "i64",
+        ("rs", TypeRef::Bool) => "bool",
+        ("rs", TypeRef::Json) => "Value",
+        ("rs", _) => "&str",
+        ("ts", TypeRef::Int) => "number",
+        ("ts", TypeRef::Bool) => "boolean",
+        ("ts", TypeRef::Json) => "unknown",
+        ("ts", _) => "string",
+        ("py", TypeRef::Int) => "int",
+        ("py", TypeRef::Bool) => "bool",
+        ("py", TypeRef::Json) => "Any",
+        ("py", _) => "str",
+        ("go", TypeRef::Int) => "int64",
+        ("go", TypeRef::Bool) => "bool",
+        ("go", TypeRef::Json) => "any",
+        _ => "string",
+    }
+}
 
 /// Generate the TypeScript client (fetch, zero dependencies).
 pub fn generate_client_ts(
@@ -387,6 +498,53 @@ pub fn generate_client_ts(
             .unwrap();
             out.push_str("  }\n\n");
         }
+    }
+    // Queries reach REST as GETs carrying their inputs in the query
+    // string. They declare no output shape, so the method answers with
+    // open JSON.
+    for query in &contract.queries {
+        let mut parameters = Vec::new();
+        if query_takes_id(query) {
+            parameters.push("id: string".to_owned());
+        }
+        for field in query_params(query) {
+            let kind = query_kind(field.kind, "ts");
+            parameters.push(if field.required {
+                format!("{}: {kind}", camel(&field.name))
+            } else {
+                format!("{}?: {kind}", camel(&field.name))
+            });
+        }
+        writeln!(
+            out,
+            "  {}({}): Promise<unknown> {{",
+            camel(&query.name),
+            parameters.join(", "),
+        )
+        .unwrap();
+        let path = query.path.replace("{id}", "${id}");
+        if query_params(query).is_empty() {
+            // Nothing to encode, so nothing is built.
+            writeln!(out, "    return this.request('GET', `{path}`)").unwrap();
+        } else {
+            out.push_str("    const query = new URLSearchParams()\n");
+            for field in query_params(query) {
+                let name = &field.name;
+                let binding = camel(name);
+                if field.required {
+                    writeln!(out, "    query.set('{name}', String({binding}))").unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "    if ({binding} !== undefined) query.set('{name}', String({binding}))",
+                    )
+                    .unwrap();
+                }
+            }
+            out.push_str("    const suffix = query.size > 0 ? `?${query}` : ''\n");
+            writeln!(out, "    return this.request('GET', `{path}${{suffix}}`)").unwrap();
+        }
+        out.push_str("  }\n\n");
     }
     out.push_str("}\n");
     Ok(out)
@@ -565,6 +723,48 @@ pub fn generate_client_py(
                     .unwrap();
                 }
             }
+        }
+    }
+    for query in &contract.queries {
+        let mut parameters = vec!["self".to_owned()];
+        if query_takes_id(query) {
+            parameters.push("id: str".to_owned());
+        }
+        for field in query_params(query) {
+            let kind = query_kind(field.kind, "py");
+            parameters.push(if field.required {
+                format!("{}: {kind}", snake(&field.name))
+            } else {
+                format!("{}: {kind} | None = None", snake(&field.name))
+            });
+        }
+        writeln!(
+            out,
+            "  def {}({}) -> Any:",
+            snake(&query.name),
+            parameters.join(", "),
+        )
+        .unwrap();
+        if query_params(query).is_empty() {
+            writeln!(out, "    return self._request('GET', f'{}')\n", query.path).unwrap();
+        } else {
+            let pairs: Vec<String> = query_params(query)
+                .iter()
+                .map(|field| format!("'{}': {}", field.name, snake(&field.name)))
+                .collect();
+            writeln!(
+                out,
+                "    query = {{k: v for k, v in {{{}}}.items() if v is not None}}",
+                pairs.join(", "),
+            )
+            .unwrap();
+            out.push_str("    suffix = f'?{urllib.parse.urlencode(query)}' if query else ''\n");
+            writeln!(
+                out,
+                "    return self._request('GET', f'{}{{suffix}}')\n",
+                query.path,
+            )
+            .unwrap();
         }
     }
     Ok(out)
@@ -795,6 +995,69 @@ pub fn generate_client_go(
                 }
             }
         }
+    }
+    for query in &contract.queries {
+        let mut parameters = Vec::new();
+        if query_takes_id(query) {
+            parameters.push("id string".to_owned());
+        }
+        for field in query_params(query) {
+            parameters.push(format!(
+                "{} {}",
+                camel(&field.name),
+                query_kind(field.kind, "go"),
+            ));
+        }
+        writeln!(
+            out,
+            "func (c *Client) {}({}) (any, error) {{",
+            pascal(&snake(&query.name)),
+            parameters.join(", "),
+        )
+        .unwrap();
+        if !query_params(query).is_empty() {
+            out.push_str("\tquery := url.Values{}\n");
+        }
+        for field in query_params(query) {
+            let name = &field.name;
+            let binding = camel(name);
+            // Go has no optional parameter, so an omitted value arrives
+            // as the zero value and the zero value is what gets
+            // skipped. The generated listings already read this way.
+            let guard = match field.kind {
+                TypeRef::Int => Some(format!("{binding} > 0")),
+                TypeRef::String => Some(format!("{binding} != \"\"")),
+                _ => None,
+            };
+            let setter = match field.kind {
+                TypeRef::String => format!("query.Set(\"{name}\", {binding})"),
+                _ => format!("query.Set(\"{name}\", fmt.Sprint({binding}))"),
+            };
+            match (field.required, guard) {
+                (false, Some(condition)) => {
+                    writeln!(out, "\tif {condition} {{\n\t\t{setter}\n\t}}").unwrap();
+                }
+                _ => writeln!(out, "\t{setter}").unwrap(),
+            }
+        }
+        let path_expression = if query_takes_id(query) {
+            go_path_expr(&query.path)
+        } else {
+            format!("\"{}\"", query.path)
+        };
+        writeln!(out, "\tpath := {path_expression}").unwrap();
+        if !query_params(query).is_empty() {
+            out.push_str(
+                "\tif encoded := query.Encode(); encoded != \"\" {\n\
+                 \t\tpath += \"?\" + encoded\n\t}\n",
+            );
+        }
+        out.push_str(
+            "\tvar out any\n\
+             \tif err := c.request(\"GET\", path, nil, &out); err != nil {\n\
+             \t\treturn nil, err\n\t}\n\
+             \treturn out, nil\n}\n\n",
+        );
     }
     Ok(out)
 }

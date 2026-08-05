@@ -2,3 +2,8 @@
 Cargo.lock.orig
 .env
 /data
+
+# The CLI test compiles the generated Python with the real
+# interpreter, which leaves bytecode beside the goldens.
+__pycache__/
+*.pyc

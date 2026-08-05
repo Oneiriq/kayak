@@ -83,6 +83,52 @@
         "additionalProperties": false
       },
       "annotations": {}
+    },
+    {
+      "name": "search",
+      "description": "Retrieval across the tenant's text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "What to look for."
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "requiredScopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "file_text",
+      "description": "The file_text query.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "requiredScopes": [
+          "read"
+        ]
+      }
     }
   ]
 }

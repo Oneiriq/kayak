@@ -25,6 +25,8 @@ type FilePage {
 type Query {
   files(limit: Int = 100, cursor: String, state: String, sort: FileSort): FilePage!
   file(id: ID!): File
+  search(q: String!, limit: Int): JSON!
+  fileText(id: String!): JSON!
 }
 
 type Mutation {

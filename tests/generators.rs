@@ -3,10 +3,14 @@
 //! `JANUS_BLESS=1 cargo test` re-blesses all goldens deliberately;
 //! anything else that changes an artifact is drift and fails.
 
+use janus::clients::{
+    generate_client_go, generate_client_py, generate_client_rs, generate_client_ts,
+};
 use janus::diff::{diff, Change};
 use janus::generate::{generate_all, TARGETS};
 use janus::{
-    Action, ActionField, ActionOutput, Contract, FieldExposure, Resource, SubResource, TypeRef,
+    Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, SubResource,
+    TypeRef,
 };
 use surql::schema::{
     datetime_field, index, int_field, object_field, string_field, table_schema, unique_index,
@@ -100,7 +104,47 @@ fn contract() -> Contract {
             ],
             content: None,
         }],
-        queries: vec![],
+        // One query with a path parameter and one without, so the
+        // goldens carry both shapes and the CLI test's real Python and
+        // Go toolchains parse what the generators emit for them.
+        queries: vec![
+            Query {
+                name: "search".into(),
+                path: "/v1/search".into(),
+                input: vec![
+                    ActionField {
+                        name: "q".into(),
+                        kind: TypeRef::String,
+                        required: true,
+                        description: Some("What to look for.".into()),
+                    },
+                    ActionField {
+                        name: "limit".into(),
+                        kind: TypeRef::Int,
+                        required: false,
+                        description: None,
+                    },
+                ],
+                description: Some("Retrieval across the tenant's text.".into()),
+                graphql_field: None,
+                requires: vec!["read".into()],
+                rate_class: None,
+            },
+            Query {
+                name: "file_text".into(),
+                path: "/v1/files/{id}/text".into(),
+                input: vec![ActionField {
+                    name: "id".into(),
+                    kind: TypeRef::String,
+                    required: true,
+                    description: None,
+                }],
+                description: None,
+                graphql_field: None,
+                requires: vec!["read".into()],
+                rate_class: None,
+            },
+        ],
     }
 }
 
@@ -492,4 +536,140 @@ fn python_client_indentation_survives_sub_resources() {
             index + 1,
         );
     }
+}
+
+/// Queries reach the four clients.
+///
+/// They are the contract's declared reads that are not listings, and
+/// the generators covered every other face first: OpenAPI, the SDL,
+/// the MCP manifest, the console, and the runtime routers all read
+/// `contract.queries`, while the clients did not. A caller holding a
+/// generated SDK had no way to reach a search the contract declares.
+#[test]
+fn clients_carry_query_methods() {
+    let mut contract = contract();
+    contract.queries = vec![
+        Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![
+                ActionField {
+                    name: "q".into(),
+                    kind: TypeRef::String,
+                    required: true,
+                    description: None,
+                },
+                ActionField {
+                    name: "limit".into(),
+                    kind: TypeRef::Int,
+                    required: false,
+                    description: None,
+                },
+            ],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+        },
+        Query {
+            name: "file_text".into(),
+            path: "/v1/files/{id}/text".into(),
+            input: vec![ActionField {
+                name: "id".into(),
+                kind: TypeRef::String,
+                required: true,
+                description: None,
+            }],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+        },
+    ];
+    let schema = vec![file_table()];
+
+    let rust = generate_client_rs(&contract, &schema).unwrap();
+    assert!(
+        rust.contains("pub async fn search(&self, q: &str, limit: Option<i64>)"),
+        "{rust}",
+    );
+    // reqwest's own encoder, because a search term carries spaces and
+    // ampersands and hand-joined pairs would ship them raw.
+    assert!(rust.contains(".query(&[(\"q\", q)])"), "{rust}");
+    assert!(
+        rust.contains("pub async fn file_text(&self, id: &str)"),
+        "the path parameter is a parameter, and not also a query value: {rust}",
+    );
+
+    let ts = generate_client_ts(&contract, &schema).unwrap();
+    assert!(
+        ts.contains("search(q: string, limit?: number): Promise<unknown>"),
+        "{ts}"
+    );
+    assert!(ts.contains("fileText(id: string)"), "{ts}");
+    // No parameters beyond the path one, so nothing builds a query
+    // string that would always be empty.
+    assert!(ts.contains("`/v1/files/${id}/text`"), "{ts}");
+    assert!(!ts.contains("`/v1/files/${id}/text${suffix}`"), "{ts}");
+
+    let py = generate_client_py(&contract, &schema).unwrap();
+    assert!(
+        py.contains("def search(self, q: str, limit: int | None = None) -> Any:"),
+        "{py}",
+    );
+    assert!(py.contains("urllib.parse.urlencode(query)"), "{py}");
+    assert!(py.contains("def file_text(self, id: str) -> Any:"), "{py}");
+
+    let go = generate_client_go(&contract, &schema).unwrap();
+    assert!(
+        go.contains("func (c *Client) Search(q string, limit int64) (any, error)"),
+        "{go}"
+    );
+    assert!(
+        go.contains("func (c *Client) FileText(id string) (any, error)"),
+        "{go}"
+    );
+    assert!(go.contains("\"/v1/files/\" + id + \"/text\""), "{go}");
+}
+
+/// A required parameter cannot follow an optional one in TypeScript or
+/// Python, so the generators order them even when the contract does
+/// not.
+#[test]
+fn required_query_parameters_lead() {
+    let mut contract = contract();
+    contract.queries = vec![Query {
+        name: "search".into(),
+        path: "/v1/search".into(),
+        input: vec![
+            ActionField {
+                name: "cursor".into(),
+                kind: TypeRef::String,
+                required: false,
+                description: None,
+            },
+            ActionField {
+                name: "q".into(),
+                kind: TypeRef::String,
+                required: true,
+                description: None,
+            },
+        ],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+    }];
+    let schema = vec![file_table()];
+
+    let ts = generate_client_ts(&contract, &schema).unwrap();
+    assert!(
+        ts.contains("search(q: string, cursor?: string)"),
+        "an optional parameter ahead of a required one will not parse: {ts}",
+    );
+    let py = generate_client_py(&contract, &schema).unwrap();
+    assert!(
+        py.contains("def search(self, q: str, cursor: str | None = None)"),
+        "{py}",
+    );
 }

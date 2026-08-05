@@ -53,4 +53,16 @@ export class Client {
     return this.request('DELETE', `/v1/files/${id}`)
   }
 
+  search(q: string, limit?: number): Promise<unknown> {
+    const query = new URLSearchParams()
+    query.set('q', String(q))
+    if (limit !== undefined) query.set('limit', String(limit))
+    const suffix = query.size > 0 ? `?${query}` : ''
+    return this.request('GET', `/v1/search${suffix}`)
+  }
+
+  fileText(id: string): Promise<unknown> {
+    return this.request('GET', `/v1/files/${id}/text`)
+  }
+
 }

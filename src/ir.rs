@@ -115,7 +115,7 @@ pub struct ContractLimits {
     pub max_watches_per_principal: Option<u32>,
 }
 
-fn default_ir_revision() -> u32 {
+pub(crate) fn default_ir_revision() -> u32 {
     1
 }
 

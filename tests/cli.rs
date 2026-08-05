@@ -79,6 +79,77 @@ fn tool_available(name: &str, probe: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+/// The scaffold path a service with an existing database takes: hand
+/// the binary a schema, get a contract, generate from it without
+/// editing anything. If that chain breaks, the scaffold is a draft
+/// rather than a starting point.
+#[test]
+fn a_scaffolded_contract_generates_without_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    let contract_path = dir.path().join("contract.json");
+    let out_dir = dir.path().join("generated");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+
+    let scaffolded = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args([
+            "scaffold",
+            "--schema",
+            schema_path.to_str().unwrap(),
+            "--out",
+            contract_path.to_str().unwrap(),
+            "--name",
+            "copal",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "scaffold failed: {}",
+        String::from_utf8_lossy(&scaffolded.stderr),
+    );
+    let notes = String::from_utf8_lossy(&scaffolded.stderr);
+    assert!(
+        !notes.contains("needs an edit"),
+        "a scaffold that does not validate is not a starting point: {notes}",
+    );
+
+    let generated = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args([
+            "generate",
+            "--contract",
+            contract_path.to_str().unwrap(),
+            "--schema",
+            schema_path.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "generate from a scaffold failed: {}",
+        String::from_utf8_lossy(&generated.stderr),
+    );
+    assert!(out_dir.join("openapi.json").exists());
+    assert!(out_dir.join("schema.graphql").exists());
+}
+
+/// Without `--schema` there is nothing to read, and a usage exit is
+/// how CI tells that apart from a contract that could not be built.
+#[test]
+fn scaffold_without_a_schema_is_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args(["scaffold"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
 #[test]
 fn generate_and_diff_through_the_binary() {
     let dir = tempfile::tempdir().unwrap();

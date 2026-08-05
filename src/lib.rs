@@ -15,6 +15,7 @@ pub mod mcp;
 mod naming;
 pub mod openapi;
 pub mod reserved;
+pub mod scaffold;
 pub mod sdl;
 pub mod validate;
 

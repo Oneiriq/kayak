@@ -59,6 +59,8 @@ and the generator workflow.
 ## CLI
 
 ```
+janus scaffold --schema schema.json --out contract.json [--name svc] \
+    [--version 0.1.0] [--pinned tenant_id]
 janus generate --contract contract.json --schema schema.json \
     --out generated [--targets openapi,sdl,client-rs,client-ts,client-py,client-go]
 janus diff old-contract.json new-contract.json   # exits non-zero on breaking changes
@@ -69,6 +71,30 @@ Contracts and schemas travel as data; the schema file is a serialized
 the IR, so it catches what document diffs hide: a dropped filter, a moved
 action, an input that became required, a field re-pointed at a different
 column under the same wire name.
+
+### Starting from a database you already have
+
+`scaffold` reads a schema and writes a contract that validates against it,
+which is the step that otherwise means copying every column by hand and
+checking every filter and sort against an index by eye. Run against copal's
+own 25 tables it derives 47 filters and 33 sorts and all seven artifacts
+generate from the result without an edit.
+
+What it declines to guess is as much of the point. Actions are behavior and
+live in the service, so a scaffolded resource has none. Columns whose names
+suggest a secret (`key_hash`, `secret_sealed`) are left unexposed and named
+on stderr, because a tool that writes API surface should not be how a hash
+reaches a client. And sort claims stay narrower than `validate` would
+tolerate: a sort is claimed only where pinned columns cover the whole index
+prefix ahead of it. `filterable` describes what a caller may send, nothing
+obliges them to send it, and an unfiltered sort down a composite index
+scans.
+
+The bias throughout is to claim less, because the differ calls a removed
+filter or sort breaking and an added one compatible. A claim the scaffold
+invents costs a major version to withdraw; one it omits costs a line to
+add. Copal's `created_at` listing sort is the intended example: left
+unclaimed, correct to add by hand, compatible when you do.
 
 ## Testing
 

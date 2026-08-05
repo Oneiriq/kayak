@@ -11,6 +11,26 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **`janus scaffold`, for services that already have a database.**
+  Janus refused to do anything without a contract, and writing the
+  first one meant transcribing every column and checking every filter
+  and sort against an index by hand, which is the step that stopped
+  adoption before it started. `scaffold --schema` reads the schema and
+  writes a contract that validates against it, so the first `generate`
+  produces artifacts instead of a list of claims to repair. Against
+  copal's real 25 tables it derives 47 filters and 33 sorts, and all
+  seven targets generate from the result unedited.
+
+  It claims less than it could, deliberately. Sorts are claimed only
+  where pinned columns cover the index prefix ahead of them, which is
+  stricter than `validate` accepts. `filterable` describes what a
+  caller may send, nothing obliges them to send it, and an unfiltered
+  sort down a composite index scans. The differ calls a removed sort breaking and
+  an added one compatible, so an invented claim costs a major version
+  to withdraw while an omitted one costs a line. Columns whose names
+  suggest a secret are left unexposed and reported, on the same
+  reasoning applied to a worse outcome.
+
 - **Content faces.** A resource may declare `content: { upload,
   download }`, and the byte paths render into the OpenAPI document
   as octet-stream operations (`PUT/GET /v1/{resource}/{id}/content`)

@@ -2018,6 +2018,26 @@ mod console_pages {
         );
     }
 
+    /// The overview says what is here, rather than what the contract
+    /// declares. It used to read "8 actions, 1 sub-collections", which
+    /// answers a question nobody opening a console has.
+    #[tokio::test]
+    async fn the_overview_shows_the_data() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/", "", tenant_ctx()).await;
+        assert_eq!(page.status, 200, "{}", page.html);
+        assert!(
+            !page.html.contains("sub-collections"),
+            "the contract's shape is not what an operator came for: {}",
+            page.html,
+        );
+        assert!(
+            page.html.contains("rows"),
+            "each card counts what it holds: {}",
+            page.html,
+        );
+    }
+
     /// The shell appends the console's name, so a page title that
     /// repeated it read twice in the browser tab.
     #[tokio::test]

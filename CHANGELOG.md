@@ -9,6 +9,26 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **The overview says what is here.** Each resource card read "8
+  actions, 1 sub-collections", which describes the contract and
+  answers a question nobody opening a console has. A card now lists
+  the resource's first page: how many rows, whether more follow, and a
+  few of them.
+
+  Which column names a row is decided by asking which one tells the
+  rows apart, since a generated console knows nothing about the
+  domain. Preferring a name-like column alone put "file.ready" on four
+  event cards; asking for the most distinct column alone put four raw
+  timestamps there. So a preview carries both, a label and a time,
+  because what an operator wants from a card is what the row is and
+  when. The time drops its year and seconds, which a card has no room
+  for and the listing page still carries.
+
+  A resource whose listing refuses says so on its own card and leaves
+  the rest of the page standing.
+
 ### Added
 
 - **Closed sets are declared, enforced, and offered as menus.** An

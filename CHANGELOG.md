@@ -40,6 +40,17 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   "Try it" on each row lands on the control that runs it, with an
   action's dialog already open.
 
+  Beneath the requests, every input is stated rather than inferred:
+  its declared type, whether it is required, whether it rides in the
+  path, the query string, or the body, and the values it accepts when
+  those are a closed set. A sample value lets a reader guess that
+  `"width": 0` is an integer and that a missing field was optional,
+  and guessing is not the same as being told. The type is said in the
+  contract's own vocabulary, since one call reaches three faces and
+  `String!` belongs to GraphQL alone. An instance action's id appears
+  there too, marked as riding in the path, because it is required
+  without being declared among the inputs.
+
 - **A footer**, carrying the contract's name and version, so a page
   ends rather than stops.
 

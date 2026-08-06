@@ -198,8 +198,9 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem;
   font-size: .85rem; }
 ul.plain li { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; }
 .req { color: var(--bad); }
-ul.notes { margin-top: .45rem; color: var(--soft); font-size: .8rem; }
-ul.notes li { font-family: var(--mono); }
+.shape-heading.spaced { margin-top: 1rem; }
+table.inputs td, table.inputs th { padding: .3rem .7rem; }
+table.inputs td { font-size: .82rem; }
 h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
   letter-spacing: -.01em; }
 h2 { font: 600 .8rem/1.4 var(--ui); margin: 2rem 0 .6rem; color: var(--soft);
@@ -616,6 +617,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: false,
                         selection: Some(page_selection.clone()),
+                        document: None,
                         try_at: Some(format!("{base}/r/{}", resource.name)),
                     });
                     faces.push(Face {
@@ -630,6 +632,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: true,
                         selection: Some(one_selection.clone()),
+                        document: None,
                         try_at: Some(format!("{base}/r/{}", resource.name)),
                     });
                     if resource.watchable {
@@ -645,10 +648,21 @@ impl ConsoleRouter {
                             body: false,
                             takes_id: false,
                             selection: Some(one_selection.clone()),
+                            document: None,
                             try_at: None,
                         });
                     }
                     for sub in &resource.sub_resources {
+                        // A sub-collection hangs off its parent, so
+                        // naming the parent type locates it without
+                        // saying what to send. The nested document
+                        // does.
+                        let sub_fields: Vec<&str> = sub
+                            .fields
+                            .iter()
+                            .take(3)
+                            .map(|f| f.api_name())
+                            .collect();
                         faces.push(Face {
                             what: humanize(&sub.name),
                             rest_method: "GET",
@@ -661,6 +675,14 @@ impl ConsoleRouter {
                             body: false,
                             takes_id: true,
                             selection: None,
+                            document: Some(format!(
+                                "query {{\n  {}(id: \"<id>\") {{\n    {}(limit: {}) {{\n      \
+                                 items {{\n        {}\n      }}\n      nextCursor\n    }}\n  }}\n}}",
+                                resource.graphql_get_field(),
+                                sub.name,
+                                sub.max_page_size,
+                                sub_fields.join("\n        "),
+                            )),
                             try_at: Some(format!("{base}/r/{}", resource.name)),
                         });
                     }
@@ -693,6 +715,7 @@ impl ConsoleRouter {
                                 }
                                 _ => None,
                             },
+                            document: None,
                             try_at: Some(format!(
                                 "{base}/r/{}?open={}",
                                 resource.name, action.name
@@ -722,6 +745,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: query.path.contains("{id}"),
                         selection: None,
+                        document: None,
                         try_at: Some(format!("{base}/q/{}", query.name)),
                     })
                     .collect();
@@ -1562,8 +1586,40 @@ struct Face<'a> {
     /// The selection a GraphQL caller would write, when the answer has
     /// a declared shape rather than open JSON.
     selection: Option<String>,
+    /// A document written out in full, for an operation whose GraphQL
+    /// shape is not a top-level field. A sub-collection hangs off its
+    /// parent, so saying "on the parent type" locates it without ever
+    /// answering what to send.
+    document: Option<String>,
     /// Where in this console the operation can actually be run.
     try_at: Option<String>,
+}
+
+/// One declared input, said rather than inferred.
+///
+/// A sample value lets a reader guess that `"width": 0` is an integer
+/// and that a missing field was optional. Guessing is not the same as
+/// being told, and the contract already knows.
+struct Input<'a> {
+    name: &'a str,
+    kind: &'static str,
+    required: bool,
+    options: &'a [String],
+    multiple: bool,
+    /// Where the value rides on the REST face.
+    whence: &'static str,
+}
+
+/// The type the contract declares, in its own vocabulary rather than
+/// one face's spelling: this table describes a call that reaches all
+/// three, and `String!` belongs to GraphQL alone.
+fn declared_type(kind: TypeRef) -> &'static str {
+    match kind {
+        TypeRef::String => "string",
+        TypeRef::Int => "int",
+        TypeRef::Bool => "bool",
+        TypeRef::Json => "json",
+    }
 }
 
 /// A placeholder that shows the type rather than pretending to be a
@@ -1627,6 +1683,9 @@ impl Face<'_> {
 
     /// The document a GraphQL caller sends.
     fn graphql_example(&self) -> Option<String> {
+        if let Some(written) = &self.document {
+            return Some(written.clone());
+        }
         let field = self.graphql.as_ref()?;
         let mut arguments: Vec<String> = Vec::new();
         // An instance action carries its subject in the path on REST
@@ -1666,24 +1725,37 @@ impl Face<'_> {
     /// These were comments in the body until a copy-paste proved the
     /// point: `// optional` is not JSON, so the example a caller
     /// lifted straight into curl could not be sent.
-    fn notes(&self) -> Vec<String> {
-        self.inputs
-            .iter()
-            .filter_map(|field| {
-                let mut said: Vec<String> = Vec::new();
-                if !field.required {
-                    said.push("optional".to_owned());
-                }
-                if !field.options.is_empty() {
-                    said.push(format!(
-                        "{} of {}",
-                        if field.multiple { "any" } else { "one" },
-                        field.options.join(", "),
-                    ));
-                }
-                (!said.is_empty()).then(|| format!("{}: {}", field.name, said.join("; ")))
-            })
-            .collect()
+    fn inputs_table(&self) -> Vec<Input<'_>> {
+        let mut rows: Vec<Input<'_>> = Vec::new();
+        // An instance action carries its subject in the path, so the
+        // id is required without being declared among the inputs.
+        // Leaving it out of the table would understate what the call
+        // takes.
+        if self.takes_id && !self.inputs.iter().any(|f| f.name == "id") {
+            rows.push(Input {
+                name: "id",
+                kind: "string",
+                required: true,
+                options: &[],
+                multiple: false,
+                whence: "path",
+            });
+        }
+        rows.extend(self.inputs.iter().map(|field| Input {
+            name: &field.name,
+            kind: declared_type(field.kind),
+            required: field.required,
+            options: &field.options,
+            multiple: field.multiple,
+            whence: if self.rest_path.contains(&format!("{{{}}}", field.name)) {
+                "path"
+            } else if self.body {
+                "body"
+            } else {
+                "query"
+            },
+        }));
+        rows
     }
 
     /// The call an agent makes.
@@ -1759,14 +1831,7 @@ fn faces_table(faces: &[Face]) -> Markup {
                                             div {
                                                 div.shape-heading { "REST" }
                                                 pre { code { (face.rest_example()) } }
-                                                @let notes = face.notes();
-                                                @if !notes.is_empty() {
-                                                    ul.plain.notes {
-                                                        @for note in &notes {
-                                                            li { (note) }
-                                                        }
-                                                    }
-                                                }
+
                                             }
                                         }
                                         @if let Some(document) = face.graphql_example() {
@@ -1779,6 +1844,55 @@ fn faces_table(faces: &[Face]) -> Markup {
                                             div {
                                                 div.shape-heading { "MCP" }
                                                 pre { code { (call) } }
+                                            }
+                                        }
+                                    }
+                                    @let inputs = face.inputs_table();
+                                    @if !inputs.is_empty() {
+                                        div.shape-heading.spaced { "Inputs" }
+                                        div.scroll {
+                                            table.inputs {
+                                                thead {
+                                                    tr {
+                                                        th { "Field" } th { "Type" }
+                                                        th { "Required" } th { "In" }
+                                                        th { "Values" }
+                                                    }
+                                                }
+                                                tbody {
+                                                    @for input in &inputs {
+                                                        tr {
+                                                            td { code { (input.name) } }
+                                                            td { code { (input.kind) } }
+                                                            td {
+                                                                // Neutral: required states
+                                                                // what the call takes, and
+                                                                // red would report a
+                                                                // problem where none is.
+                                                                @if input.required {
+                                                                    span.chip { "yes" }
+                                                                } @else {
+                                                                    span.dim { "no" }
+                                                                }
+                                                            }
+                                                            td { span.dim { (input.whence) } }
+                                                            td {
+                                                                @if input.options.is_empty() {
+                                                                    span.dim { "any" }
+                                                                } @else {
+                                                                    @if input.multiple {
+                                                                        span.dim { "any of " }
+                                                                    } @else {
+                                                                        span.dim { "one of " }
+                                                                    }
+                                                                    code {
+                                                                        (input.options.join(", "))
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }

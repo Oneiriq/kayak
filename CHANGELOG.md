@@ -9,6 +9,26 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **A reference page: the contract, as the surface it becomes.** A
+  service declares its shape once and janus lands it on REST,
+  GraphQL, and MCP by rules nobody should have to hold in their head.
+  The OpenAPI document gives the REST half, the SDL gives the GraphQL
+  half, and until now nothing put them side by side.
+
+  For every operation the contract declares, the page shows the path a
+  REST caller takes, the field a GraphQL caller selects, the tool an
+  agent calls, the scopes it requires, and its rate class. Each
+  resource carries what it hands back, including a field's underlying
+  column when it is renamed and a guard when one applies, and how a
+  caller may narrow it, including a filter's own option list and the
+  page-size ceiling. It reads the same functions the generators read,
+  so it cannot drift from the documents.
+
+- **A footer**, carrying the contract's name and version, so a page
+  ends rather than stops.
+
 ### Changed
 
 - **The console has a shape.** Navigation moved into a rail down the

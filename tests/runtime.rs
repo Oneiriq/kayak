@@ -2023,6 +2023,38 @@ mod console_pages {
         );
     }
 
+    /// The reference says how one declaration lands on every face.
+    ///
+    /// That mapping lives in the generators and nowhere a caller can
+    /// see it: an OpenAPI document gives the REST half, the SDL gives
+    /// the GraphQL half, and nothing puts them side by side. Derived
+    /// from the same functions the generators use, so it cannot drift
+    /// from the documents.
+    #[tokio::test]
+    async fn the_reference_shows_every_face() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+        assert_eq!(page.status, 200, "{}", page.html);
+
+        assert!(
+            page.html.contains("GET /v1/files"),
+            "the REST path: {}",
+            page.html
+        );
+        assert!(
+            page.html.contains("files_list"),
+            "the MCP tool: {}",
+            page.html
+        );
+        assert!(
+            page.html.contains("issue_url"),
+            "an action reaches it: {}",
+            page.html
+        );
+        // A sub-collection has a REST path and no tool of its own.
+        assert!(page.html.contains("/versions"), "{}", page.html);
+    }
+
     /// The overview says what is here, rather than what the contract
     /// declares. It used to read "8 actions, 1 sub-collections", which
     /// answers a question nobody opening a console has.

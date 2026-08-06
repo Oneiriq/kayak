@@ -160,6 +160,8 @@ header .icon { margin-left: auto; }
    they came to look at. */
 .frame { display: grid; grid-template-columns: 14rem minmax(0, 1fr);
   min-height: calc(100vh - 3.1rem); align-items: start; }
+.column { display: flex; flex-direction: column; min-height: calc(100vh - 3.1rem);
+  min-width: 0; }
 .rail { position: sticky; top: 3.1rem; padding: 1.25rem .75rem;
   border-right: 1px solid var(--line); background: var(--raised);
   min-height: calc(100vh - 3.1rem); }
@@ -173,11 +175,29 @@ header .icon { margin-left: auto; }
 .rail nav a.here { background: var(--chip); color: var(--bright); font-weight: 600;
   box-shadow: inset 2px 0 0 var(--accent); }
 
-main { padding: 1.5rem 1.75rem 4rem; max-width: 110rem; min-width: 0; }
+main { padding: 1.5rem 1.75rem 3rem; max-width: 110rem; min-width: 0; flex: 1; }
+
+/* A page should end rather than stop. */
+footer { display: flex; gap: 1.25rem; align-items: baseline; flex-wrap: wrap;
+  padding: 1rem 1.75rem; border-top: 1px solid var(--line);
+  font: .78rem/1.5 var(--ui); color: var(--soft); }
+footer .dim { margin-left: auto; }
 
 /* Actions sit above the data as the things you can do, rather than
    below it as forms nobody asked to see. */
 .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; margin: .9rem 0 1.1rem; }
+
+/* The reference: one operation per row, and every face it reaches. */
+table.faces td { white-space: nowrap; }
+table.faces td:first-child { font-family: var(--ui); }
+.shape { display: grid; gap: 1.25rem; margin: .75rem 0 1.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); align-items: start; }
+.shape-heading { font: 600 .7rem/1.4 var(--ui); text-transform: uppercase;
+  letter-spacing: .08em; color: var(--faint); margin-bottom: .35rem; }
+ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem;
+  font-size: .85rem; }
+ul.plain li { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; }
+.req { color: var(--bad); }
 h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
   letter-spacing: -.01em; }
 h2 { font: 600 .8rem/1.4 var(--ui); margin: 2rem 0 .6rem; color: var(--soft);
@@ -355,6 +375,7 @@ impl ConsoleRouter {
         let pairs = parse_query(query);
         match parts.as_slice() {
             [] => self.overview(ctx).await,
+            ["reference"] => self.reference(),
             ["r", resource] => self.list_page(resource, &pairs, ctx).await,
             ["r", resource, id] => self.detail_page(resource, &decode(id), &pairs, ctx).await,
             ["q", name] => self.query_page(name, &pairs, ctx).await,
@@ -528,6 +549,201 @@ impl ConsoleRouter {
             }
         };
         self.shell(200, "overview", body)
+    }
+
+    /// The contract, as the surface it becomes.
+    ///
+    /// A service built this way declares its shape once and janus
+    /// lands it on REST, GraphQL, and MCP by rules nobody should have
+    /// to hold in their head. Reading the OpenAPI document tells you
+    /// the REST half; reading the SDL tells you the GraphQL half; the
+    /// mapping between them lives in the generator and nowhere a
+    /// caller can see it.
+    ///
+    /// So this page says it: for every operation the contract
+    /// declares, the path a REST caller takes, the field a GraphQL
+    /// caller selects, the tool an agent calls, what it accepts, what
+    /// it costs, and what it requires. Derived from the same
+    /// functions the generators use, so it cannot drift from the
+    /// documents.
+    fn reference(&self) -> ConsoleAnswer {
+        let contract = self.dispatcher.contract().clone();
+        let body = html! {
+            h1 { "Reference" }
+            p.dim {
+                "Every operation " (contract.name) " v" (contract.version)
+                " declares, and how it reaches each face."
+            }
+
+            @for resource in &contract.resources {
+                h2 { (humanize(&resource.name)) }
+                div.scroll {
+                    table.faces {
+                        thead {
+                            tr {
+                                th { "Operation" } th { "REST" }
+                                th { "GraphQL" } th { "MCP tool" } th { "Requires" }
+                            }
+                        }
+                        tbody {
+                            tr {
+                                td { "List" }
+                                td { code { "GET /v1/" (resource.name) } }
+                                td { code { (resource.graphql_list_field()) } }
+                                td { code { (resource.name) "_list" } }
+                                td { (scopes(&resource.reads_require)) }
+                            }
+                            tr {
+                                td { "Get one" }
+                                td { code { "GET /v1/" (resource.name) "/{id}" } }
+                                td { code { (resource.graphql_get_field()) } }
+                                td { code { (singular(&resource.name)) "_get" } }
+                                td { (scopes(&resource.reads_require)) }
+                            }
+                            @if resource.watchable {
+                                tr {
+                                    td { "Watch" }
+                                    td { span.dim { "no REST face" } }
+                                    td { code { (resource.graphql_watch_field()) } }
+                                    td { span.dim { "no tool" } }
+                                    td { (scopes(&resource.reads_require)) }
+                                }
+                            }
+                            @for sub in &resource.sub_resources {
+                                tr {
+                                    td { (humanize(&sub.name)) }
+                                    td {
+                                        code { "GET /v1/" (resource.name) "/{id}/" (sub.name) }
+                                    }
+                                    td { span.dim { "on the parent type" } }
+                                    td { span.dim { "no tool" } }
+                                    td { (scopes(&resource.reads_require)) }
+                                }
+                            }
+                            @for action in &resource.actions {
+                                tr {
+                                    td { (action_label(action, None)) }
+                                    td {
+                                        code {
+                                            (action.method) " /v1/" (resource.name) (action.path)
+                                        }
+                                    }
+                                    td { code { (action.graphql_field_name(resource)) } }
+                                    td {
+                                        code { (singular(&resource.name)) "_" (action.name) }
+                                    }
+                                    td { (scopes(&action.requires)) }
+                                }
+                            }
+                        }
+                    }
+                }
+                (self.shape_of(resource))
+            }
+
+            @if !contract.queries.is_empty() {
+                h2 { "Queries" }
+                div.scroll {
+                    table.faces {
+                        thead {
+                            tr {
+                                th { "Query" } th { "REST" } th { "GraphQL" }
+                                th { "MCP tool" } th { "Requires" } th { "Takes" }
+                            }
+                        }
+                        tbody {
+                            @for query in &contract.queries {
+                                tr {
+                                    td { (humanize(&query.name)) }
+                                    td { code { "GET " (query.path) } }
+                                    td { code { (query.graphql_field_name()) } }
+                                    td { code { (query.name) } }
+                                    td { (scopes(&query.requires)) }
+                                    td { (inputs(&query.input)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            @if !contract.rate_classes.is_empty() {
+                h2 { "Rate classes" }
+                div.scroll {
+                    table.faces {
+                        thead { tr { th { "Class" } th { "Units per minute" } } }
+                        tbody {
+                            @for class in &contract.rate_classes {
+                                tr {
+                                    td { code { (class.name) } }
+                                    td { (class.units_per_minute) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            @if let Some(limits) = &contract.limits {
+                h2 { "Ceilings" }
+                ul.plain {
+                    @if let Some(depth) = limits.max_depth {
+                        li { "GraphQL selection depth: " (depth) }
+                    }
+                    @if let Some(complexity) = limits.max_complexity {
+                        li { "GraphQL selection count: " (complexity) }
+                    }
+                    @if let Some(watches) = limits.max_watches_per_principal {
+                        li { "Open subscriptions per principal: " (watches) }
+                    }
+                }
+            }
+        };
+        self.shell_at(200, "Reference", Some("__reference"), body)
+    }
+
+    /// What one resource hands back, and how a caller may narrow it.
+    fn shape_of(&self, resource: &Resource) -> Markup {
+        html! {
+            div.shape {
+                div {
+                    div.shape-heading { "Fields" }
+                    ul.plain {
+                        @for field in &resource.fields {
+                            li {
+                                code { (field.api_name()) }
+                                @if field.rename.is_some() {
+                                    span.dim { " from " (field.column) }
+                                }
+                                @if let Some(guard) = &field.guard {
+                                    span.chip.chip-busy { "guarded: " (guard) }
+                                }
+                            }
+                        }
+                    }
+                }
+                div {
+                    div.shape-heading { "Narrowing" }
+                    ul.plain {
+                        @if resource.filterable.is_empty() && resource.sortable.is_empty() {
+                            li.dim { "Nothing declared" }
+                        }
+                        @for column in &resource.filterable {
+                            li {
+                                "Filter " code { (column) }
+                                @if let Some(options) = resource.filter_options.get(column) {
+                                    span.dim { " one of " (options.join(", ")) }
+                                }
+                            }
+                        }
+                        @for column in &resource.sortable {
+                            li { "Sort " code { (column) } }
+                        }
+                        li.dim { "Page size at most " (resource.max_page_size) }
+                    }
+                }
+            }
+        }
     }
 
     async fn list_page(
@@ -985,6 +1201,13 @@ impl ConsoleRouter {
                                     }
                                 }
                             }
+                            div.rail-heading { "Contract" }
+                            nav {
+                                @let here = active == Some("__reference");
+                                a.here[here] href=(format!("{}/reference", self.config.base)) {
+                                    "Reference"
+                                }
+                            }
                             @if !contract.queries.is_empty() {
                                 div.rail-heading { "Queries" }
                                 nav {
@@ -998,7 +1221,18 @@ impl ConsoleRouter {
                                 }
                             }
                         }
-                        main { (content) }
+                        div.column {
+                            main { (content) }
+                            footer {
+                                span {
+                                    (contract.name) " v" (contract.version)
+                                }
+                                a href=(format!("{}/reference", self.config.base)) {
+                                    "Reference"
+                                }
+                                span.dim { "Generated from the contract by janus" }
+                            }
+                        }
                     }
                 }
             }
@@ -1183,6 +1417,32 @@ fn preview_line(preview: &Preview, item: &Value) -> Markup {
     html! {
         @if let Some(label) = label { span.label { (label) } }
         @if let Some(when) = when { span.when { (when) } }
+    }
+}
+
+/// Scopes a caller must hold, or the fact that none are asked for.
+fn scopes(required: &[String]) -> Markup {
+    html! {
+        @if required.is_empty() {
+            span.dim { "open" }
+        } @else {
+            @for scope in required { span.chip { (scope) } }
+        }
+    }
+}
+
+/// What an operation accepts, said in one line.
+fn inputs(fields: &[ActionField]) -> Markup {
+    html! {
+        @if fields.is_empty() {
+            span.dim { "nothing" }
+        } @else {
+            @for (index, field) in fields.iter().enumerate() {
+                @if index > 0 { ", " }
+                code { (field.name) }
+                @if field.required { span.req { "*" } }
+            }
+        }
     }
 }
 

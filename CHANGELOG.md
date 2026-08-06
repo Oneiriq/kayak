@@ -9,6 +9,24 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Several of a set.** `ActionField.multiple` says a caller may name
+  more than one of `options`. The value travels as one comma-separated
+  string, which is what a query parameter carries without ceremony,
+  and every part answers to the set rather than the joined whole. The
+  console renders checkboxes, since a menu that allows several hides
+  that it does and wants a modifier key to work; the OpenAPI document
+  and the MCP manifest render an array of the enum. `validate` refuses
+  `multiple` on a field that lists no options, which would be several
+  of nothing.
+
+- **A light theme.** Every colour already went through a token, so
+  daylight is the tokens said again under
+  `prefers-color-scheme: light`. An operator on a bright screen
+  reading a black page is the same problem as the reverse, and neither
+  is a preference the console gets to hold on their behalf.
+
 ### Changed
 
 - **The overview says what is here.** Each resource card read "8

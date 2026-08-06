@@ -634,6 +634,12 @@ fn validate_resource(
                     ));
                 }
             }
+            if field.multiple && field.options.is_empty() {
+                problem(format!(
+                    "input {:?} takes several values but lists none",
+                    field.name,
+                ));
+            }
             if !field.options.is_empty() && field.kind != crate::ir::TypeRef::String {
                 problem(format!(
                     "input {:?} lists options but is not a string",

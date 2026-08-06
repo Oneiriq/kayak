@@ -150,6 +150,11 @@ pub fn generate_openapi(
                 if !field.options.is_empty() {
                     schema["enum"] = json!(field.options);
                 }
+                if field.multiple {
+                    // `?facets=a,b`, which is form style without
+                    // explode, so the array arrives as one parameter.
+                    schema = json!({ "type": "array", "items": schema });
+                }
                 json!({
                     "name": field.name,
                     "in": "query",
@@ -542,6 +547,9 @@ fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> 
             let mut schema = type_ref_schema(field.kind);
             if !field.options.is_empty() {
                 schema["enum"] = json!(field.options);
+            }
+            if field.multiple {
+                schema = json!({ "type": "array", "items": schema });
             }
             properties.insert(field.name.clone(), schema);
             if field.required {

@@ -127,6 +127,9 @@ fn action_tool(resource: &Resource, action: &crate::ir::Action) -> Value {
         if !field.options.is_empty() {
             schema["enum"] = json!(field.options);
         }
+        if field.multiple {
+            schema = json!({ "type": "array", "items": schema });
+        }
         if let (Some(description), Some(object)) = (&field.description, schema.as_object_mut()) {
             object.insert("description".to_owned(), json!(description));
         }
@@ -163,6 +166,9 @@ fn query_tool(query: &Query) -> Value {
         let mut schema = type_schema(field.kind);
         if !field.options.is_empty() {
             schema["enum"] = json!(field.options);
+        }
+        if field.multiple {
+            schema = json!({ "type": "array", "items": schema });
         }
         if let (Some(description), Some(object)) = (&field.description, schema.as_object_mut()) {
             object.insert("description".to_owned(), json!(description));
@@ -234,6 +240,7 @@ mod tests {
                     name: "q".into(),
                     kind: TypeRef::String,
                     required: true,
+                    multiple: false,
                     description: None,
                     options: Vec::new(),
                 }],

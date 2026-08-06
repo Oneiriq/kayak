@@ -2121,6 +2121,135 @@ mod console_pages {
         assert!(page.html.contains("/versions"), "{}", page.html);
     }
 
+    /// Handed the schema, the reference serves the types too.
+    ///
+    /// The operations tell a caller what to send. The types tell them
+    /// what comes back, and the only way to read those used to be
+    /// fetching the SDL out of band. The rail lists them, because a
+    /// schema of any size is a scroll to read straight through.
+    #[tokio::test]
+    async fn the_reference_serves_the_schema() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture)
+            .with_schema(vec![file_table(), version_table()])
+            .page("/reference", "", tenant_ctx())
+            .await;
+        assert_eq!(page.status, 200, "{}", page.html);
+
+        // The type a caller reads to know what a listing returns, cut
+        // out of the SDL janus itself generates. Asserted on the block
+        // itself: the field names also appear in the mapping table
+        // above, so a page-wide `contains` would pass on that.
+        let start = page
+            .html
+            .find(r#"<section class="definition" id="t-File">"#)
+            .unwrap_or_else(|| panic!("the resource type is anchored: {}", page.html));
+        let block = &page.html[start..start + 900];
+        assert!(
+            block.contains("type File {") && block.contains("created_at: "),
+            "the type shows its fields: {block}",
+        );
+        // A field's type reaches its own definition, which is the
+        // difference between reading a schema and being handed one.
+        assert!(
+            block.contains(r##"<a href="#t-DateTime">DateTime</a>"##),
+            "a named type is a link: {block}",
+        );
+        // A type does not link to itself: the reader is already there.
+        assert!(
+            !block.contains(r##"<a href="#t-File">File</a>"##),
+            "no self-link: {block}",
+        );
+        assert!(
+            page.html.contains(r#"id="t-FilePage""#),
+            "and the page type it comes wrapped in: {}",
+            page.html,
+        );
+        // A scalar is its own head line, so it is said once.
+        assert_eq!(
+            page.html.matches("scalar DateTime").count(),
+            0,
+            "a scalar body would only repeat its head: {}",
+            page.html,
+        );
+        assert!(
+            page.html.contains(r##"href="#t-File""##),
+            "and the sidebar reaches it: {}",
+            page.html,
+        );
+        // The page's own sections stay reachable from the same rail,
+        // under a heading that says they go down the page rather than
+        // to the data.
+        assert!(
+            page.html.contains(r##"href="#r-files""##) && page.html.contains("On this page"),
+            "the rail lists this page's sections: {}",
+            page.html,
+        );
+    }
+
+    /// Every definition in the SDL reaches the page.
+    ///
+    /// The section is cut out of the generated document by matching
+    /// braces. A splitter that drops a block, or runs two together,
+    /// still renders something that looks like a schema, so the count
+    /// is checked against the document it came from.
+    #[tokio::test]
+    async fn the_schema_section_is_the_whole_sdl() {
+        let contract = contract_with_versions();
+        let schema = vec![file_table(), version_table()];
+        let sdl = janus::sdl::generate_sdl(&contract, &schema).expect("the SDL generates");
+        let heads: Vec<&str> = sdl
+            .lines()
+            .filter(|line| {
+                let mut words = line.split_whitespace();
+                matches!(
+                    words.next(),
+                    Some("type" | "input" | "enum" | "interface" | "union" | "scalar")
+                )
+            })
+            .collect();
+
+        let fixture = fixture(contract);
+        let page = console(&fixture)
+            .with_schema(schema)
+            .page("/reference", "", tenant_ctx())
+            .await;
+        assert_eq!(
+            page.html.matches(r#"<section class="definition""#).count(),
+            heads.len(),
+            "one section per definition, {heads:?}",
+        );
+        for head in heads {
+            let name = head.split_whitespace().nth(1).unwrap();
+            assert!(
+                page.html.contains(&format!(r#"id="t-{name}""#)),
+                "{name} has a section",
+            );
+            assert!(
+                page.html.contains(&format!(r##"href="#t-{name}""##)),
+                "{name} is reachable from the rail",
+            );
+        }
+    }
+
+    /// Without a schema the reference is still the operations.
+    ///
+    /// A host that never calls `with_schema` gets every face and no
+    /// empty "Schema" heading, so the section is absent rather than
+    /// blank.
+    #[tokio::test]
+    async fn the_reference_holds_without_a_schema() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+        assert_eq!(page.status, 200, "{}", page.html);
+        assert!(page.html.contains("GET /v1/files"), "{}", page.html);
+        assert!(
+            !page.html.contains(r#"id="schema""#),
+            "no heading over nothing: {}",
+            page.html,
+        );
+    }
+
     /// The overview says what is here, rather than what the contract
     /// declares. It used to read "8 actions, 1 sub-collections", which
     /// answers a question nobody opening a console has.

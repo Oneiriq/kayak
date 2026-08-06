@@ -9,6 +9,38 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **The console reads at a glance.** A listing is scanned rather than
+  read, and the raw projection defeated scanning. A nested object
+  printed as a hundred and twenty characters of JSON wrapped down
+  twenty lines in a narrow column and took the row with it, so five
+  records made a page three thousand pixels tall. Digests ran to
+  sixty-four characters, timestamps to nanoseconds, byte counts to
+  whatever integer the row held.
+
+  Values now render for what they turn out to be. Objects and arrays
+  collapse to `{3 fields}` or `[2]` and open on a click. Digests cut
+  to a stub, timestamps lose their sub-seconds, byte counts read in
+  units, and every shortening keeps the exact value in `title`, so the
+  table never becomes the reason a value cannot be read. A state gets
+  a chip coloured by a small fixed vocabulary; a word outside it stays
+  neutral, because colour is the one thing an operator trusts without
+  reading. Access levels stay neutral for the same reason turned
+  around: green reads as healthy, and `public` is the most exposed a
+  record gets.
+
+  The page around them changed to match. Wide tables scroll in their
+  own box so the body never does, headers stick, headings and labels
+  take a UI face while data keeps the monospace that makes columns of
+  ids line up, and action forms sit in a grid rather than a stack.
+
+- **`STYLE` and `cell` are exported.** A host renders pages of its own
+  beside the generated ones, and two stylesheets means two consoles.
+  Copal's deployment page was the case: it kept a copy and went on
+  printing raw byte counts and nanosecond timestamps after the
+  generated pages stopped.
+
 ### Fixed
 
 - **The generated clients carry queries.** `Contract.queries` reached

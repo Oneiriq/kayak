@@ -11,6 +11,73 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A reference page: the contract, as the surface it becomes.** A
+  service declares its shape once and janus lands it on REST,
+  GraphQL, and MCP by rules nobody should have to hold in their head.
+  The OpenAPI document gives the REST half, the SDL gives the GraphQL
+  half, and until now nothing put them side by side.
+
+  For every operation the contract declares, the page shows the path a
+  REST caller takes, the field a GraphQL caller selects, the tool an
+  agent calls, the scopes it requires, and its rate class. Each
+  resource carries what it hands back, including a field's underlying
+  column when it is renamed and a guard when one applies, and how a
+  caller may narrow it, including a filter's own option list and the
+  page-size ceiling. It reads the same functions the generators read,
+  so it cannot drift from the documents.
+
+  Every operation also carries the request itself: the REST call with
+  its body, the GraphQL document with its arguments and selection, and
+  the MCP tool call. A mapping alone answers where an operation lives,
+  and the next question is always what to send. Enum fields note their
+  alternatives so a sample value does not read as a default, an action
+  answering the resource carries a selection while one answering JSON
+  does not, and an instance action names the id it takes as an
+  argument rather than only in a path. All twenty-three documents
+  copal's contract produces parse and validate against copal's own
+  generated schema.
+
+  "Try it" on each row lands on the control that runs it, with an
+  action's dialog already open.
+
+- **A footer**, carrying the contract's name and version, so a page
+  ends rather than stops.
+
+### Changed
+
+- **The console has a shape.** Navigation moved into a rail down the
+  left and the data fills the rest, which is what an operator already
+  knows from every console they use and leaves the whole width for the
+  thing they came to look at. The rail marks where they are.
+
+- **Actions are things you can do, rather than forms nobody asked to
+  see.** Every action's form used to lie open below the data, so a
+  file with six of them buried its own record under a wall of inputs.
+  Each action is now a button in a toolbar beside the heading, and its
+  form arrives in a `<dialog>` when asked for: the browser already
+  knows about the backdrop, the escape key, and where the focus goes.
+
+- **Declared names are said the way people write them.** A contract
+  names things for machines, and printing `content_type` and
+  `issue_url` raw is what made the console read as a dump of the IR.
+  Columns, labels, headings, and navigation are sentence case now,
+  with the acronyms an operator would never see lowercased.
+
+  A control also says what it will do. "Create" alone names nothing,
+  so a collection action takes the thing it acts on and reads "Create
+  file"; the submit inside the dialog says the same rather than
+  "perform". An instance action already has its subject on the page
+  and would only repeat it.
+
+- **The appearance control is a mark rather than a word**, since
+  switching light and dark says itself faster as a half-lit circle
+  than as the word "theme" set beside the navigation.
+
+- **A submit stands apart from the fields above it**, on its own
+  footer with a rule, instead of butting against the last input.
+
+### Added
+
 - **Several of a set.** `ActionField.multiple` says a caller may name
   more than one of `options`. The value travels as one comma-separated
   string, which is what a query parameter carries without ceremony,
@@ -21,11 +88,21 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   `multiple` on a field that lists no options, which would be several
   of nothing.
 
-- **A light theme.** Every colour already went through a token, so
-  daylight is the tokens said again under
-  `prefers-color-scheme: light`. An operator on a bright screen
-  reading a black page is the same problem as the reverse, and neither
-  is a preference the console gets to hold on their behalf.
+- **A light theme, and a control that overrides it.** Daylight arrives
+  on its own under `prefers-color-scheme: light`, since an operator on
+  a bright screen reading a black page is the same problem as the
+  reverse. A `theme` control in the header cycles system, light, dark,
+  and remembers the choice, because following the machine is a good
+  default rather than an answer for everyone.
+
+  The whole sheet moved onto tokens to make this cheap: every colour
+  reads a custom property, so a theme is one block of tokens and
+  nothing else in the sheet needs a second version. The control writes
+  `data-theme` on the root, which beats the media query in both
+  directions, and the two lines that apply a stored choice sit in the
+  head so a chosen theme never flashes the other one. All of it is
+  additive: with scripting off, the automatic behaviour is exactly
+  what it was.
 
 ### Changed
 

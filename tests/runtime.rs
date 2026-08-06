@@ -1922,7 +1922,9 @@ mod console_pages {
         let detail = console.page("/r/files/01A", "", tenant_ctx()).await;
         assert_eq!(detail.status, 200);
         assert!(detail.html.contains("a.txt"), "fields render");
-        assert!(detail.html.contains("versions"), "sub-collections render");
+        // Headings say the name the way a person writes it, so a
+        // sub-collection declared as `versions` reads as "Versions".
+        assert!(detail.html.contains("Versions"), "sub-collections render");
         assert!(
             detail.html.contains("/console/r/files/01A/a/issue_url"),
             "declared actions become forms",
@@ -2019,6 +2021,104 @@ mod console_pages {
             page.html.contains("action remove completed"),
             "the instance page reads the outcome it was sent back with",
         );
+    }
+
+    /// The REST body has to be JSON a caller can lift straight into
+    /// curl. It carried `// optional` comments until a copy-paste
+    /// proved they made it unsendable; the notes moved beside the
+    /// request instead.
+    #[tokio::test]
+    async fn the_rest_body_is_json_that_would_send() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+        let html = page
+            .html
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+
+        let mut bodies = 0;
+        for chunk in html.split("content-type: application/json").skip(1) {
+            let Some(open) = chunk.find('{') else {
+                continue;
+            };
+            let Some(close) = chunk[open..].find("</code>") else {
+                continue;
+            };
+            let body = chunk[open..open + close].trim();
+            serde_json::from_str::<serde_json::Value>(body).unwrap_or_else(|e| {
+                panic!(
+                    "body is not JSON: {e}
+{body}"
+                )
+            });
+            bodies += 1;
+        }
+        assert!(bodies > 0, "the reference shows at least one body");
+    }
+
+    /// The reference shows the request each face takes, and an
+    /// example that does not parse is worse than no example.
+    ///
+    /// An instance action carries its subject in the path on REST and
+    /// as an argument on GraphQL, so the id is not among the declared
+    /// inputs. Leaving it out produced `mutation { fileRemove }`,
+    /// which is not a document.
+    #[tokio::test]
+    async fn the_reference_shows_a_request_that_would_work() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+
+        // REST carries the body under the method and path.
+        assert!(
+            page.html.contains("content-type: application/json"),
+            "{}",
+            page.html
+        );
+
+        // An instance action names its subject on GraphQL.
+        assert!(
+            page.html.contains("id: &quot;&lt;id&gt;&quot;"),
+            "an instance action needs its id argument: {}",
+            page.html,
+        );
+
+        // An action answering the resource needs a selection; one
+        // answering JSON must not have one.
+        assert!(page.html.contains("# answers JSON"), "{}", page.html);
+    }
+
+    /// The reference says how one declaration lands on every face.
+    ///
+    /// That mapping lives in the generators and nowhere a caller can
+    /// see it: an OpenAPI document gives the REST half, the SDL gives
+    /// the GraphQL half, and nothing puts them side by side. Derived
+    /// from the same functions the generators use, so it cannot drift
+    /// from the documents.
+    #[tokio::test]
+    async fn the_reference_shows_every_face() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+        assert_eq!(page.status, 200, "{}", page.html);
+
+        assert!(
+            page.html.contains("GET /v1/files"),
+            "the REST path: {}",
+            page.html
+        );
+        assert!(
+            page.html.contains("files_list"),
+            "the MCP tool: {}",
+            page.html
+        );
+        assert!(
+            page.html.contains("issue_url"),
+            "an action reaches it: {}",
+            page.html
+        );
+        // A sub-collection has a REST path and no tool of its own.
+        assert!(page.html.contains("/versions"), "{}", page.html);
     }
 
     /// The overview says what is here, rather than what the contract

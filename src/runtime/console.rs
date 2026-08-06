@@ -26,6 +26,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::JanusError;
+use surql::schema::TableDefinition;
 
 /// One rendered page: an HTTP status and a complete HTML document.
 #[derive(Debug, Clone)]
@@ -54,6 +55,12 @@ pub struct ConsoleConfig {
 pub struct ConsoleRouter {
     dispatcher: Arc<Dispatcher>,
     config: ConsoleConfig,
+    /// The schema the contract was validated against, when the host
+    /// hands it over. Without it the reference can still describe
+    /// every operation, because that is all contract; with it the
+    /// reference can also show the schema those operations return,
+    /// which is the part a caller reads to know what comes back.
+    schema: Option<Arc<Vec<TableDefinition>>>,
 }
 
 /// The console's whole stylesheet, exported because a host renders
@@ -72,6 +79,37 @@ pub struct ConsoleRouter {
 /// faster as a half-lit circle than as the word "theme" set in the
 /// same size as the navigation beside it.
 const THEME_ICON: &str = r#"<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg>"#;
+
+/// Narrowing the reference, and copying a request out of it.
+///
+/// A schema with forty definitions is a scroll unless something
+/// narrows it, and a request example a reader has to select by hand
+/// is one they will mistype. Both are additive: with scripting off the
+/// list is still complete and the text is still selectable.
+const REFERENCE_SCRIPT: &str = r#"
+function janusFilter(box) {
+  var want = box.value.trim().toLowerCase();
+  var list = box.parentElement.querySelector('nav.filterable');
+  var shown = 0;
+  Array.prototype.forEach.call(list.children, function (link) {
+    var hit = !want || link.textContent.toLowerCase().indexOf(want) !== -1;
+    link.hidden = !hit;
+    if (hit) { shown++; }
+  });
+  var empty = box.parentElement.querySelector('.no-match');
+  if (empty) { empty.style.display = shown ? 'none' : 'block'; }
+}
+document.addEventListener('click', function (event) {
+  var button = event.target.closest('button.copy');
+  if (!button) { return; }
+  var text = button.parentElement.querySelector('code').textContent;
+  navigator.clipboard.writeText(text).then(function () {
+    var said = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(function () { button.textContent = said; }, 1200);
+  });
+});
+"#;
 
 /// The theme control, and the two lines that apply a stored choice.
 ///
@@ -111,26 +149,27 @@ pub const STYLE: &str = "
    palette instead of a second stylesheet. */
 :root {
   color-scheme: dark;
-  --ground: #0e0e13;
-  --raised: #16161d;
-  --line: #262630;
-  --text: #d8d8e0;
-  --soft: #8b8b9c;
-  --faint: #5a5a68;
-  --bright: #f4f4f8;
+  --ground: #0d0e13;
+  --raised: #15161d;
+  --line: #23252f;
+  --text: #d6d8e2;
+  --soft: #8b8e9f;
+  --faint: #5c5f6f;
+  --bright: #f3f4f8;
   --accent: #7fa9ff;
   --good: #6fcf8b;
   --bad: #f08a7c;
   --busy: #e3c069;
-  --field: #101017;
-  --field-line: #34343f;
+  --field: #0a0b0f;
+  --well: #0a0b0f;
+  --field-line: #2e313d;
   --button: #1e2a3a;
   --button-line: #3a5680;
   --button-text: #f4f4f8;
   --button-hover: #27374d;
-  --hover: #1c1c25;
+  --hover: #1b1d26;
   --code: #a8cf9a;
-  --chip: #1e1e27;
+  --chip: #1c1e27;
   --chip-good: #14231a;
   --chip-good-line: #2f5c3d;
   --chip-bad: #241614;
@@ -138,57 +177,134 @@ pub const STYLE: &str = "
   --chip-busy: #221e12;
   --chip-busy-line: #5e4f26;
   --note: #16202e;
+  --shadow: 0 20px 50px rgba(0, 0, 0, .5);
   --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --mono: ui-monospace, 'Cascadia Code', Menlo, monospace;
+  --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, monospace;
+  /* One radius for surfaces, one for the controls inside them. Two
+     sizes is what keeps a rounded corner from reading as a theme. */
+  --radius: 10px;
+  --radius-sm: 6px;
+  /* The bar is sticky, so the rail under it, the columns beside it
+     and every anchored jump need its height. */
+  --bar: 3.25rem;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.55 var(--mono);
-  background: var(--ground); color: var(--text); }
+html { scroll-padding-top: calc(var(--bar) + 1.5rem); }
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+/* Prose and labels are read, so they are set in the UI face. Ids,
+   paths, digests and code are compared character by character, so
+   those are set in the mono face where they appear. */
+body { margin: 0; font: 14px/1.55 var(--ui);
+  background: var(--ground); color: var(--text);
+  -webkit-font-smoothing: antialiased; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
+  border-radius: var(--radius-sm); }
 
-header { display: flex; gap: 1rem; align-items: center; padding: .7rem 1.25rem;
-  border-bottom: 1px solid var(--line); background: var(--raised);
-  position: sticky; top: 0; z-index: 3; }
-header .title { font-weight: 700; color: var(--bright); font-family: var(--ui);
-  font-size: .95rem; letter-spacing: -.01em; }
+header { display: flex; gap: 1rem; align-items: center; padding: 0 1.25rem;
+  height: var(--bar); border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--raised) 88%, transparent);
+  backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 3; }
+header .title { font-weight: 650; color: var(--bright);
+  font-size: .95rem; letter-spacing: -.015em; }
 header .icon { margin-left: auto; }
 
 /* Navigation down the left, data filling the rest: the shape an
    operator already knows, and it leaves the whole width for the thing
    they came to look at. */
-.frame { display: grid; grid-template-columns: 14rem minmax(0, 1fr);
-  min-height: calc(100vh - 3.1rem); align-items: start; }
-.column { display: flex; flex-direction: column; min-height: calc(100vh - 3.1rem);
-  min-width: 0; }
-.rail { position: sticky; top: 3.1rem; padding: 1.25rem .75rem;
+.frame { display: grid; grid-template-columns: 15rem minmax(0, 1fr);
+  min-height: calc(100vh - var(--bar)); align-items: start; }
+.column { display: flex; flex-direction: column;
+  min-height: calc(100vh - var(--bar)); min-width: 0; }
+/* The rail scrolls in itself once a page hands it a schema to list,
+   so the content beside it keeps the whole window. */
+.rail { position: sticky; top: var(--bar); padding: 1.25rem .75rem;
   border-right: 1px solid var(--line); background: var(--raised);
-  min-height: calc(100vh - 3.1rem); }
+  min-height: calc(100vh - var(--bar)); max-height: calc(100vh - var(--bar));
+  overflow-y: auto; overscroll-behavior: contain; }
+.rail .filter { width: 100%; margin: 0 0 .4rem; font-size: .82rem; }
+.rail .no-match { display: none; margin: .1rem .6rem; font-size: .82rem; }
+/* A scrollbar the width of a border, so a long list does not put a
+   second rule down the middle of the window. */
+.rail, .scroll, pre { scrollbar-width: thin;
+  scrollbar-color: var(--field-line) transparent; }
 .rail-heading { font: 600 .68rem/1.4 var(--ui); text-transform: uppercase;
   letter-spacing: .09em; color: var(--faint); padding: 0 .6rem; margin: 0 0 .4rem; }
 .rail-heading + nav { margin-bottom: 1.4rem; }
 .rail nav { display: grid; gap: .1rem; }
-.rail nav a { font-family: var(--ui); font-size: .88rem; padding: .35rem .6rem;
-  border-radius: 4px; color: var(--text); }
+.rail nav a { font-size: .88rem; padding: .38rem .6rem;
+  border-radius: var(--radius-sm); color: var(--text); }
 .rail nav a:hover { background: var(--hover); text-decoration: none; }
 .rail nav a.here { background: var(--chip); color: var(--bright); font-weight: 600;
   box-shadow: inset 2px 0 0 var(--accent); }
 
-main { padding: 1.5rem 1.75rem 3rem; max-width: 110rem; min-width: 0; flex: 1; }
+main { padding: 1.75rem 1.75rem 3rem; max-width: 110rem; min-width: 0; flex: 1; }
 
 /* A page should end rather than stop. */
 footer { display: flex; gap: 1.25rem; align-items: baseline; flex-wrap: wrap;
   padding: 1rem 1.75rem; border-top: 1px solid var(--line);
-  font: .78rem/1.5 var(--ui); color: var(--soft); }
+  font-size: .78rem; color: var(--soft); }
 footer .dim { margin-left: auto; }
 
 /* Actions sit above the data as the things you can do, rather than
    below it as forms nobody asked to see. */
 .toolbar { display: flex; gap: .5rem; flex-wrap: wrap; margin: .9rem 0 1.1rem; }
 
+/* The reference reads as documentation, so the schema it serves is
+   listed in the rail and the page keeps the width for the thing being
+   read. */
+.reference { min-width: 0; max-width: 82rem; }
+.rail nav.filterable { margin-bottom: 1.4rem; }
+.rail nav.filterable a { font-family: var(--mono); font-size: .8rem;
+  color: var(--soft); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; padding: .25rem .6rem; }
+.rail nav.filterable a:hover { color: var(--bright); }
+
+/* The three faces of one operation, side by side where there is room
+   for them. */
+.requests { display: grid; gap: 1rem; margin-bottom: .5rem;
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  align-items: start; }
+.requests pre { margin: 0; }
+/* The request hangs off the operation it belongs to. A closed
+   disclosure on its own row otherwise draws a second band per
+   operation, and the table reads as twice as many rows as it has. */
+tr:has(+ tr.detail) > td { border-bottom: 0; padding-bottom: .2rem; }
+tr.detail > td { padding: 0 .8rem .5rem; }
+tr.detail details > summary { cursor: pointer; color: var(--faint);
+  font-size: .8rem; padding: .1rem 0; width: max-content; }
+tr.detail details > summary:hover { color: var(--text); }
+tr.detail details[open] > summary { margin-bottom: .7rem; }
+tbody tr:hover td, tbody tr:has(+ tr.detail:hover) td { background: var(--hover); }
+tbody tr.detail:hover td { background: var(--hover); }
+
+/* One definition from the served schema. The block already has a
+   border and a ground of its own, so the definition around it carries
+   only the name and the space. */
+.definition { margin: 0 0 1.4rem; }
+.definition-head { display: flex; align-items: baseline; gap: .55rem;
+  margin-bottom: .45rem; }
+.definition-name { font-weight: 700; color: var(--bright); font-size: .95rem; }
+.definition pre { margin: 0; }
+/* A type named inside the SDL reaches its own definition. */
+.definition pre a { color: var(--accent); text-decoration-color: var(--field-line);
+  text-underline-offset: .18em; }
+.definition pre a:hover { text-decoration-color: currentColor; }
+
+/* A request is copied more often than it is read. */
+pre { position: relative; }
+button.copy { position: absolute; top: .4rem; right: .4rem; font-size: .72rem;
+  font-weight: 500; padding: .18rem .5rem; background: var(--raised);
+  color: var(--soft); border-color: var(--line); opacity: 0;
+  transition: opacity .12s ease; }
+pre:hover button.copy, button.copy:focus-visible { opacity: 1; }
+button.copy:hover { color: var(--text); background: var(--hover); }
+
 /* The reference: one operation per row, and every face it reaches. */
-table.faces td { white-space: nowrap; }
+table.faces td { white-space: nowrap; font-family: var(--mono); }
 table.faces td:first-child { font-family: var(--ui); }
 .shape { display: grid; gap: 1.25rem; margin: .75rem 0 1.75rem;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); align-items: start; }
@@ -199,19 +315,20 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem;
 ul.plain li { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; }
 .req { color: var(--bad); }
 .shape-heading.spaced { margin-top: 1rem; }
-table.inputs td, table.inputs th { padding: .3rem .7rem; }
+table.inputs td, table.inputs th { padding: .35rem .7rem; }
 table.inputs td { font-size: .82rem; }
-h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
-  letter-spacing: -.01em; }
-h2 { font: 600 .8rem/1.4 var(--ui); margin: 2rem 0 .6rem; color: var(--soft);
+
+h1 { font: 650 1.4rem/1.3 var(--ui); margin: 0 0 .3rem; color: var(--bright);
+  letter-spacing: -.02em; }
+h2 { font: 600 .8rem/1.4 var(--ui); margin: 2.25rem 0 .7rem; color: var(--soft);
   text-transform: uppercase; letter-spacing: .08em; }
-p { font-family: var(--ui); }
+h1 + p.dim { margin-top: 0; }
 
 /* Wide tables scroll in their own box, so the page never does. */
-.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px;
-  background: var(--raised); }
+.scroll { overflow-x: auto; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); }
 table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: .45rem .7rem; vertical-align: top;
+th, td { text-align: left; padding: .5rem .8rem; vertical-align: top;
   border-bottom: 1px solid var(--line); white-space: nowrap; }
 thead th { position: sticky; top: 0; background: var(--raised); z-index: 1;
   font: 600 .72rem/1.5 var(--ui); text-transform: uppercase; letter-spacing: .06em;
@@ -222,10 +339,13 @@ tbody tr:last-child td { border-bottom: 0; }
 table.fields th { width: 1px; white-space: nowrap; padding-right: 2rem;
   color: var(--soft); font-weight: 600; }
 tbody tr:hover td { background: var(--hover); }
-td { font-variant-numeric: tabular-nums; }
-code { color: var(--code); }
+/* Cell values are ids, paths and digests, compared by eye against
+   another copy of themselves. */
+td { font-variant-numeric: tabular-nums; font-family: var(--mono);
+  font-size: .85rem; }
+code { color: var(--code); font-family: var(--mono); }
 .dim { color: var(--faint); }
-.count { font-family: var(--ui); color: var(--soft); font-size: .8rem; margin: .5rem 0 0; }
+.count { color: var(--soft); font-size: .8rem; margin: .5rem 0 0; }
 .card .count { margin: .1rem 0 .4rem; }
 ul.preview { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; }
 /* min-width:0 on the row as well as the label: a grid item defaults
@@ -235,22 +355,23 @@ ul.preview { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem
 ul.preview li { display: flex; gap: .5rem; align-items: baseline; min-width: 0;
   font-size: .85rem; color: var(--text); }
 ul.preview .label { flex: 1 1 auto; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+  text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
 ul.preview .when { flex: 0 0 auto; margin-left: auto; color: var(--faint);
   font-size: .78rem; white-space: nowrap; }
 .error-note { color: var(--bad); }
 
 /* A nested value costs one line closed, whatever it holds. */
-details.nested > summary { cursor: pointer; color: var(--soft); font-size: .85rem; }
+details.nested > summary { cursor: pointer; color: var(--soft); font-size: .85rem;
+  font-family: var(--ui); }
 details.nested > summary:hover { color: var(--text); }
 details.nested[open] > summary { margin-bottom: .35rem; }
 details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: pre;
   font-size: .82rem; }
 
 /* State reads at a glance or the column is not worth its width. */
-.chip { display: inline-block; padding: .05rem .45rem; border-radius: 999px;
-  font-size: .78rem; border: 1px solid var(--line); background: var(--chip);
-  color: var(--soft); }
+.chip { display: inline-block; padding: .08rem .5rem; border-radius: 999px;
+  font: 500 .76rem/1.5 var(--ui); border: 1px solid var(--line);
+  background: var(--chip); color: var(--soft); }
 .chip-good { color: var(--good); border-color: var(--chip-good-line);
   background: var(--chip-good); }
 .chip-bad { color: var(--bad); border-color: var(--chip-bad-line);
@@ -263,66 +384,74 @@ details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: 
 
 .cards { display: grid; gap: .75rem; margin: .5rem 0;
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
-.card { border: 1px solid var(--line); border-radius: 3px; padding: .8rem 1rem;
-  background: var(--raised); }
-.card .name { font-weight: 700; }
+.card { border: 1px solid var(--line); border-radius: var(--radius);
+  padding: .9rem 1.1rem; background: var(--raised);
+  transition: border-color .12s ease; }
+.card:hover { border-color: var(--field-line); }
+.card .name { font-weight: 650; color: var(--bright); }
 
 form.inline { display: flex; gap: .6rem; flex-wrap: wrap; align-items: end;
-  margin: .5rem 0 1.25rem; padding: .8rem .9rem; border: 1px solid var(--line);
-  border-radius: 4px; background: var(--raised); }
-form.inline button { margin-top: .1rem; }
-label { display: flex; flex-direction: column; gap: .2rem;
-  font: .75rem/1.4 var(--ui); color: var(--soft); }
-input, select, textarea, button { font: inherit; font-family: var(--mono);
+  margin: .5rem 0 1.25rem; padding: .9rem 1rem; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); }
+label { display: flex; flex-direction: column; gap: .25rem;
+  font: 500 .75rem/1.4 var(--ui); color: var(--soft); }
+input, select, textarea, button { font: inherit; font-family: var(--ui);
   background: var(--field); color: var(--text); border: 1px solid var(--field-line);
-  border-radius: 3px; padding: .35rem .55rem; }
-input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+  border-radius: var(--radius-sm); padding: .4rem .6rem;
+  transition: border-color .12s ease, background .12s ease; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent);
+  outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 button { cursor: pointer; background: var(--button); border-color: var(--button-line);
-  color: var(--button-text); font-family: var(--ui); font-weight: 600;
-  padding: .38rem .9rem; }
+  color: var(--button-text); font-weight: 600; padding: .42rem .95rem; }
 button:hover { background: var(--button-hover); }
 button.ghost { background: transparent; color: var(--text);
   border-color: var(--field-line); }
 button.ghost:hover { background: var(--hover); border-color: var(--button-line); }
 button.icon { background: transparent; border-color: transparent; color: var(--soft);
-  padding: .25rem .4rem; display: inline-flex; align-items: center; }
+  padding: .3rem .45rem; display: inline-flex; align-items: center; }
 button.icon:hover { background: var(--hover); color: var(--text); }
 .choices { display: flex; gap: .7rem; flex-wrap: wrap; align-items: center;
   padding: .25rem 0; }
-.choice { flex-direction: row; align-items: center; gap: .3rem; color: var(--text);
-  font-family: var(--mono); font-size: .85rem; cursor: pointer; }
-.choice input { margin: 0; accent-color: var(--accent); }
+/* The label takes the click, so it is the thing that has to be big
+   enough to hit. */
+.choice { flex-direction: row; align-items: center; gap: .4rem; color: var(--text);
+  font-size: .85rem; font-weight: 400; cursor: pointer; padding: .2rem .1rem; }
+/* A checkbox is 13px by default, which is smaller than anything else
+   on the page a person has to hit. */
+.choice input { margin: 0; accent-color: var(--accent);
+  width: 1.05rem; height: 1.05rem; }
 
 .banner { border: 1px solid var(--button-line); background: var(--note);
-  padding: .6rem .85rem; border-radius: 3px; margin-bottom: 1rem;
-  font-family: var(--ui); }
+  padding: .65rem .9rem; border-radius: var(--radius); margin-bottom: 1rem; }
 .error { border-color: var(--chip-bad-line); background: var(--chip-bad); }
 
 /* A form arrives over the page when it is asked for. The browser
    already knows about the backdrop, the escape key, and the focus. */
-dialog { border: 1px solid var(--line); border-radius: 6px; background: var(--raised);
-  color: var(--text); padding: 0; width: min(34rem, calc(100vw - 2rem));
-  box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+dialog { border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--text); padding: 0;
+  width: min(34rem, calc(100vw - 2rem)); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); }
 dialog form { display: grid; gap: .7rem; padding: 1.1rem 1.25rem 1.25rem; }
 dialog p.dim { margin: 0; font-size: .85rem; }
 dialog input, dialog select, dialog textarea { width: 100%; }
 .dialog-head { display: flex; align-items: center; gap: 1rem;
   margin: 0 0 .2rem; }
-.dialog-head h2 { margin: 0; font: 600 1rem/1.3 var(--ui); text-transform: none;
-  letter-spacing: 0; color: var(--bright); }
+.dialog-head h2 { margin: 0; font: 650 1rem/1.3 var(--ui); text-transform: none;
+  letter-spacing: -.01em; color: var(--bright); }
 .dialog-head .icon { margin-left: auto; font-size: 1.1rem; line-height: 1; }
 /* The submit is an act, so it stands apart from the fields above it
    rather than butting against the last one. */
 .dialog-foot { display: flex; justify-content: flex-end; gap: .5rem;
   margin-top: .5rem; padding-top: .9rem; border-top: 1px solid var(--line); }
-pre { background: var(--field); border: 1px solid var(--line); border-radius: 3px;
-  padding: .8rem; overflow-x: auto; }
+pre { background: var(--well); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: .85rem; overflow-x: auto;
+  font-family: var(--mono); font-size: .83rem; line-height: 1.5; }
 
 @media (max-width: 60rem) {
   .frame { grid-template-columns: minmax(0, 1fr); }
-  .rail { position: static; min-height: 0; border-right: 0;
+  .rail { position: static; min-height: 0; max-height: none; border-right: 0;
     border-bottom: 1px solid var(--line); }
+  .rail nav.filterable { grid-auto-flow: row; }
   .rail nav { grid-auto-flow: column; grid-auto-columns: max-content;
     overflow-x: auto; gap: .3rem; }
   .rail-heading + nav { margin-bottom: .8rem; }
@@ -337,10 +466,10 @@ pre { background: var(--field); border: 1px solid var(--line); border-radius: 3p
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;
-    --ground: #fbfbfc; --raised: #ffffff; --line: #e2e2e8;
-    --text: #22222a; --soft: #63636f; --faint: #93939f; --bright: #0d0d12;
+    --ground: #f3f4f7; --raised: #ffffff; --line: #e3e3ea;
+    --text: #22232c; --soft: #61636f; --faint: #91939f; --bright: #0d0d12;
     --accent: #2c5fc4; --good: #1f7a3d; --bad: #b3372a; --busy: #8a6412;
-    --field: #ffffff; --field-line: #cfcfd8;
+    --field: #ffffff; --field-line: #d2d3dc; --well: #f7f8fa;
     --button: #e8eefb; --button-line: #b6c6e6; --button-text: #143a7d;
     --button-hover: #dbe5f8; --hover: #f2f2f6; --code: #2f6b2a;
     --chip: #f1f1f5;
@@ -348,14 +477,15 @@ pre { background: var(--field); border: 1px solid var(--line); border-radius: 3p
     --chip-bad: #fdeceb; --chip-bad-line: #eec2bd;
     --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
     --note: #eef3fd;
+    --shadow: 0 20px 50px rgba(16, 18, 32, .16);
   }
 }
 :root[data-theme=light] {
   color-scheme: light;
-  --ground: #fbfbfc; --raised: #ffffff; --line: #e2e2e8;
-  --text: #22222a; --soft: #63636f; --faint: #93939f; --bright: #0d0d12;
+  --ground: #f3f4f7; --raised: #ffffff; --line: #e3e3ea;
+  --text: #22232c; --soft: #61636f; --faint: #91939f; --bright: #0d0d12;
   --accent: #2c5fc4; --good: #1f7a3d; --bad: #b3372a; --busy: #8a6412;
-  --field: #ffffff; --field-line: #cfcfd8;
+  --field: #ffffff; --field-line: #d2d3dc; --well: #f7f8fa;
   --button: #e8eefb; --button-line: #b6c6e6; --button-text: #143a7d;
   --button-hover: #dbe5f8; --hover: #f2f2f6; --code: #2f6b2a;
   --chip: #f1f1f5;
@@ -363,12 +493,24 @@ pre { background: var(--field); border: 1px solid var(--line); border-radius: 3p
   --chip-bad: #fdeceb; --chip-bad-line: #eec2bd;
   --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
   --note: #eef3fd;
+  --shadow: 0 20px 50px rgba(16, 18, 32, .16);
 }
 ";
 
 impl ConsoleRouter {
     pub fn new(dispatcher: Arc<Dispatcher>, config: ConsoleConfig) -> Self {
-        Self { dispatcher, config }
+        Self {
+            dispatcher,
+            config,
+            schema: None,
+        }
+    }
+
+    /// Hand the console the schema, so the reference can serve the
+    /// types as well as the operations.
+    pub fn with_schema(mut self, schema: Vec<TableDefinition>) -> Self {
+        self.schema = Some(Arc::new(schema));
+        self
     }
 
     /// Render one GET page. `path` is relative to the mount (leading
@@ -572,7 +714,48 @@ impl ConsoleRouter {
     fn reference(&self) -> ConsoleAnswer {
         let contract = self.dispatcher.contract().clone();
         let base = &self.config.base;
+        let sdl = self
+            .schema
+            .as_ref()
+            .and_then(|schema| crate::sdl::generate_sdl(&contract, schema).ok());
+        let defs = sdl.as_deref().map(definitions).unwrap_or_default();
+        // The sections above name the same resources as the rail's
+        // own links, which go to the data. These go down the page, so
+        // the heading says which.
+        let rail_extra = html! {
+            div.rail-heading { "On this page" }
+            nav {
+                @for resource in &contract.resources {
+                    a href=(format!("#r-{}", resource.name)) {
+                        (humanize(&resource.name))
+                    }
+                }
+                @if !contract.queries.is_empty() {
+                    a href="#queries" { "Queries" }
+                }
+                @if contract.limits.is_some() {
+                    a href="#ceilings" { "Ceilings" }
+                }
+                @if !defs.is_empty() {
+                    a href="#schema" { "Schema" }
+                }
+            }
+            @if !defs.is_empty() {
+                div.rail-heading { "Types" }
+                input.filter type="search" placeholder="Filter types"
+                    oninput="janusFilter(this)" aria-label="Filter the types";
+                nav.filterable {
+                    @for def in &defs {
+                        a href=(format!("#t-{}", def.name)) title=(def.name) {
+                            (def.name)
+                        }
+                    }
+                }
+                p.no-match.dim { "Nothing by that name." }
+            }
+        };
         let body = html! {
+            div.reference {
             h1 { "Reference" }
             p.dim {
                 "Every operation " (contract.name) " v" (contract.version)
@@ -580,7 +763,7 @@ impl ConsoleRouter {
             }
 
             @for resource in &contract.resources {
-                h2 { (humanize(&resource.name)) }
+                h2 id=(format!("r-{}", resource.name)) { (humanize(&resource.name)) }
                 @let shown: Vec<&str> = resource
                     .fields
                     .iter()
@@ -729,7 +912,7 @@ impl ConsoleRouter {
             }
 
             @if !contract.queries.is_empty() {
-                h2 { "Queries" }
+                h2 id="queries" { "Queries" }
                 @let query_faces: Vec<Face> = contract
                     .queries
                     .iter()
@@ -770,7 +953,7 @@ impl ConsoleRouter {
             }
 
             @if let Some(limits) = &contract.limits {
-                h2 { "Ceilings" }
+                h2 id="ceilings" { "Ceilings" }
                 ul.plain {
                     @if let Some(depth) = limits.max_depth {
                         li { "GraphQL selection depth: " (depth) }
@@ -783,8 +966,35 @@ impl ConsoleRouter {
                     }
                 }
             }
+
+            @if !defs.is_empty() {
+                h2 id="schema" { "Schema" }
+                p.dim {
+                    "The GraphQL schema this contract serves, as the SDL a \
+                     client would read."
+                }
+                @let names: std::collections::BTreeSet<&str> =
+                    defs.iter().map(|d| d.name.as_str()).collect();
+                @for def in &defs {
+                    section.definition id=(format!("t-{}", def.name)) {
+                        div.definition-head {
+                            span.chip { (def.kind) }
+                            code.definition-name { (def.name) }
+                        }
+                        // A scalar is its own head line, so printing
+                        // the body under it would say it twice.
+                        @if def.body.contains('\n') {
+                            pre {
+                                code { (linked(&def.body, &names, &def.name)) }
+                                button.copy type="button" { "Copy" }
+                            }
+                        }
+                    }
+                }
+            }
+            }
         };
-        self.shell_at(200, "Reference", Some("__reference"), body)
+        self.shell_with(200, "Reference", Some("__reference"), rail_extra, body)
     }
 
     /// What one resource hands back, and how a caller may narrow it.
@@ -1261,6 +1471,24 @@ impl ConsoleRouter {
         active: Option<&str>,
         content: Markup,
     ) -> ConsoleAnswer {
+        self.shell_with(status, title, active, html! {}, content)
+    }
+
+    /// The same frame, with the page adding its own sections to the
+    /// rail.
+    ///
+    /// A page that needs to be navigated internally has one obvious
+    /// place to put that navigation, and it is the column already
+    /// holding every other way to move around. A second rail beside
+    /// the first reads as two consoles sharing a window.
+    fn shell_with(
+        &self,
+        status: u16,
+        title: &str,
+        active: Option<&str>,
+        rail_extra: Markup,
+        content: Markup,
+    ) -> ConsoleAnswer {
         let contract = self.dispatcher.contract();
         let base = &self.config.base;
         let rail = html! {
@@ -1300,6 +1528,7 @@ impl ConsoleRouter {
                         .collect::<Vec<_>>(),
                 ))
             }
+            (rail_extra)
         };
         let footer = html! {
             span { (contract.name) " v" (contract.version) }
@@ -1529,6 +1758,7 @@ pub fn document(page: Page<'_>, rail: Markup, content: Markup, footer: Markup) -
                 link rel="icon" href="data:,";
                 style { (PreEscaped(STYLE)) }
                 script { (PreEscaped(THEME_SCRIPT)) }
+                script { (PreEscaped(REFERENCE_SCRIPT)) }
             }
             body {
                 header {
@@ -1562,6 +1792,95 @@ pub fn rail_section(heading: &str, links: &[(String, String, bool)]) -> Markup {
             }
         }
     }
+}
+
+/// The SDL, with every type it names linked to its definition.
+///
+/// This is what separates reading a schema from being handed one: a
+/// field says `FileVersionPage!` and the reader wants to see what
+/// that holds without hunting for it. A type never links to itself,
+/// because the reader is already there.
+fn linked(body: &str, names: &std::collections::BTreeSet<&str>, own: &str) -> Markup {
+    let mut spans: Vec<(bool, String)> = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        let tail = &rest[start..];
+        let len = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(tail.len());
+        let word = &tail[..len];
+        if word != own && names.contains(word) {
+            spans.push((false, rest[..start].to_owned()));
+            spans.push((true, word.to_owned()));
+        } else {
+            spans.push((false, rest[..start + len].to_owned()));
+        }
+        rest = &tail[len..];
+    }
+    spans.push((false, rest.to_owned()));
+    html! {
+        @for (link, text) in &spans {
+            @if *link {
+                a href=(format!("#t-{text}")) { (text) }
+            } @else {
+                (text)
+            }
+        }
+    }
+}
+
+/// One definition from the served schema.
+///
+/// The SDL is generated here rather than described second-hand, and
+/// then cut on its own block boundaries. Splitting a document we
+/// emitted, by the braces we emitted, is a narrow enough job to be
+/// safe: it is not a parser, and it does not need to be one.
+struct Definition {
+    kind: String,
+    name: String,
+    body: String,
+}
+
+fn definitions(sdl: &str) -> Vec<Definition> {
+    let mut out = Vec::new();
+    let mut lines = sdl.lines().peekable();
+    while let Some(line) = lines.next() {
+        let head = line.trim_end();
+        let opens = head.ends_with('{');
+        let mut words = head.split_whitespace();
+        let Some(kind) = words.next() else { continue };
+        if !matches!(
+            kind,
+            "type" | "input" | "enum" | "interface" | "union" | "scalar"
+        ) {
+            continue;
+        }
+        let Some(name) = words.next() else { continue };
+        if !opens {
+            // `scalar JSON` stands alone.
+            out.push(Definition {
+                kind: kind.to_owned(),
+                name: name.to_owned(),
+                body: head.to_owned(),
+            });
+            continue;
+        }
+        let mut body = String::from(head);
+        body.push('\n');
+        for inner in lines.by_ref() {
+            body.push_str(inner);
+            body.push('\n');
+            if inner.starts_with('}') {
+                break;
+            }
+        }
+        out.push(Definition {
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            body: body.trim_end().to_owned(),
+        });
+    }
+    out
 }
 
 /// One operation, on every face it reaches.
@@ -1830,20 +2149,28 @@ fn faces_table(faces: &[Face]) -> Markup {
                                         @if !face.rest_path.is_empty() {
                                             div {
                                                 div.shape-heading { "REST" }
-                                                pre { code { (face.rest_example()) } }
-
+                                                pre {
+                                                    code { (face.rest_example()) }
+                                                    button.copy type="button" { "Copy" }
+                                                }
                                             }
                                         }
                                         @if let Some(document) = face.graphql_example() {
                                             div {
                                                 div.shape-heading { "GraphQL" }
-                                                pre { code { (document) } }
+                                                pre {
+                                                    code { (document) }
+                                                    button.copy type="button" { "Copy" }
+                                                }
                                             }
                                         }
                                         @if let Some(call) = face.tool_example() {
                                             div {
                                                 div.shape-heading { "MCP" }
-                                                pre { code { (call) } }
+                                                pre {
+                                                    code { (call) }
+                                                    button.copy type="button" { "Copy" }
+                                                }
                                             }
                                         }
                                     }

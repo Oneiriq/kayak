@@ -198,6 +198,8 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem;
   font-size: .85rem; }
 ul.plain li { display: flex; gap: .4rem; align-items: baseline; flex-wrap: wrap; }
 .req { color: var(--bad); }
+ul.notes { margin-top: .45rem; color: var(--soft); font-size: .8rem; }
+ul.notes li { font-family: var(--mono); }
 h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
   letter-spacing: -.01em; }
 h2 { font: 600 .8rem/1.4 var(--ui); margin: 2rem 0 .6rem; color: var(--soft);
@@ -1556,22 +1558,6 @@ impl Face<'_> {
                     if index + 1 < carried.len() {
                         out.push(',');
                     }
-                    // A sample value taken from a closed set would
-                    // otherwise read as the default.
-                    let mut notes: Vec<String> = Vec::new();
-                    if !field.required {
-                        notes.push("optional".to_owned());
-                    }
-                    if !field.options.is_empty() {
-                        notes.push(format!(
-                            "{} of {}",
-                            if field.multiple { "any" } else { "one" },
-                            field.options.join(", "),
-                        ));
-                    }
-                    if !notes.is_empty() {
-                        out.push_str(&format!("   // {}", notes.join("; ")));
-                    }
                     out.push('\n');
                 }
                 out.push('}');
@@ -1625,6 +1611,32 @@ impl Face<'_> {
         } else {
             format!("{} {{\n  {call}   {selection}\n}}", self.graphql_kind)
         })
+    }
+
+    /// What each input means, said beside the request rather than
+    /// inside it.
+    ///
+    /// These were comments in the body until a copy-paste proved the
+    /// point: `// optional` is not JSON, so the example a caller
+    /// lifted straight into curl could not be sent.
+    fn notes(&self) -> Vec<String> {
+        self.inputs
+            .iter()
+            .filter_map(|field| {
+                let mut said: Vec<String> = Vec::new();
+                if !field.required {
+                    said.push("optional".to_owned());
+                }
+                if !field.options.is_empty() {
+                    said.push(format!(
+                        "{} of {}",
+                        if field.multiple { "any" } else { "one" },
+                        field.options.join(", "),
+                    ));
+                }
+                (!said.is_empty()).then(|| format!("{}: {}", field.name, said.join("; ")))
+            })
+            .collect()
     }
 
     /// The call an agent makes.
@@ -1700,6 +1712,14 @@ fn faces_table(faces: &[Face]) -> Markup {
                                             div {
                                                 div.shape-heading { "REST" }
                                                 pre { code { (face.rest_example()) } }
+                                                @let notes = face.notes();
+                                                @if !notes.is_empty() {
+                                                    ul.plain.notes {
+                                                        @for note in &notes {
+                                                            li { (note) }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         @if let Some(document) = face.graphql_example() {

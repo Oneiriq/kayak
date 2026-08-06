@@ -2023,6 +2023,41 @@ mod console_pages {
         );
     }
 
+    /// The REST body has to be JSON a caller can lift straight into
+    /// curl. It carried `// optional` comments until a copy-paste
+    /// proved they made it unsendable; the notes moved beside the
+    /// request instead.
+    #[tokio::test]
+    async fn the_rest_body_is_json_that_would_send() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+        let html = page
+            .html
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+
+        let mut bodies = 0;
+        for chunk in html.split("content-type: application/json").skip(1) {
+            let Some(open) = chunk.find('{') else {
+                continue;
+            };
+            let Some(close) = chunk[open..].find("</code>") else {
+                continue;
+            };
+            let body = chunk[open..open + close].trim();
+            serde_json::from_str::<serde_json::Value>(body).unwrap_or_else(|e| {
+                panic!(
+                    "body is not JSON: {e}
+{body}"
+                )
+            });
+            bodies += 1;
+        }
+        assert!(bodies > 0, "the reference shows at least one body");
+    }
+
     /// The reference shows the request each face takes, and an
     /// example that does not parse is worse than no example.
     ///

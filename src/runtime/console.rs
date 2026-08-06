@@ -1238,82 +1238,61 @@ impl ConsoleRouter {
         content: Markup,
     ) -> ConsoleAnswer {
         let contract = self.dispatcher.contract();
-        let document = html! {
-            (DOCTYPE)
-            html lang="en" {
-                head {
-                    meta charset="utf-8";
-                    meta name="viewport" content="width=device-width, initial-scale=1";
-                    title { (title) " · " (self.config.title) }
-                    link rel="icon" href="data:,";
-                    style { (PreEscaped(STYLE)) }
-                    script { (PreEscaped(THEME_SCRIPT)) }
-                }
-                body {
-                    header {
-                        span.title {
-                            a href=(&self.config.base) { (self.config.title) }
-                        }
-                        button.icon type="button" onclick="janusTheme()"
-                            title="Appearance: follow the system, or force light or dark"
-                            aria-label="Appearance" {
-                            (PreEscaped(THEME_ICON))
-                        }
-                    }
-                    div.frame {
-                        aside.rail {
-                            @if !contract.resources.is_empty() {
-                                div.rail-heading { "Resources" }
-                                nav {
-                                    @for resource in &contract.resources {
-                                        @let here = active == Some(resource.name.as_str());
-                                        a.here[here]
-                                            href=(format!("{}/r/{}", self.config.base, resource.name)) {
-                                            (humanize(&resource.name))
-                                        }
-                                    }
-                                }
-                            }
-                            div.rail-heading { "Contract" }
-                            nav {
-                                @let here = active == Some("__reference");
-                                a.here[here] href=(format!("{}/reference", self.config.base)) {
-                                    "Reference"
-                                }
-                            }
-                            @if !contract.queries.is_empty() {
-                                div.rail-heading { "Queries" }
-                                nav {
-                                    @for query in &contract.queries {
-                                        @let here = active == Some(query.name.as_str());
-                                        a.here[here]
-                                            href=(format!("{}/q/{}", self.config.base, query.name)) {
-                                            (humanize(&query.name))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        div.column {
-                            main { (content) }
-                            footer {
-                                span {
-                                    (contract.name) " v" (contract.version)
-                                }
-                                a href=(format!("{}/reference", self.config.base)) {
-                                    "Reference"
-                                }
-                                span.dim { "Generated from the contract by janus" }
-                            }
-                        }
-                    }
-                }
+        let base = &self.config.base;
+        let rail = html! {
+            @if !contract.resources.is_empty() {
+                (rail_section(
+                    "Resources",
+                    &contract
+                        .resources
+                        .iter()
+                        .map(|r| (
+                            humanize(&r.name),
+                            format!("{base}/r/{}", r.name),
+                            active == Some(r.name.as_str()),
+                        ))
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            (rail_section(
+                "Contract",
+                &[(
+                    "Reference".to_owned(),
+                    format!("{base}/reference"),
+                    active == Some("__reference"),
+                )],
+            ))
+            @if !contract.queries.is_empty() {
+                (rail_section(
+                    "Queries",
+                    &contract
+                        .queries
+                        .iter()
+                        .map(|q| (
+                            humanize(&q.name),
+                            format!("{base}/q/{}", q.name),
+                            active == Some(q.name.as_str()),
+                        ))
+                        .collect::<Vec<_>>(),
+                ))
             }
         };
-        ConsoleAnswer {
-            status,
-            html: document.into_string(),
-        }
+        let footer = html! {
+            span { (contract.name) " v" (contract.version) }
+            a href=(format!("{base}/reference")) { "Reference" }
+            span.dim { "Generated from the contract by janus" }
+        };
+        let html = document(
+            Page {
+                brand: &self.config.title,
+                home: base,
+                title,
+            },
+            rail,
+            content,
+            footer,
+        );
+        ConsoleAnswer { status, html }
     }
 }
 
@@ -1490,6 +1469,74 @@ fn preview_line(preview: &Preview, item: &Value) -> Markup {
     html! {
         @if let Some(label) = label { span.label { (label) } }
         @if let Some(when) = when { span.when { (when) } }
+    }
+}
+
+/// One console page, frame and all.
+///
+/// A host renders pages of its own beside the generated ones, and a
+/// second implementation of the frame is a second console: copal's
+/// deployment page kept its own markup and stayed on the old layout
+/// after every generated page moved, which is the same failure the
+/// stylesheet had before it was shared.
+///
+/// The host supplies the rail's contents and the footer's, because
+/// only it knows what its own pages link to. Everything else, the
+/// document, the header, the appearance control, the frame, and the
+/// column, comes from here.
+pub struct Page<'a> {
+    /// Shown in the header and appended to the browser tab.
+    pub brand: &'a str,
+    /// Where the header's name links.
+    pub home: &'a str,
+    /// This page's own name, leading the tab.
+    pub title: &'a str,
+}
+
+/// Render a page in the console's frame.
+pub fn document(page: Page<'_>, rail: Markup, content: Markup, footer: Markup) -> String {
+    let shell = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { (page.title) " · " (page.brand) }
+                link rel="icon" href="data:,";
+                style { (PreEscaped(STYLE)) }
+                script { (PreEscaped(THEME_SCRIPT)) }
+            }
+            body {
+                header {
+                    span.title { a href=(page.home) { (page.brand) } }
+                    button.icon type="button" onclick="janusTheme()"
+                        title="Appearance: follow the system, or force light or dark"
+                        aria-label="Appearance" {
+                        (PreEscaped(THEME_ICON))
+                    }
+                }
+                div.frame {
+                    aside.rail { (rail) }
+                    div.column {
+                        main { (content) }
+                        footer { (footer) }
+                    }
+                }
+            }
+        }
+    };
+    shell.into_string()
+}
+
+/// One group of links in the rail.
+pub fn rail_section(heading: &str, links: &[(String, String, bool)]) -> Markup {
+    html! {
+        div.rail-heading { (heading) }
+        nav {
+            @for (label, href, here) in links {
+                a.here[*here] href=(href) { (label) }
+            }
+        }
     }
 }
 
@@ -1763,7 +1810,7 @@ fn scopes(required: &[String]) -> Markup {
 /// dump of the IR. Sentence case, because a label is a phrase rather
 /// than a headline, with the acronyms an operator would never see
 /// lowercased.
-fn humanize(name: &str) -> String {
+pub fn humanize(name: &str) -> String {
     const ACRONYMS: [(&str, &str); 8] = [
         ("url", "URL"),
         ("id", "ID"),

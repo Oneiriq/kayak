@@ -38,7 +38,10 @@ pub use args::{
     ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SortDirection, SubListArgs, WatchArgs,
 };
 #[cfg(feature = "console")]
-pub use console::{cell, ConsoleAnswer, ConsoleConfig, ConsoleRouter, FormOutcome, STYLE};
+pub use console::{
+    cell, document, humanize, rail_section, ConsoleAnswer, ConsoleConfig, ConsoleRouter,
+    FormOutcome, Page, STYLE,
+};
 pub use context::JanusContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
 pub use error::JanusError;

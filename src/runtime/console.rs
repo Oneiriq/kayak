@@ -616,6 +616,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: false,
                         selection: Some(page_selection.clone()),
+                        document: None,
                         try_at: Some(format!("{base}/r/{}", resource.name)),
                     });
                     faces.push(Face {
@@ -630,6 +631,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: true,
                         selection: Some(one_selection.clone()),
+                        document: None,
                         try_at: Some(format!("{base}/r/{}", resource.name)),
                     });
                     if resource.watchable {
@@ -645,10 +647,21 @@ impl ConsoleRouter {
                             body: false,
                             takes_id: false,
                             selection: Some(one_selection.clone()),
+                            document: None,
                             try_at: None,
                         });
                     }
                     for sub in &resource.sub_resources {
+                        // A sub-collection hangs off its parent, so
+                        // naming the parent type locates it without
+                        // saying what to send. The nested document
+                        // does.
+                        let sub_fields: Vec<&str> = sub
+                            .fields
+                            .iter()
+                            .take(3)
+                            .map(|f| f.api_name())
+                            .collect();
                         faces.push(Face {
                             what: humanize(&sub.name),
                             rest_method: "GET",
@@ -661,6 +674,14 @@ impl ConsoleRouter {
                             body: false,
                             takes_id: true,
                             selection: None,
+                            document: Some(format!(
+                                "query {{\n  {}(id: \"<id>\") {{\n    {}(limit: {}) {{\n      \
+                                 items {{\n        {}\n      }}\n      nextCursor\n    }}\n  }}\n}}",
+                                resource.graphql_get_field(),
+                                sub.name,
+                                sub.max_page_size,
+                                sub_fields.join("\n        "),
+                            )),
                             try_at: Some(format!("{base}/r/{}", resource.name)),
                         });
                     }
@@ -693,6 +714,7 @@ impl ConsoleRouter {
                                 }
                                 _ => None,
                             },
+                            document: None,
                             try_at: Some(format!(
                                 "{base}/r/{}?open={}",
                                 resource.name, action.name
@@ -722,6 +744,7 @@ impl ConsoleRouter {
                         body: false,
                         takes_id: query.path.contains("{id}"),
                         selection: None,
+                        document: None,
                         try_at: Some(format!("{base}/q/{}", query.name)),
                     })
                     .collect();
@@ -1562,6 +1585,11 @@ struct Face<'a> {
     /// The selection a GraphQL caller would write, when the answer has
     /// a declared shape rather than open JSON.
     selection: Option<String>,
+    /// A document written out in full, for an operation whose GraphQL
+    /// shape is not a top-level field. A sub-collection hangs off its
+    /// parent, so saying "on the parent type" locates it without ever
+    /// answering what to send.
+    document: Option<String>,
     /// Where in this console the operation can actually be run.
     try_at: Option<String>,
 }
@@ -1627,6 +1655,9 @@ impl Face<'_> {
 
     /// The document a GraphQL caller sends.
     fn graphql_example(&self) -> Option<String> {
+        if let Some(written) = &self.document {
+            return Some(written.clone());
+        }
         let field = self.graphql.as_ref()?;
         let mut arguments: Vec<String> = Vec::new();
         // An instance action carries its subject in the path on REST

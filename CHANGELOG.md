@@ -26,6 +26,20 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   page-size ceiling. It reads the same functions the generators read,
   so it cannot drift from the documents.
 
+  Every operation also carries the request itself: the REST call with
+  its body, the GraphQL document with its arguments and selection, and
+  the MCP tool call. A mapping alone answers where an operation lives,
+  and the next question is always what to send. Enum fields note their
+  alternatives so a sample value does not read as a default, an action
+  answering the resource carries a selection while one answering JSON
+  does not, and an instance action names the id it takes as an
+  argument rather than only in a path. All twenty-three documents
+  copal's contract produces parse and validate against copal's own
+  generated schema.
+
+  "Try it" on each row lands on the control that runs it, with an
+  action's dialog already open.
+
 - **A footer**, carrying the contract's name and version, so a page
   ends rather than stops.
 

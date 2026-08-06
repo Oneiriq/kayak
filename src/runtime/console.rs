@@ -21,7 +21,7 @@ use maud::{html, Markup, PreEscaped, DOCTYPE};
 use serde_json::Value;
 
 use crate::ir::{Action, ActionField, Resource, TypeRef};
-use crate::naming::singular;
+use crate::naming::{camel, singular};
 use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirection, SubListArgs};
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
@@ -568,103 +568,162 @@ impl ConsoleRouter {
     /// documents.
     fn reference(&self) -> ConsoleAnswer {
         let contract = self.dispatcher.contract().clone();
+        let base = &self.config.base;
         let body = html! {
             h1 { "Reference" }
             p.dim {
                 "Every operation " (contract.name) " v" (contract.version)
-                " declares, and how it reaches each face."
+                " declares, the request each face takes, and where to run it."
             }
 
             @for resource in &contract.resources {
                 h2 { (humanize(&resource.name)) }
-                div.scroll {
-                    table.faces {
-                        thead {
-                            tr {
-                                th { "Operation" } th { "REST" }
-                                th { "GraphQL" } th { "MCP tool" } th { "Requires" }
-                            }
-                        }
-                        tbody {
-                            tr {
-                                td { "List" }
-                                td { code { "GET /v1/" (resource.name) } }
-                                td { code { (resource.graphql_list_field()) } }
-                                td { code { (resource.name) "_list" } }
-                                td { (scopes(&resource.reads_require)) }
-                            }
-                            tr {
-                                td { "Get one" }
-                                td { code { "GET /v1/" (resource.name) "/{id}" } }
-                                td { code { (resource.graphql_get_field()) } }
-                                td { code { (singular(&resource.name)) "_get" } }
-                                td { (scopes(&resource.reads_require)) }
-                            }
-                            @if resource.watchable {
-                                tr {
-                                    td { "Watch" }
-                                    td { span.dim { "no REST face" } }
-                                    td { code { (resource.graphql_watch_field()) } }
-                                    td { span.dim { "no tool" } }
-                                    td { (scopes(&resource.reads_require)) }
-                                }
-                            }
-                            @for sub in &resource.sub_resources {
-                                tr {
-                                    td { (humanize(&sub.name)) }
-                                    td {
-                                        code { "GET /v1/" (resource.name) "/{id}/" (sub.name) }
-                                    }
-                                    td { span.dim { "on the parent type" } }
-                                    td { span.dim { "no tool" } }
-                                    td { (scopes(&resource.reads_require)) }
-                                }
-                            }
-                            @for action in &resource.actions {
-                                tr {
-                                    td { (action_label(action, None)) }
-                                    td {
-                                        code {
-                                            (action.method) " /v1/" (resource.name) (action.path)
-                                        }
-                                    }
-                                    td { code { (action.graphql_field_name(resource)) } }
-                                    td {
-                                        code { (singular(&resource.name)) "_" (action.name) }
-                                    }
-                                    td { (scopes(&action.requires)) }
-                                }
-                            }
-                        }
+                @let shown: Vec<&str> = resource
+                    .fields
+                    .iter()
+                    .take(3)
+                    .map(|f| f.api_name())
+                    .collect();
+                // Each nesting level indents by two, so a page's fields
+                // sit deeper than an instance's.
+                @let page_selection = format!(
+                    "items {{\n      {}\n    }}\n    nextCursor",
+                    shown.join("\n      "),
+                );
+                @let one_selection = format!("id\n    {}", shown.join("\n    "));
+                @let list_inputs = vec![];
+                @let id_input = vec![ActionField {
+                    name: "id".to_owned(),
+                    kind: TypeRef::String,
+                    required: true,
+                    multiple: false,
+                    options: vec![],
+                    description: None,
+                }];
+                @let faces = {
+                    let mut faces: Vec<Face> = Vec::new();
+                    faces.push(Face {
+                        what: "List".to_owned(),
+                        rest_method: "GET",
+                        rest_path: format!("/v1/{}", resource.name),
+                        graphql: Some(resource.graphql_list_field()),
+                        graphql_kind: "query",
+                        tool: Some(format!("{}_list", resource.name)),
+                        requires: &resource.reads_require,
+                        inputs: &list_inputs,
+                        body: false,
+                        takes_id: false,
+                        selection: Some(page_selection.clone()),
+                        try_at: Some(format!("{base}/r/{}", resource.name)),
+                    });
+                    faces.push(Face {
+                        what: "Get one".to_owned(),
+                        rest_method: "GET",
+                        rest_path: format!("/v1/{}/{{id}}", resource.name),
+                        graphql: Some(resource.graphql_get_field()),
+                        graphql_kind: "query",
+                        tool: Some(format!("{}_get", singular(&resource.name))),
+                        requires: &resource.reads_require,
+                        inputs: &id_input,
+                        body: false,
+                        takes_id: true,
+                        selection: Some(one_selection.clone()),
+                        try_at: Some(format!("{base}/r/{}", resource.name)),
+                    });
+                    if resource.watchable {
+                        faces.push(Face {
+                            what: "Watch".to_owned(),
+                            rest_method: "",
+                            rest_path: String::new(),
+                            graphql: Some(resource.graphql_watch_field()),
+                            graphql_kind: "subscription",
+                            tool: None,
+                            requires: &resource.reads_require,
+                            inputs: &list_inputs,
+                            body: false,
+                            takes_id: false,
+                            selection: Some(one_selection.clone()),
+                            try_at: None,
+                        });
                     }
-                }
+                    for sub in &resource.sub_resources {
+                        faces.push(Face {
+                            what: humanize(&sub.name),
+                            rest_method: "GET",
+                            rest_path: format!("/v1/{}/{{id}}/{}", resource.name, sub.name),
+                            graphql: None,
+                            graphql_kind: "query",
+                            tool: None,
+                            requires: &resource.reads_require,
+                            inputs: &id_input,
+                            body: false,
+                            takes_id: true,
+                            selection: None,
+                            try_at: Some(format!("{base}/r/{}", resource.name)),
+                        });
+                    }
+                    for action in &resource.actions {
+                        faces.push(Face {
+                            what: action_label(action, None),
+                            rest_method: match action.method.as_str() {
+                                "POST" => "POST",
+                                "PUT" => "PUT",
+                                "PATCH" => "PATCH",
+                                "DELETE" => "DELETE",
+                                _ => "POST",
+                            },
+                            rest_path: format!("/v1/{}{}", resource.name, action.path),
+                            graphql: Some(action.graphql_field_name(resource)),
+                            graphql_kind: "mutation",
+                            tool: Some(format!("{}_{}", singular(&resource.name), action.name)),
+                            requires: &action.requires,
+                            inputs: &action.input,
+                            body: action.method != "DELETE" && !action.input.is_empty(),
+                            takes_id: action.takes_id(),
+                            // An action answering the resource returns
+                            // an object, so the document needs a
+                            // selection or it will not parse. JSON and
+                            // Boolean are scalars and must not carry
+                            // one.
+                            selection: match action.output {
+                                crate::ir::ActionOutput::Resource => {
+                                    Some(one_selection.clone())
+                                }
+                                _ => None,
+                            },
+                            try_at: Some(format!(
+                                "{base}/r/{}?open={}",
+                                resource.name, action.name
+                            )),
+                        });
+                    }
+                    faces
+                };
+                (faces_table(&faces))
                 (self.shape_of(resource))
             }
 
             @if !contract.queries.is_empty() {
                 h2 { "Queries" }
-                div.scroll {
-                    table.faces {
-                        thead {
-                            tr {
-                                th { "Query" } th { "REST" } th { "GraphQL" }
-                                th { "MCP tool" } th { "Requires" } th { "Takes" }
-                            }
-                        }
-                        tbody {
-                            @for query in &contract.queries {
-                                tr {
-                                    td { (humanize(&query.name)) }
-                                    td { code { "GET " (query.path) } }
-                                    td { code { (query.graphql_field_name()) } }
-                                    td { code { (query.name) } }
-                                    td { (scopes(&query.requires)) }
-                                    td { (inputs(&query.input)) }
-                                }
-                            }
-                        }
-                    }
-                }
+                @let query_faces: Vec<Face> = contract
+                    .queries
+                    .iter()
+                    .map(|query| Face {
+                        what: humanize(&query.name),
+                        rest_method: "GET",
+                        rest_path: query.path.clone(),
+                        graphql: Some(query.graphql_field_name()),
+                        graphql_kind: "query",
+                        tool: Some(query.name.clone()),
+                        requires: &query.requires,
+                        inputs: &query.input,
+                        body: false,
+                        takes_id: query.path.contains("{id}"),
+                        selection: None,
+                        try_at: Some(format!("{base}/q/{}", query.name)),
+                    })
+                    .collect();
+                (faces_table(&query_faces))
             }
 
             @if !contract.rate_classes.is_empty() {
@@ -762,6 +821,7 @@ impl ConsoleRouter {
             sort: None,
         };
         let mut done: Option<String> = None;
+        let mut opened: Option<String> = None;
         let mut sort_state = String::new();
         for (key, value) in pairs {
             match key.as_str() {
@@ -781,6 +841,10 @@ impl ConsoleRouter {
                     });
                 }
                 "done" => done = Some(value.clone()),
+                // The reference links here to run an action, and
+                // arriving next to the button is not the same as
+                // arriving at the form.
+                "open" => opened = Some(value.clone()),
                 _ if !value.is_empty() => {
                     args.filters
                         .insert(key.clone(), Value::String(value.clone()));
@@ -817,6 +881,13 @@ impl ConsoleRouter {
                 div.toolbar {
                     @for action in &collection_actions {
                         (self.action_form(name, None, action))
+                    }
+                }
+                @if let Some(open) = &opened {
+                    script {
+                        (PreEscaped(format!(
+                            "document.getElementById('act-{name}-{open}')?.showModal()"
+                        )))
                     }
                 }
             }
@@ -1420,6 +1491,240 @@ fn preview_line(preview: &Preview, item: &Value) -> Markup {
     }
 }
 
+/// One operation, on every face it reaches.
+///
+/// Built once and rendered twice: as a row in the table, and as the
+/// request a caller would actually send. Holding it in one place is
+/// what keeps the two from disagreeing.
+struct Face<'a> {
+    what: String,
+    rest_method: &'static str,
+    rest_path: String,
+    graphql: Option<String>,
+    graphql_kind: &'static str,
+    tool: Option<String>,
+    requires: &'a [String],
+    inputs: &'a [ActionField],
+    /// Whether the inputs travel as a JSON body. A GET carries them in
+    /// the query string, and showing a body on one would be teaching
+    /// the wrong request.
+    body: bool,
+    takes_id: bool,
+    /// The selection a GraphQL caller would write, when the answer has
+    /// a declared shape rather than open JSON.
+    selection: Option<String>,
+    /// Where in this console the operation can actually be run.
+    try_at: Option<String>,
+}
+
+/// A placeholder that shows the type rather than pretending to be a
+/// value, since a caller copying this has to substitute anyway.
+fn sample(field: &ActionField) -> String {
+    if let Some(first) = field.options.first() {
+        return if field.multiple {
+            format!("\"{}\"", field.options.join(","))
+        } else {
+            format!("\"{first}\"")
+        };
+    }
+    match field.kind {
+        TypeRef::Int => "0".to_owned(),
+        TypeRef::Bool => "false".to_owned(),
+        TypeRef::Json => "{}".to_owned(),
+        TypeRef::String => format!("\"<{}>\"", field.name),
+    }
+}
+
+impl Face<'_> {
+    /// The request a REST caller sends.
+    fn rest_example(&self) -> String {
+        let mut out = String::new();
+        if self.body {
+            out.push_str(&format!("{} {}\n", self.rest_method, self.rest_path));
+            out.push_str("content-type: application/json\n");
+            let carried: Vec<&ActionField> = self
+                .inputs
+                .iter()
+                .filter(|f| !(self.takes_id && f.name == "id"))
+                .collect();
+            if carried.is_empty() {
+                out.push_str("\n{}");
+            } else {
+                out.push_str("\n{\n");
+                for (index, field) in carried.iter().enumerate() {
+                    out.push_str(&format!("  \"{}\": {}", field.name, sample(field)));
+                    if index + 1 < carried.len() {
+                        out.push(',');
+                    }
+                    // A sample value taken from a closed set would
+                    // otherwise read as the default.
+                    let mut notes: Vec<String> = Vec::new();
+                    if !field.required {
+                        notes.push("optional".to_owned());
+                    }
+                    if !field.options.is_empty() {
+                        notes.push(format!(
+                            "{} of {}",
+                            if field.multiple { "any" } else { "one" },
+                            field.options.join(", "),
+                        ));
+                    }
+                    if !notes.is_empty() {
+                        out.push_str(&format!("   // {}", notes.join("; ")));
+                    }
+                    out.push('\n');
+                }
+                out.push('}');
+            }
+        } else {
+            let query: Vec<String> = self
+                .inputs
+                .iter()
+                .filter(|f| !self.rest_path.contains(&format!("{{{}}}", f.name)))
+                .map(|f| format!("{}={}", f.name, sample(f).trim_matches('"')))
+                .collect();
+            out.push_str(&format!("{} {}", self.rest_method, self.rest_path));
+            if !query.is_empty() {
+                out.push('?');
+                out.push_str(&query.join("&"));
+            }
+        }
+        out
+    }
+
+    /// The document a GraphQL caller sends.
+    fn graphql_example(&self) -> Option<String> {
+        let field = self.graphql.as_ref()?;
+        let mut arguments: Vec<String> = Vec::new();
+        // An instance action carries its subject in the path on REST
+        // and as an argument on GraphQL, so the id is not among the
+        // declared inputs and has to be said here. Without it
+        // `mutation { fileRemove }` does not even parse.
+        if self.takes_id && !self.inputs.iter().any(|f| f.name == "id") {
+            arguments.push("id: \"<id>\"".to_owned());
+        }
+        arguments.extend(
+            self.inputs
+                .iter()
+                .map(|f| format!("{}: {}", camel(&f.name), sample(f))),
+        );
+        let call = if arguments.is_empty() {
+            field.clone()
+        } else {
+            format!("{field}({})", arguments.join(", "))
+        };
+        let selection = self
+            .selection
+            .clone()
+            .unwrap_or_else(|| "# answers JSON".to_owned());
+        Some(if self.selection.is_some() {
+            format!(
+                "{} {{\n  {call} {{\n    {selection}\n  }}\n}}",
+                self.graphql_kind
+            )
+        } else {
+            format!("{} {{\n  {call}   {selection}\n}}", self.graphql_kind)
+        })
+    }
+
+    /// The call an agent makes.
+    fn tool_example(&self) -> Option<String> {
+        let tool = self.tool.as_ref()?;
+        let mut arguments: Vec<String> = Vec::new();
+        if self.takes_id && !self.inputs.iter().any(|f| f.name == "id") {
+            arguments.push("    \"id\": \"<id>\"".to_owned());
+        }
+        arguments.extend(
+            self.inputs
+                .iter()
+                .map(|f| format!("    \"{}\": {}", f.name, sample(f))),
+        );
+        Some(format!(
+            "{{\n  \"name\": \"{tool}\",\n  \"arguments\": {{\n{}\n  }}\n}}",
+            arguments.join(",\n")
+        ))
+    }
+}
+
+/// The operations, and under each the request every face takes.
+///
+/// A mapping alone answers "where does this live"; a caller's next
+/// question is always "what do I send", and answering it anywhere but
+/// here means they go and read a document instead.
+fn faces_table(faces: &[Face]) -> Markup {
+    html! {
+        div.scroll {
+            table.faces {
+                thead {
+                    tr {
+                        th { "Operation" } th { "REST" } th { "GraphQL" }
+                        th { "MCP tool" } th { "Requires" } th { "" }
+                    }
+                }
+                tbody {
+                    @for face in faces {
+                        tr {
+                            td { (face.what) }
+                            td {
+                                @if face.rest_path.is_empty() {
+                                    span.dim { "no REST face" }
+                                } @else {
+                                    code { (face.rest_method) " " (face.rest_path) }
+                                }
+                            }
+                            td {
+                                @match &face.graphql {
+                                    Some(field) => code { (field) },
+                                    None => span.dim { "on the parent type" },
+                                }
+                            }
+                            td {
+                                @match &face.tool {
+                                    Some(tool) => code { (tool) },
+                                    None => span.dim { "no tool" },
+                                }
+                            }
+                            td { (scopes(face.requires)) }
+                            td {
+                                @if let Some(link) = &face.try_at {
+                                    a.try href=(link) { "Try it" }
+                                }
+                            }
+                        }
+                        tr.detail {
+                            td colspan="6" {
+                                details {
+                                    summary { "Request" }
+                                    div.requests {
+                                        @if !face.rest_path.is_empty() {
+                                            div {
+                                                div.shape-heading { "REST" }
+                                                pre { code { (face.rest_example()) } }
+                                            }
+                                        }
+                                        @if let Some(document) = face.graphql_example() {
+                                            div {
+                                                div.shape-heading { "GraphQL" }
+                                                pre { code { (document) } }
+                                            }
+                                        }
+                                        @if let Some(call) = face.tool_example() {
+                                            div {
+                                                div.shape-heading { "MCP" }
+                                                pre { code { (call) } }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Scopes a caller must hold, or the fact that none are asked for.
 fn scopes(required: &[String]) -> Markup {
     html! {
@@ -1427,21 +1732,6 @@ fn scopes(required: &[String]) -> Markup {
             span.dim { "open" }
         } @else {
             @for scope in required { span.chip { (scope) } }
-        }
-    }
-}
-
-/// What an operation accepts, said in one line.
-fn inputs(fields: &[ActionField]) -> Markup {
-    html! {
-        @if fields.is_empty() {
-            span.dim { "nothing" }
-        } @else {
-            @for (index, field) in fields.iter().enumerate() {
-                @if index > 0 { ", " }
-                code { (field.name) }
-                @if field.required { span.req { "*" } }
-            }
         }
     }
 }

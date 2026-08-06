@@ -2023,6 +2023,37 @@ mod console_pages {
         );
     }
 
+    /// The reference shows the request each face takes, and an
+    /// example that does not parse is worse than no example.
+    ///
+    /// An instance action carries its subject in the path on REST and
+    /// as an argument on GraphQL, so the id is not among the declared
+    /// inputs. Leaving it out produced `mutation { fileRemove }`,
+    /// which is not a document.
+    #[tokio::test]
+    async fn the_reference_shows_a_request_that_would_work() {
+        let fixture = fixture(contract_with_versions());
+        let page = console(&fixture).page("/reference", "", tenant_ctx()).await;
+
+        // REST carries the body under the method and path.
+        assert!(
+            page.html.contains("content-type: application/json"),
+            "{}",
+            page.html
+        );
+
+        // An instance action names its subject on GraphQL.
+        assert!(
+            page.html.contains("id: &quot;&lt;id&gt;&quot;"),
+            "an instance action needs its id argument: {}",
+            page.html,
+        );
+
+        // An action answering the resource needs a selection; one
+        // answering JSON must not have one.
+        assert!(page.html.contains("# answers JSON"), "{}", page.html);
+    }
+
     /// The reference says how one declaration lands on every face.
     ///
     /// That mapping lives in the generators and nowhere a caller can

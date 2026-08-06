@@ -1922,7 +1922,9 @@ mod console_pages {
         let detail = console.page("/r/files/01A", "", tenant_ctx()).await;
         assert_eq!(detail.status, 200);
         assert!(detail.html.contains("a.txt"), "fields render");
-        assert!(detail.html.contains("versions"), "sub-collections render");
+        // Headings say the name the way a person writes it, so a
+        // sub-collection declared as `versions` reads as "Versions".
+        assert!(detail.html.contains("Versions"), "sub-collections render");
         assert!(
             detail.html.contains("/console/r/files/01A/a/issue_url"),
             "declared actions become forms",

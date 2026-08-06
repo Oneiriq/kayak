@@ -9,6 +9,39 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **The console has a shape.** Navigation moved into a rail down the
+  left and the data fills the rest, which is what an operator already
+  knows from every console they use and leaves the whole width for the
+  thing they came to look at. The rail marks where they are.
+
+- **Actions are things you can do, rather than forms nobody asked to
+  see.** Every action's form used to lie open below the data, so a
+  file with six of them buried its own record under a wall of inputs.
+  Each action is now a button in a toolbar beside the heading, and its
+  form arrives in a `<dialog>` when asked for: the browser already
+  knows about the backdrop, the escape key, and where the focus goes.
+
+- **Declared names are said the way people write them.** A contract
+  names things for machines, and printing `content_type` and
+  `issue_url` raw is what made the console read as a dump of the IR.
+  Columns, labels, headings, and navigation are sentence case now,
+  with the acronyms an operator would never see lowercased.
+
+  A control also says what it will do. "Create" alone names nothing,
+  so a collection action takes the thing it acts on and reads "Create
+  file"; the submit inside the dialog says the same rather than
+  "perform". An instance action already has its subject on the page
+  and would only repeat it.
+
+- **The appearance control is a mark rather than a word**, since
+  switching light and dark says itself faster as a half-lit circle
+  than as the word "theme" set beside the navigation.
+
+- **A submit stands apart from the fields above it**, on its own
+  footer with a rule, instead of butting against the last input.
+
 ### Added
 
 - **Several of a set.** `ActionField.multiple` says a caller may name

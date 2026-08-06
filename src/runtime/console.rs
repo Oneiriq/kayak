@@ -117,6 +117,22 @@ td { font-variant-numeric: tabular-nums; }
 code { color: #a8cf9a; }
 .dim { color: var(--faint); }
 .count { font-family: var(--ui); color: var(--soft); font-size: .8rem; margin: .5rem 0 0; }
+.card .count { margin: .1rem 0 .4rem; }
+ul.preview { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; }
+/* min-width:0 on the row as well as the label: a grid item defaults
+   to min-width:auto and refuses to shrink below its content, so the
+   row overflowed the card at 338px inside 257px and clipped the time
+   however the label was styled. */
+ul.preview li { display: flex; gap: .5rem; align-items: baseline; min-width: 0;
+  font-size: .85rem; color: var(--text); }
+/* min-width:0 is what lets the ellipsis happen: a flex item will not
+   shrink below its content without it, so a long label pushed the
+   time off the card instead of truncating itself. */
+ul.preview .label { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+ul.preview .when { flex: 0 0 auto; margin-left: auto; color: var(--faint);
+  font-size: .78rem; white-space: nowrap; }
+.error-note { color: var(--bad); }
 
 /* A nested value costs one line closed, whatever it holds. */
 details.nested > summary { cursor: pointer; color: var(--soft); font-size: .85rem; }
@@ -137,7 +153,7 @@ details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: 
 .chip-no { color: var(--faint); }
 
 .cards { display: grid; gap: .75rem; margin: .5rem 0;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
 .card { border: 1px solid var(--line); border-radius: 3px; padding: .8rem 1rem;
   background: var(--raised); }
 .card .name { font-weight: 700; }
@@ -180,7 +196,7 @@ impl ConsoleRouter {
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let pairs = parse_query(query);
         match parts.as_slice() {
-            [] => self.overview(),
+            [] => self.overview(ctx).await,
             ["r", resource] => self.list_page(resource, &pairs, ctx).await,
             ["r", resource, id] => self.detail_page(resource, &decode(id), &pairs, ctx).await,
             ["q", name] => self.query_page(name, &pairs, ctx).await,
@@ -271,36 +287,82 @@ impl ConsoleRouter {
             .cloned()
     }
 
-    fn overview(&self) -> ConsoleAnswer {
-        let contract = self.dispatcher.contract();
+    /// What is in this deployment, rather than what its contract
+    /// declares.
+    ///
+    /// The cards used to read "8 actions, 1 sub-collections", which
+    /// answers a question nobody opening a console has. An operator
+    /// arrives wanting to know what is here and whether anything needs
+    /// attention, so each card lists the resource's first page: how
+    /// many rows, whether more follow, and a few of them by whichever
+    /// column names a row to a reader.
+    ///
+    /// One listing per resource, at the page size a card can show. A
+    /// resource whose listing refuses says so on its own card and
+    /// leaves the rest of the page standing, because an overview that
+    /// blanks on one failure is worse than one that reports it.
+    async fn overview(&self, ctx: JanusContext) -> ConsoleAnswer {
+        let contract = self.dispatcher.contract().clone();
+        let mut cards = Vec::new();
+        for resource in &contract.resources {
+            let args = ListArgs {
+                limit: PREVIEW_ROWS,
+                cursor: None,
+                filters: Default::default(),
+                sort: None,
+            };
+            let outcome = self
+                .dispatcher
+                .list(&resource.name, ctx.clone(), args)
+                .await;
+            cards.push((resource, outcome));
+        }
+
         let body = html! {
-            h1 { "contract " (contract.name) " v" (contract.version) }
+            h1 { (contract.name) " v" (contract.version) }
             div.cards {
-                @for resource in &contract.resources {
+                @for (resource, outcome) in &cards {
                     div.card {
                         div.name {
                             a href=(format!("{}/r/{}", self.config.base, resource.name)) {
                                 (resource.name)
                             }
                         }
-                        div.dim { "table " (resource.table) }
-                        div.dim {
-                            (resource.actions.len()) " actions, "
-                            (resource.sub_resources.len()) " sub-collections"
+                        @match outcome {
+                            Ok(page) => {
+                                div.count {
+                                    (page.items.len())
+                                    @if page.next_cursor.is_some() { "+" }
+                                    @if page.items.len() == 1 { " row" } @else { " rows" }
+                                }
+                                @if page.items.is_empty() {
+                                    div.dim { "nothing yet" }
+                                } @else {
+                                    @let preview = preview_columns(resource, &page.items);
+                                    ul.preview {
+                                        @for item in &page.items {
+                                            li { (preview_line(&preview, item)) }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(reason) => div.dim.error-note { (reason.to_string()) }
                         }
                     }
                 }
             }
             @if !contract.queries.is_empty() {
                 h2 { "queries" }
-                ul {
+                div.cards {
                     @for query in &contract.queries {
-                        li {
-                            a href=(format!("{}/q/{}", self.config.base, query.name)) {
-                                (query.name)
+                        div.card {
+                            div.name {
+                                a href=(format!("{}/q/{}", self.config.base, query.name)) {
+                                    (query.name)
+                                }
                             }
                             @if let Some(text) = &query.description {
-                                span.dim { " " (text) }
+                                div.dim { (text) }
                             }
                         }
                     }
@@ -792,6 +854,100 @@ fn input_for(field: &ActionField, pairs: &[(String, String)]) -> Markup {
     }
 }
 
+/// How many rows a card previews. Enough to show what a resource
+/// holds, few enough that a deployment with many resources still
+/// fits on a screen.
+const PREVIEW_ROWS: u32 = 4;
+
+/// What a preview row says: a label, and when it happened.
+///
+/// No single column names an event or a run. Asking for the most
+/// distinct column alone gave four raw timestamps, and preferring a
+/// name-like column alone gave "file.ready" four times, which is four
+/// rows of nothing either way. What an operator wants from a card is
+/// what the row is and when, so a preview carries both when both
+/// exist.
+struct Preview<'a> {
+    label: Option<&'a str>,
+    time: Option<&'a str>,
+}
+
+/// Timestamps are excluded from the label, since they answer the other
+/// half of the line, and a column that repeats one value across the
+/// page is not naming anything whatever it is called.
+fn preview_columns<'a>(resource: &'a crate::ir::Resource, items: &[Value]) -> Preview<'a> {
+    const LABELS: [&str; 7] = ["name", "path", "title", "key", "label", "slug", "subject"];
+    let mut label: Option<(&str, usize, bool)> = None;
+    let mut time: Option<&str> = None;
+
+    for field in &resource.fields {
+        let api = field.api_name();
+        let mut distinct = std::collections::BTreeSet::new();
+        let mut temporal = 0;
+        let mut present = 0;
+        for item in items {
+            if let Some(Value::String(text)) = item.get(api) {
+                present += 1;
+                distinct.insert(text.as_str());
+                if shorten_timestamp(text).is_some() {
+                    temporal += 1;
+                }
+            }
+        }
+        if present == 0 {
+            continue;
+        }
+        if temporal == present {
+            time = time.or(Some(api));
+            continue;
+        }
+        let candidate = (api, distinct.len(), LABELS.contains(&api));
+        let better = match label {
+            None => true,
+            Some((_, count, labelled)) => {
+                candidate.1 > count || (candidate.1 == count && candidate.2 && !labelled)
+            }
+        };
+        if better {
+            label = Some(candidate);
+        }
+    }
+
+    Preview {
+        label: label.map(|(api, _, _)| api).or(Some("id")),
+        time,
+    }
+}
+
+/// One preview line, formatted the way the tables format the same
+/// values.
+fn preview_line(preview: &Preview, item: &Value) -> Markup {
+    let text = |column: Option<&str>| {
+        column.and_then(|c| item.get(c)).and_then(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Null => None,
+            other => Some(other.to_string()),
+        })
+    };
+    let label = text(preview.label).or_else(|| {
+        item.get("id")
+            .and_then(Value::as_str)
+            .map(std::borrow::ToOwned::to_owned)
+    });
+    // `08-05 19:29` rather than the full stamp: a card has room for a
+    // label or for a year, and the label is what a reader came for.
+    // The listing page still carries the whole value.
+    let when = text(preview.time).map(|raw| match shorten_timestamp(&raw) {
+        Some(short) if short.len() >= 16 => short[5..16].to_owned(),
+        Some(short) => short,
+        None => raw,
+    });
+    html! {
+        @if let Some(label) = label { span.label { (label) } }
+        @if let Some(when) = when { span.when { (when) } }
+    }
+}
+
 /// One table cell, formatted for what the value turns out to be.
 ///
 /// A listing is scanned rather than read, and the raw projection
@@ -1103,5 +1259,87 @@ mod cells {
         // A short hex run is too short to be a digest.
         assert!(rendered("code", json!("abc123")).contains("abc123"));
         assert!(!rendered("code", json!("abc123")).contains('…'));
+    }
+}
+
+#[cfg(test)]
+mod previews {
+    use super::*;
+    use crate::ir::{FieldExposure, Resource};
+    use serde_json::json;
+
+    fn resource(fields: &[&str]) -> Resource {
+        Resource {
+            name: "things".into(),
+            table: "thing".into(),
+            fields: fields.iter().map(|f| FieldExposure::column(*f)).collect(),
+            pinned: vec![],
+            filterable: vec![],
+            filter_options: Default::default(),
+            sortable: vec![],
+            max_page_size: 50,
+            actions: vec![],
+            content: None,
+            sub_resources: vec![],
+            rate_class: None,
+            reads_require: vec![],
+            watchable: false,
+            graphql: None,
+        }
+    }
+
+    /// The column that tells rows apart is the one that names them.
+    #[test]
+    fn the_label_is_the_column_that_distinguishes() {
+        let items = vec![
+            json!({"kind": "file.ready", "path": "a.txt"}),
+            json!({"kind": "file.ready", "path": "b.txt"}),
+        ];
+        let subject = resource(&["kind", "path"]);
+        let preview = preview_columns(&subject, &items);
+        assert_eq!(
+            preview.label,
+            Some("path"),
+            "kind repeats and names nothing"
+        );
+    }
+
+    /// Timestamps answer when, so they never answer what. Asking for
+    /// the most distinct column alone put four raw stamps on a card.
+    #[test]
+    fn a_timestamp_is_the_time_and_never_the_label() {
+        let items = vec![
+            json!({"kind": "file.ready", "created_at": "2026-08-05T19:29:24.394140700Z"}),
+            json!({"kind": "file.ready", "created_at": "2026-08-05T16:05:57.917213800Z"}),
+        ];
+        let subject = resource(&["kind", "created_at"]);
+        let preview = preview_columns(&subject, &items);
+        assert_eq!(preview.time, Some("created_at"));
+        assert_eq!(
+            preview.label,
+            Some("kind"),
+            "a repeated label still beats a timestamp for saying what a row is",
+        );
+    }
+
+    /// A card orients; the listing carries the exact value.
+    #[test]
+    fn the_preview_time_drops_the_year_and_the_seconds() {
+        let items = vec![json!({"kind": "run", "at": "2026-08-05T19:29:24.394140700Z"})];
+        let subject = resource(&["kind", "at"]);
+        let preview = preview_columns(&subject, &items);
+        let line = preview_line(&preview, &items[0]).into_string();
+        assert!(line.contains("08-05 19:29"), "{line}");
+        assert!(!line.contains("2026"), "{line}");
+        assert!(!line.contains(":24"), "{line}");
+    }
+
+    #[test]
+    fn a_row_with_nothing_to_say_falls_back_to_its_id() {
+        let items = vec![json!({"id": "01ABC"})];
+        let subject = resource(&["missing"]);
+        let preview = preview_columns(&subject, &items);
+        let line = preview_line(&preview, &items[0]).into_string();
+        assert!(line.contains("01ABC"), "{line}");
     }
 }

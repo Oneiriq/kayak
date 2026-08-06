@@ -425,6 +425,14 @@ pub struct ActionField {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Whether the caller may name several of `options` at once.
+    ///
+    /// The value travels as one comma-separated string, which is what
+    /// a query parameter can carry without ceremony. Meaningless
+    /// without `options`, since a set is what there is to choose
+    /// several of.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multiple: bool,
     /// The values this input accepts, when they are a closed set.
     ///
     /// Empty means anything the type allows. A non-empty list is a
@@ -544,6 +552,7 @@ mod tests {
                         name: "ttl_secs".into(),
                         kind: TypeRef::Int,
                         required: false,
+                        multiple: false,
                         description: None,
                         options: Vec::new(),
                     }],

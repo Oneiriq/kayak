@@ -161,14 +161,27 @@ fn check_options(
     let Some(text) = value.as_str() else {
         return Ok(());
     };
-    if field.options.iter().any(|option| option == text) {
-        return Ok(());
+    // A multi-valued input is a list in one string, so every part
+    // answers to the set rather than the whole.
+    let parts: Vec<&str> = if field.multiple {
+        text.split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect()
+    } else {
+        vec![text]
+    };
+    for part in &parts {
+        if !field.options.iter().any(|option| option == part) {
+            return Err(JanusError::BadRequest(format!(
+                "input {} takes {} of {}",
+                field.name,
+                if field.multiple { "any" } else { "one" },
+                field.options.join(", "),
+            )));
+        }
     }
-    Err(JanusError::BadRequest(format!(
-        "input {} takes one of {}",
-        field.name,
-        field.options.join(", "),
-    )))
+    Ok(())
 }
 
 /// Check action arguments: instance id presence, required inputs,
@@ -271,6 +284,45 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Several of a set travels as one comma-separated value, so
+    /// every part answers to the set. Checking the joined string
+    /// would refuse every multi-valued input ever sent.
+    #[test]
+    fn several_of_a_set_is_checked_part_by_part() {
+        let field = ActionField {
+            name: "facets".into(),
+            kind: TypeRef::String,
+            required: false,
+            multiple: true,
+            options: vec!["a".into(), "b".into()],
+            description: None,
+        };
+        let check = |value: &str| check_options(&field, &serde_json::Value::String(value.into()));
+        assert!(check("a").is_ok());
+        assert!(check("a,b").is_ok(), "both parts are in the set");
+        assert!(check("a, b").is_ok(), "spaces around a comma are allowed");
+        assert!(check("").is_ok(), "nothing chosen is nothing to refuse");
+        let refused = check("a,zzz").unwrap_err().to_string();
+        assert!(refused.contains("any of a, b"), "{refused}");
+    }
+
+    /// A single-valued input takes the whole string, commas and all.
+    #[test]
+    fn one_of_a_set_does_not_split() {
+        let field = ActionField {
+            name: "mode".into(),
+            kind: TypeRef::String,
+            required: false,
+            multiple: false,
+            options: vec!["a".into(), "b".into()],
+            description: None,
+        };
+        let check = |value: &str| check_options(&field, &serde_json::Value::String(value.into()));
+        assert!(check("a").is_ok());
+        let refused = check("a,b").unwrap_err().to_string();
+        assert!(refused.contains("one of a, b"), "{refused}");
+    }
     use crate::ir::ActionField;
 
     fn resource() -> Resource {
@@ -303,6 +355,7 @@ mod tests {
                     name: "ttl_secs".into(),
                     kind: TypeRef::Int,
                     required: true,
+                    multiple: false,
                     description: None,
                     options: Vec::new(),
                 },
@@ -310,6 +363,7 @@ mod tests {
                     name: "note".into(),
                     kind: TypeRef::String,
                     required: false,
+                    multiple: false,
                     description: None,
                     options: Vec::new(),
                 },

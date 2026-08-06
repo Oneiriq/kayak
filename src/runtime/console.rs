@@ -67,7 +67,7 @@ pub struct ConsoleRouter {
 /// debug dump rather than as somewhere to work.
 pub const STYLE: &str = "
 :root {
-  color-scheme: dark;
+  color-scheme: dark light;
   --ground: #0e0e13;
   --raised: #16161d;
   --line: #262630;
@@ -82,6 +82,7 @@ pub const STYLE: &str = "
   --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'Cascadia Code', Menlo, monospace;
 }
+
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.55 var(--mono);
   background: var(--ground); color: var(--text); }
@@ -112,6 +113,10 @@ thead th { position: sticky; top: 0; background: var(--raised); z-index: 1;
   font: 600 .72rem/1.5 var(--ui); text-transform: uppercase; letter-spacing: .06em;
   color: var(--soft); border-bottom-color: #33333f; }
 tbody tr:last-child td { border-bottom: 0; }
+/* A label/value table: the label hugs its text rather than taking
+   half the page and leaving the value stranded. */
+table.fields th { width: 1px; white-space: nowrap; padding-right: 2rem;
+  color: var(--soft); font-weight: 600; }
 tbody tr:hover td { background: #1c1c25; }
 td { font-variant-numeric: tabular-nums; }
 code { color: #a8cf9a; }
@@ -170,6 +175,12 @@ button { cursor: pointer; background: #1e2a3a; border-color: #3a5680;
   color: var(--bright); font-family: var(--ui); font-weight: 600; padding: .38rem .9rem; }
 button:hover { background: #27374d; }
 
+.choices { display: flex; gap: .7rem; flex-wrap: wrap; align-items: center;
+  padding: .25rem 0; }
+.choice { flex-direction: row; align-items: center; gap: .3rem; color: var(--text);
+  font-family: var(--mono); font-size: .85rem; cursor: pointer; }
+.choice input { margin: 0; accent-color: var(--accent); }
+
 .banner { border: 1px solid #3a5680; background: #16202e; padding: .6rem .85rem;
   border-radius: 3px; margin-bottom: 1rem; font-family: var(--ui); }
 .error { border-color: #6b3630; background: #241614; }
@@ -183,6 +194,38 @@ button:hover { background: #27374d; }
 .action button { justify-self: start; }
 pre { background: #101017; border: 1px solid var(--line); border-radius: 3px;
   padding: .8rem; overflow-x: auto; }
+
+/* Every colour above goes through a token, so daylight is the tokens
+   said again. An operator on a bright screen reading a black page is
+   the same problem as the reverse, and neither is a preference the
+   console gets to hold on their behalf. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground: #fbfbfc;
+    --raised: #ffffff;
+    --line: #e2e2e8;
+    --text: #22222a;
+    --soft: #63636f;
+    --faint: #93939f;
+    --bright: #0d0d12;
+    --accent: #2c5fc4;
+    --good: #1f7a3d;
+    --bad: #b3372a;
+    --busy: #8a6412;
+  }
+  input, select, textarea { background: #ffffff; border-color: #cfcfd8; }
+  button { background: #e8eefb; border-color: #b6c6e6; color: #143a7d; }
+  button:hover { background: #dbe5f8; }
+  tbody tr:hover td { background: #f2f2f6; }
+  code { color: #2f6b2a; }
+  pre { background: #f6f6f9; }
+  .chip { background: #f1f1f5; }
+  .chip-good { background: #e8f5ec; border-color: #b6ddc3; }
+  .chip-bad { background: #fdeceb; border-color: #eec2bd; }
+  .chip-busy { background: #fbf3df; border-color: #e6d5a6; }
+  .banner { background: #eef3fd; border-color: #b6c6e6; }
+  .error { background: #fdeceb; border-color: #eec2bd; }
+}
 ";
 
 impl ConsoleRouter {
@@ -588,7 +631,7 @@ impl ConsoleRouter {
                 div.banner { "action " (action) " completed" }
             }
             div.scroll {
-                table {
+                table.fields {
                     @for field in &resource.fields {
                         tr {
                             th { (field.api_name()) }
@@ -708,7 +751,7 @@ impl ConsoleRouter {
             div.banner { "completed" }
             @if let Some(map) = value.as_object() {
                 div.scroll {
-                    table {
+                    table.fields {
                         @for (key, field) in map {
                             tr {
                                 th { (key) }
@@ -826,6 +869,23 @@ fn input_for(field: &ActionField, pairs: &[(String, String)]) -> Markup {
         .find(|(k, _)| k == &field.name)
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
+    // Several of a set is a row of checkboxes. A menu that allows
+    // multiple selection hides that it does, and needs a modifier key
+    // to use; a checkbox says what it is.
+    if field.multiple && !field.options.is_empty() {
+        let chosen: Vec<&str> = current.split(',').map(str::trim).collect();
+        return html! {
+            span.choices {
+                @for option in &field.options {
+                    label.choice {
+                        input type="checkbox" name=(field.name) value=(option)
+                            checked[chosen.contains(&option.as_str())];
+                        (option)
+                    }
+                }
+            }
+        };
+    }
     // A closed set is a menu. Typing into a box and hoping is what
     // this replaces, and the list is the contract's own.
     if !field.options.is_empty() {
@@ -1112,14 +1172,33 @@ fn coerce(raw: String, kind: Option<&TypeRef>) -> Value {
 }
 
 fn parse_query(query: &str) -> Vec<(String, String)> {
-    query
+    let pairs = query
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| match pair.split_once('=') {
             Some((key, value)) => (decode(key), decode(value)),
             None => (decode(pair), String::new()),
-        })
-        .collect()
+        });
+    // A checked box submits its own pair, so a caller ticking three
+    // of them sends the key three times. The wire carries one
+    // comma-separated value, so repeats are joined here rather than
+    // asking every resolver to cope with either shape.
+    let mut collected: Vec<(String, String)> = Vec::new();
+    for (key, value) in pairs {
+        match collected.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, existing)) if !value.is_empty() => {
+                if existing.is_empty() {
+                    *existing = value;
+                } else {
+                    existing.push(',');
+                    existing.push_str(&value);
+                }
+            }
+            Some(_) => {}
+            None => collected.push((key, value)),
+        }
+    }
+    collected
 }
 
 fn decode(raw: &str) -> String {

@@ -106,6 +106,7 @@ fn contract() -> Contract {
                         kind: TypeRef::Int,
                         required: false,
                         description: None,
+                        options: Vec::new(),
                     }],
                     output: ActionOutput::Json,
                     description: None,
@@ -126,6 +127,7 @@ fn contract() -> Contract {
                 },
             ],
             content: None,
+            filter_options: Default::default(),
         }],
         queries: vec![],
     }
@@ -1552,12 +1554,14 @@ fn searching_contract() -> Contract {
                 kind: TypeRef::String,
                 required: true,
                 description: None,
+                options: Vec::new(),
             },
             ActionField {
                 name: "limit".into(),
                 kind: TypeRef::Int,
                 required: false,
                 description: None,
+                options: Vec::new(),
             },
         ],
         description: Some("Retrieval across the tenant's text.".into()),
@@ -2027,6 +2031,23 @@ mod console_pages {
         );
     }
 
+    /// Leaving the sort control at "declared order" submits `sort=`,
+    /// and reading that as a request sorts on a column named "".
+    /// The narrow button answered 400 for exactly that.
+    #[tokio::test]
+    async fn narrowing_without_a_sort_is_not_a_sort() {
+        let fixture = fixture(contract_with_versions());
+        let answer = console(&fixture)
+            .page("/r/files", "state=ready&sort=", tenant_ctx())
+            .await;
+        assert_eq!(answer.status, 200, "{}", answer.html);
+        assert!(
+            !answer.html.contains("sorting on"),
+            "an empty sort is the control saying nothing: {}",
+            answer.html,
+        );
+    }
+
     /// The sort control carries what is applied, so the next narrow
     /// keeps it.
     #[tokio::test]
@@ -2058,6 +2079,7 @@ mod console_pages {
             kind: TypeRef::Json,
             required: false,
             description: None,
+            options: Vec::new(),
         });
         let fixture = fixture(contract);
         let console = console(&fixture);

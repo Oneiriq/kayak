@@ -6,7 +6,7 @@
 //! rule of thumb: anything a deployed client could be relying on is
 //! breaking; pure additions are compatible.
 
-use crate::ir::{Action, Contract, Resource};
+use crate::ir::{Action, ActionField, Contract, Resource};
 
 /// One observed change between two contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +189,7 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
                         field.name,
                     )));
                 }
+                diff_options(&format!("query {name}"), previous, field, changes);
             }
         }
     }
@@ -197,6 +198,38 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
             changes.push(Change::Breaking(format!(
                 "query {name} lost input {}",
                 field.name,
+            )));
+        }
+    }
+}
+
+/// How a field's closed set moved.
+///
+/// Taking a value away refuses callers who were sending it, and so
+/// does introducing a set where anything used to pass. Adding a value
+/// accepts more than before, which breaks nobody.
+fn diff_options(scope: &str, old: &ActionField, new: &ActionField, changes: &mut Vec<Change>) {
+    if old.options.is_empty() && !new.options.is_empty() {
+        changes.push(Change::Breaking(format!(
+            "{scope}: input {} now takes only {}",
+            new.name,
+            new.options.join(", "),
+        )));
+        return;
+    }
+    for option in &old.options {
+        if !new.options.contains(option) {
+            changes.push(Change::Breaking(format!(
+                "{scope}: input {} no longer takes {option}",
+                old.name,
+            )));
+        }
+    }
+    for option in &new.options {
+        if !old.options.contains(option) {
+            changes.push(Change::Compatible(format!(
+                "{scope}: input {} also takes {option}",
+                new.name,
             )));
         }
     }
@@ -521,6 +554,7 @@ fn diff_action(scope: &str, old: &Action, new: &Action, changes: &mut Vec<Change
                         field.name,
                     )));
                 }
+                diff_options(&format!("{scope}: action {name}"), previous, field, changes);
             }
         }
     }

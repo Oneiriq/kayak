@@ -94,6 +94,7 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
     let mut violations = Vec::new();
     for resource in &contract.resources {
         validate_names(resource, &mut violations);
+        validate_filter_options(resource, &mut violations);
         match schema.iter().find(|t| t.name == resource.table) {
             Some(table) => validate_resource(resource, table, &mut violations),
             None => violations.push(Violation::UnknownTable {
@@ -549,6 +550,28 @@ fn validate_names(resource: &Resource, violations: &mut Vec<Violation>) {
     }
 }
 
+/// Filter options describe columns a caller may narrow by, so a key
+/// that is not filterable describes nothing and would render a menu
+/// beside a filter the server refuses.
+fn validate_filter_options(resource: &Resource, violations: &mut Vec<Violation>) {
+    for (column, options) in &resource.filter_options {
+        if !resource.filterable.iter().any(|f| f == column) {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {}", resource.name),
+                name: column.clone(),
+                problem: "filter options name a column that is not filterable".into(),
+            });
+        }
+        if options.is_empty() {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {}", resource.name),
+                name: column.clone(),
+                problem: "filter options are empty, which offers a menu of nothing".into(),
+            });
+        }
+    }
+}
+
 fn validate_resource(
     resource: &Resource,
     table: &TableDefinition,
@@ -598,6 +621,24 @@ fn validate_resource(
             }
             if !input_names.insert(field.name.clone()) {
                 problem(format!("duplicate input field {:?}", field.name));
+            }
+            // A closed set of one repeated value refuses inputs by
+            // accident, and a set on a field whose type cannot hold a
+            // string never matches anything.
+            let mut seen = std::collections::BTreeSet::new();
+            for option in &field.options {
+                if !seen.insert(option) {
+                    problem(format!(
+                        "input {:?} lists option {option:?} twice",
+                        field.name,
+                    ));
+                }
+            }
+            if !field.options.is_empty() && field.kind != crate::ir::TypeRef::String {
+                problem(format!(
+                    "input {:?} lists options but is not a string",
+                    field.name,
+                ));
             }
         }
     }

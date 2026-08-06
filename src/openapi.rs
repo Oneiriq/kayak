@@ -146,12 +146,16 @@ pub fn generate_openapi(
             .iter()
             .filter(|field| !query.path.contains(&format!("{{{}}}", field.name)))
             .map(|field| {
+                let mut schema = json!({ "type": type_name(field.kind) });
+                if !field.options.is_empty() {
+                    schema["enum"] = json!(field.options);
+                }
                 json!({
                     "name": field.name,
                     "in": "query",
                     "required": field.required,
                     "description": field.description,
-                    "schema": { "type": type_name(field.kind) },
+                    "schema": schema,
                 })
             })
             .collect();
@@ -535,7 +539,11 @@ fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> 
         let mut properties = Map::new();
         let mut required = Vec::new();
         for field in &action.input {
-            properties.insert(field.name.clone(), type_ref_schema(field.kind));
+            let mut schema = type_ref_schema(field.kind);
+            if !field.options.is_empty() {
+                schema["enum"] = json!(field.options);
+            }
+            properties.insert(field.name.clone(), schema);
             if field.required {
                 required.push(json!(field.name));
             }

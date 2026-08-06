@@ -145,6 +145,32 @@ pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<()
     Ok(())
 }
 
+/// Refuse a value the declaration does not list.
+///
+/// A closed set that nothing enforces is a lie the documents keep
+/// telling: the OpenAPI document says `enum`, the console offers a
+/// menu, and the wire takes whatever it is sent. Checking it here puts
+/// the refusal ahead of the resolver on every face at once.
+fn check_options(
+    field: &crate::ir::ActionField,
+    value: &serde_json::Value,
+) -> Result<(), JanusError> {
+    if field.options.is_empty() {
+        return Ok(());
+    }
+    let Some(text) = value.as_str() else {
+        return Ok(());
+    };
+    if field.options.iter().any(|option| option == text) {
+        return Ok(());
+    }
+    Err(JanusError::BadRequest(format!(
+        "input {} takes one of {}",
+        field.name,
+        field.options.join(", "),
+    )))
+}
+
 /// Check action arguments: instance id presence, required inputs,
 /// input types. Unknown input keys are dropped; the
 /// differ promises that removing an optional input is compatible, and
@@ -180,6 +206,7 @@ pub(crate) fn validate_query(
                         field.name,
                     )));
                 }
+                check_options(field, value)?;
                 checked.insert(field.name.clone(), value.clone());
             }
         }
@@ -232,6 +259,7 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
                         },
                     )));
                 }
+                check_options(field, value)?;
                 checked.insert(field.name.clone(), value.clone());
             }
         }
@@ -261,6 +289,7 @@ mod tests {
             rate_class: None,
             sub_resources: vec![],
             content: None,
+            filter_options: Default::default(),
         }
     }
 
@@ -275,12 +304,14 @@ mod tests {
                     kind: TypeRef::Int,
                     required: true,
                     description: None,
+                    options: Vec::new(),
                 },
                 ActionField {
                     name: "note".into(),
                     kind: TypeRef::String,
                     required: false,
                     description: None,
+                    options: Vec::new(),
                 },
             ],
             output: crate::ir::ActionOutput::Json,

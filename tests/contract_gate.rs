@@ -34,6 +34,7 @@ fn files_resource() -> Resource {
     Resource {
         name: "files".into(),
         table: "file".into(),
+        filter_options: Default::default(),
         fields: vec![
             FieldExposure::column("path"),
             FieldExposure::column("state"),
@@ -143,6 +144,7 @@ fn unknown_names_and_collisions_are_each_reported() {
     let resource = Resource {
         name: "files".into(),
         table: "file".into(),
+        filter_options: Default::default(),
         fields: vec![
             FieldExposure::column("no_such_column"),
             FieldExposure::renamed("path", "state"),

@@ -55,42 +55,118 @@ pub struct ConsoleRouter {
     config: ConsoleConfig,
 }
 
-const STYLE: &str = "
-:root { color-scheme: dark; }
+/// The console's whole stylesheet, exported because a host renders
+/// pages of its own beside the generated ones and two stylesheets
+/// means two consoles. Copal's deployment page is the case: it kept a
+/// copy, so it went on printing raw byte counts and nanosecond
+/// timestamps after the generated pages stopped.
+///
+/// Monospace for data, because columns of ids and digests line up and
+/// digits have to. A UI face for headings, labels, and prose, because
+/// setting those in monospace too is what made the page read as a
+/// debug dump rather than as somewhere to work.
+pub const STYLE: &str = "
+:root {
+  color-scheme: dark;
+  --ground: #0e0e13;
+  --raised: #16161d;
+  --line: #262630;
+  --text: #d8d8e0;
+  --soft: #8b8b9c;
+  --faint: #5a5a68;
+  --bright: #f4f4f8;
+  --accent: #7fa9ff;
+  --good: #6fcf8b;
+  --bad: #f08a7c;
+  --busy: #e3c069;
+  --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'Cascadia Code', Menlo, monospace;
+}
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.5 ui-monospace, 'Cascadia Code', Menlo, monospace;
-  background: #101014; color: #d6d6dc; }
-a { color: #8fb8ff; text-decoration: none; }
+body { margin: 0; font: 14px/1.55 var(--mono);
+  background: var(--ground); color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-header { display: flex; gap: 1.5rem; align-items: baseline; padding: .75rem 1.25rem;
-  border-bottom: 1px solid #26262e; }
-header .title { font-weight: 700; color: #f2f2f6; }
-header nav { display: flex; gap: 1rem; flex-wrap: wrap; }
-main { padding: 1.25rem; max-width: 72rem; }
-h1 { font-size: 1.15rem; margin: 0 0 1rem; color: #f2f2f6; }
-h2 { font-size: .95rem; margin: 1.5rem 0 .5rem; color: #c9c9d4; }
-table { border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }
-th, td { text-align: left; padding: .3rem .6rem; border-bottom: 1px solid #26262e;
-  vertical-align: top; }
-th { color: #9a9aa8; font-weight: 600; }
-tr:hover td { background: #16161c; }
-code { color: #b8d7a3; word-break: break-all; }
-.dim { color: #5c5c68; }
-.cards { display: flex; gap: .75rem; flex-wrap: wrap; }
-.card { border: 1px solid #26262e; padding: .75rem 1rem; min-width: 14rem; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; gap: 1.5rem; align-items: baseline; padding: .8rem 1.5rem;
+  border-bottom: 1px solid var(--line); background: var(--raised);
+  position: sticky; top: 0; z-index: 3; flex-wrap: wrap; }
+header .title { font-weight: 700; color: var(--bright); }
+header nav { display: flex; gap: 1.1rem; flex-wrap: wrap; }
+
+main { padding: 1.5rem; max-width: 120rem; margin: 0 auto; }
+h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
+  letter-spacing: -.01em; }
+h2 { font: 600 .8rem/1.4 var(--ui); margin: 2rem 0 .6rem; color: var(--soft);
+  text-transform: uppercase; letter-spacing: .08em; }
+p { font-family: var(--ui); }
+
+/* Wide tables scroll in their own box, so the page never does. */
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px;
+  background: var(--raised); }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .45rem .7rem; vertical-align: top;
+  border-bottom: 1px solid var(--line); white-space: nowrap; }
+thead th { position: sticky; top: 0; background: var(--raised); z-index: 1;
+  font: 600 .72rem/1.5 var(--ui); text-transform: uppercase; letter-spacing: .06em;
+  color: var(--soft); border-bottom-color: #33333f; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: #1c1c25; }
+td { font-variant-numeric: tabular-nums; }
+code { color: #a8cf9a; }
+.dim { color: var(--faint); }
+.count { font-family: var(--ui); color: var(--soft); font-size: .8rem; margin: .5rem 0 0; }
+
+/* A nested value costs one line closed, whatever it holds. */
+details.nested > summary { cursor: pointer; color: var(--soft); font-size: .85rem; }
+details.nested > summary:hover { color: var(--text); }
+details.nested[open] > summary { margin-bottom: .35rem; }
+details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: pre;
+  font-size: .82rem; }
+
+/* State reads at a glance or the column is not worth its width. */
+.chip { display: inline-block; padding: .05rem .45rem; border-radius: 999px;
+  font-size: .78rem; border: 1px solid var(--line); background: #1e1e27;
+  color: var(--soft); }
+.chip-good { color: var(--good); border-color: #2f5c3d; background: #14231a; }
+.chip-bad { color: var(--bad); border-color: #6b3630; background: #241614; }
+.chip-busy { color: var(--busy); border-color: #5e4f26; background: #221e12; }
+.chip-gone { color: var(--faint); }
+.chip-yes { color: var(--good); border-color: #2f5c3d; }
+.chip-no { color: var(--faint); }
+
+.cards { display: grid; gap: .75rem; margin: .5rem 0;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 3px; padding: .8rem 1rem;
+  background: var(--raised); }
 .card .name { font-weight: 700; }
-form.inline { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin: .5rem 0; }
-label { display: flex; flex-direction: column; gap: .15rem; font-size: .8rem; color: #9a9aa8; }
-input, select, textarea, button { font: inherit; background: #16161c; color: #d6d6dc;
-  border: 1px solid #33333e; padding: .3rem .5rem; }
-button { cursor: pointer; background: #1d2733; border-color: #35507a; }
-button:hover { background: #24344a; }
-.banner { border: 1px solid #35507a; background: #16202e; padding: .5rem .75rem;
-  margin-bottom: 1rem; }
-.error { border-color: #7a3535; background: #2e1616; }
-.actions { display: flex; gap: 1rem; flex-wrap: wrap; }
-.action { border: 1px solid #26262e; padding: .75rem 1rem; }
-pre { background: #16161c; border: 1px solid #26262e; padding: .75rem; overflow-x: auto; }
+
+form.inline { display: flex; gap: .6rem; flex-wrap: wrap; align-items: end;
+  margin: .5rem 0 1rem; }
+label { display: flex; flex-direction: column; gap: .2rem;
+  font: .75rem/1.4 var(--ui); color: var(--soft); }
+input, select, textarea, button { font: inherit; font-family: var(--mono);
+  background: #101017; color: var(--text); border: 1px solid #34343f;
+  border-radius: 3px; padding: .35rem .55rem; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+button { cursor: pointer; background: #1e2a3a; border-color: #3a5680;
+  color: var(--bright); font-family: var(--ui); font-weight: 600; padding: .38rem .9rem; }
+button:hover { background: #27374d; }
+
+.banner { border: 1px solid #3a5680; background: #16202e; padding: .6rem .85rem;
+  border-radius: 3px; margin-bottom: 1rem; font-family: var(--ui); }
+.error { border-color: #6b3630; background: #241614; }
+
+.actions { display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); align-items: start; }
+.action { border: 1px solid var(--line); border-radius: 3px; padding: .9rem 1.1rem;
+  background: var(--raised); }
+.action form.inline { display: grid; gap: .55rem; }
+.action input, .action select, .action textarea { width: 100%; }
+.action button { justify-self: start; }
+pre { background: #101017; border: 1px solid var(--line); border-radius: 3px;
+  padding: .8rem; overflow-x: auto; }
 ";
 
 impl ConsoleRouter {
@@ -326,7 +402,8 @@ impl ConsoleRouter {
                     button { "narrow" }
                 }
             }
-            table {
+            div.scroll {
+              table {
                 thead { tr { @for column in &columns { th { (column) } } } }
                 tbody {
                     @for item in &output.items {
@@ -338,17 +415,26 @@ impl ConsoleRouter {
                                             a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) {
                                                 (id)
                                             }
-                                        } @else { (cell(item.get(column.as_str()))) }
+                                        } @else { (cell(column, item.get(column.as_str()))) }
                                     } @else {
-                                        (cell(item.get(column.as_str())))
+                                        (cell(column, item.get(column.as_str())))
                                     }
                                 }
                             }
                         }
                     }
                 }
+              }
             }
-            @if output.items.is_empty() { p.dim { "nothing listed" } }
+            @if output.items.is_empty() {
+                p.dim { "Nothing here yet. Anything created below shows up in this list." }
+            } @else {
+                p.count {
+                    (output.items.len())
+                    @if output.items.len() == 1 { " row" } @else { " rows" }
+                    @if output.next_cursor.is_some() { ", more after these" }
+                }
+            }
             @if let Some(cursor) = &output.next_cursor {
                 p {
                     a href=(format!("{}/r/{}?cursor={}", self.config.base, name, encode(cursor))) {
@@ -419,11 +505,13 @@ impl ConsoleRouter {
             @if let Some(action) = &done {
                 div.banner { "action " (action) " completed" }
             }
-            table {
-                @for field in &resource.fields {
-                    tr {
-                        th { (field.api_name()) }
-                        td { (cell(row.get(field.api_name()))) }
+            div.scroll {
+                table {
+                    @for field in &resource.fields {
+                        tr {
+                            th { (field.api_name()) }
+                            td { (cell(field.api_name(), row.get(field.api_name()))) }
+                        }
                     }
                 }
             }
@@ -537,11 +625,13 @@ impl ConsoleRouter {
             h1 { (action) }
             div.banner { "completed" }
             @if let Some(map) = value.as_object() {
-                table {
-                    @for (key, field) in map {
-                        tr {
-                            th { (key) }
-                            td { (cell(Some(field))) }
+                div.scroll {
+                    table {
+                        @for (key, field) in map {
+                            tr {
+                                th { (key) }
+                                td { (cell(key, Some(field))) }
+                            }
                         }
                     }
                 }
@@ -631,13 +721,15 @@ fn object_table(items: &[Value]) -> Markup {
         }
     }
     html! {
-        table {
-            thead { tr { @for column in &columns { th { (column) } } } }
-            tbody {
-                @for item in items {
-                    tr {
-                        @for column in &columns {
-                            td { (cell(item.get(column.as_str()))) }
+        div.scroll {
+            table {
+                thead { tr { @for column in &columns { th { (column) } } } }
+                tbody {
+                    @for item in items {
+                        tr {
+                            @for column in &columns {
+                                td { (cell(column, item.get(column.as_str()))) }
+                            }
                         }
                     }
                 }
@@ -666,17 +758,137 @@ fn input_for(field: &ActionField, pairs: &[(String, String)]) -> Markup {
     }
 }
 
-fn cell(value: Option<&Value>) -> Markup {
+/// One table cell, formatted for what the value turns out to be.
+///
+/// A listing is scanned rather than read, and the raw projection
+/// defeats scanning. A nested object printed as a hundred and twenty
+/// characters of JSON wraps down twenty lines in a narrow column and
+/// takes the whole row with it, so five files became a page three
+/// thousand pixels tall. A digest is sixty-four characters nobody
+/// reads across. A timestamp carries nanoseconds nobody reads at all.
+///
+/// Every shortening keeps the full value in `title`, so the exact
+/// bytes stay one hover away and the table never becomes the reason a
+/// value cannot be seen.
+pub fn cell(column: &str, value: Option<&Value>) -> Markup {
     match value {
         None | Some(Value::Null) => html! { span.dim { "·" } },
-        Some(Value::String(text)) => html! { (text) },
-        Some(Value::Bool(flag)) => html! { (flag) },
-        Some(Value::Number(number)) => html! { (number.to_string()) },
+        Some(Value::Bool(flag)) => html! {
+            span.chip.chip-yes[*flag].chip-no[!*flag] { (flag) }
+        },
+        Some(Value::Number(number)) => byte_cell(column, number),
+        Some(Value::String(text)) => string_cell(column, text),
+        // Objects and arrays collapse. Opening one is a click, and a
+        // closed one costs a single line whatever it holds.
         Some(other) => {
-            let compact = serde_json::to_string(other).unwrap_or_default();
-            let shown: String = compact.chars().take(120).collect();
-            html! { code { (shown) @if compact.len() > 120 { "…" } } }
+            let summary = match other {
+                Value::Array(items) => format!("[{}]", items.len()),
+                Value::Object(map) => match map.len() {
+                    1 => "{1 field}".to_owned(),
+                    n => format!("{{{n} fields}}"),
+                },
+                _ => "…".to_owned(),
+            };
+            html! {
+                details.nested {
+                    summary { (summary) }
+                    pre { (pretty(other)) }
+                }
+            }
         }
+    }
+}
+
+/// Numbers that are byte counts, said in units a reader holds in mind.
+///
+/// The column name is the only signal available, and `size_bytes` is
+/// the convention this reads. A wrong guess costs a unit suffix on a
+/// number whose exact value is still in `title`.
+fn byte_cell(column: &str, number: &serde_json::Number) -> Markup {
+    let counts_bytes = column == "size" || column == "bytes" || column.ends_with("_bytes");
+    match (counts_bytes, number.as_u64()) {
+        (true, Some(bytes)) => html! {
+            span title=(format!("{bytes} bytes")) { (human_bytes(bytes)) }
+        },
+        _ => html! { (number.to_string()) },
+    }
+}
+
+fn string_cell(column: &str, text: &str) -> Markup {
+    // A state reads at a glance or it is not worth a column. Which
+    // words mean trouble is a small fixed vocabulary, and anything
+    // outside it renders as a plain chip rather than a guess.
+    if is_state_column(column) && text.len() <= 24 && !text.contains(' ') {
+        let tone = state_tone(text);
+        return html! { span class=(format!("chip chip-{tone}")) { (text) } };
+    }
+    if let Some(short) = shorten_digest(text) {
+        return html! { code title=(text) { (short) "…" } };
+    }
+    if let Some(short) = shorten_timestamp(text) {
+        return html! { span title=(text) { (short) } };
+    }
+    html! { (text) }
+}
+
+fn is_state_column(column: &str) -> bool {
+    matches!(
+        column,
+        "state" | "status" | "access" | "verdict" | "mode" | "kind" | "result"
+    )
+}
+
+/// The tone a state carries. Unknown words are neutral, because a
+/// console that colours a word it does not understand is guessing in
+/// the one place an operator trusts colour.
+///
+/// Access levels stay neutral for the same reason turned around.
+/// Green reads as healthy, and `public` on a storage service is the
+/// most exposed a record gets; colouring it well would say the
+/// opposite of what it means.
+fn state_tone(text: &str) -> &'static str {
+    match text {
+        "ready" | "active" | "ok" | "clean" | "succeeded" | "delivered" => "good",
+        "failed" | "error" | "quarantined" | "refused" | "expired" | "infected" => "bad",
+        "draft" | "uploading" | "scanning" | "pending" | "running" | "queued" => "busy",
+        "deleted" | "disabled" | "inactive" => "gone",
+        _ => "flat",
+    }
+}
+
+/// Content digests and other long hex runs, cut to a readable stub.
+fn shorten_digest(text: &str) -> Option<String> {
+    let long_hex = text.len() >= 32 && text.chars().all(|c| c.is_ascii_hexdigit());
+    long_hex.then(|| text.chars().take(12).collect())
+}
+
+/// `2026-08-05T19:29:23.394140700Z` down to `2026-08-05 19:29:23`.
+///
+/// Sub-second precision belongs in an audit export rather than in a
+/// column a reader scans, and the full value stays in `title`.
+fn shorten_timestamp(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let shaped = text.len() >= 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && text.ends_with('Z');
+    shaped.then(|| format!("{} {}", &text[..10], &text[11..19]))
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
     }
 }
 
@@ -762,4 +974,100 @@ fn encode(raw: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod cells {
+    use super::*;
+    use serde_json::json;
+
+    fn rendered(column: &str, value: serde_json::Value) -> String {
+        cell(column, Some(&value)).into_string()
+    }
+
+    /// The defect this formatting exists for: a nested object printed
+    /// in full wrapped down twenty lines in a narrow column and took
+    /// the row with it, so five records made a page three thousand
+    /// pixels tall. Closed, it costs one line whatever it holds.
+    #[test]
+    fn a_nested_value_collapses_to_one_line() {
+        let html = rendered("metadata", json!({"a": 1, "b": 2, "c": {"d": 3}}));
+        assert!(html.contains("{3 fields}"), "{html}");
+        assert!(html.contains("<details"), "{html}");
+        // The whole value is still there, behind the disclosure, and
+        // escaped on the way out.
+        assert!(html.contains("&quot;d&quot;"), "{html}");
+
+        assert!(rendered("tags", json!(["x", "y"])).contains("[2]"));
+        assert!(rendered("metadata", json!({"only": 1})).contains("{1 field}"));
+    }
+
+    /// Every shortening keeps the exact value in `title`, so the table
+    /// never becomes the reason a value cannot be read.
+    #[test]
+    fn shortening_never_loses_the_value() {
+        let digest = "8d44475c7cc26e9343de5e7666bd63f144762809dedbed5442a8f569498d6e0a";
+        let html = rendered("digest", json!(digest));
+        assert!(html.contains("8d44475c7cc2"), "{html}");
+        assert!(
+            html.contains(digest),
+            "the full digest stays in title: {html}"
+        );
+
+        let stamp = "2026-08-05T19:29:23.394140700Z";
+        let html = rendered("created_at", json!(stamp));
+        assert!(html.contains("2026-08-05 19:29:23"), "{html}");
+        assert!(html.contains(stamp), "{html}");
+
+        let html = rendered("size_bytes", json!(1067));
+        assert!(html.contains("1.0 KB"), "{html}");
+        assert!(html.contains("1067 bytes"), "{html}");
+    }
+
+    /// A byte count is guessed from the column name, so a number that
+    /// counts something else is left alone.
+    #[test]
+    fn only_byte_columns_are_read_as_bytes() {
+        assert!(rendered("version_count", json!(1067)).contains("1067"));
+        assert!(!rendered("version_count", json!(1067)).contains("KB"));
+        assert!(rendered("bytes", json!(2048)).contains("2.0 KB"));
+        assert!(rendered("size", json!(512)).contains("512 B"));
+    }
+
+    /// Colour is the one thing an operator trusts without reading, so
+    /// a word the vocabulary does not know gets none.
+    #[test]
+    fn only_known_states_carry_a_tone() {
+        assert!(rendered("state", json!("ready")).contains("chip-good"));
+        assert!(rendered("state", json!("quarantined")).contains("chip-bad"));
+        assert!(rendered("state", json!("scanning")).contains("chip-busy"));
+        assert!(rendered("state", json!("wobbly")).contains("chip-flat"));
+
+        // Green reads as healthy, and public is the most exposed a
+        // record gets on a storage service.
+        assert!(rendered("access", json!("public")).contains("chip-flat"));
+        assert!(!rendered("access", json!("public")).contains("chip-good"));
+
+        // A column that is not a state keeps its text plain.
+        assert!(!rendered("path", json!("ready")).contains("chip"));
+    }
+
+    #[test]
+    fn bytes_read_in_units_a_reader_holds() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(999), "999 B");
+        assert_eq!(human_bytes(1024), "1.0 KB");
+        assert_eq!(human_bytes(1_572_864), "1.5 MB");
+        assert_eq!(human_bytes(268_435_456), "256.0 MB");
+    }
+
+    /// Something shaped like neither a digest nor a timestamp comes
+    /// through untouched.
+    #[test]
+    fn ordinary_text_is_left_alone() {
+        assert!(rendered("path", json!("docs/log.txt")).contains("docs/log.txt"));
+        // A short hex run is too short to be a digest.
+        assert!(rendered("code", json!("abc123")).contains("abc123"));
+        assert!(!rendered("code", json!("abc123")).contains('…'));
+    }
 }

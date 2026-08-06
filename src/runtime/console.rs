@@ -65,9 +65,44 @@ pub struct ConsoleRouter {
 /// digits have to. A UI face for headings, labels, and prose, because
 /// setting those in monospace too is what made the page read as a
 /// debug dump rather than as somewhere to work.
+/// The theme control, and the two lines that apply a stored choice.
+///
+/// Without this the console follows `prefers-color-scheme`, which is
+/// right for most readers and stays right when this script does not
+/// run: everything here is additive, and a browser with scripting off
+/// keeps the automatic behaviour.
+///
+/// It sits in the head so the attribute lands before first paint. A
+/// choice applied after the page draws is a flash of the other theme,
+/// which is worse than not offering the choice.
+const THEME_SCRIPT: &str = r#"
+(function () {
+  var KEY = 'janus-theme';
+  var root = document.documentElement;
+  function apply(mode) {
+    if (mode) { root.setAttribute('data-theme', mode); }
+    else { root.removeAttribute('data-theme'); }
+  }
+  apply(localStorage.getItem(KEY));
+  // system -> light -> dark -> system, so a reader can always get
+  // back to following the machine.
+  window.janusTheme = function () {
+    var next = { '': 'light', light: 'dark', dark: '' }[
+      root.getAttribute('data-theme') || ''
+    ];
+    if (next) { localStorage.setItem(KEY, next); } else { localStorage.removeItem(KEY); }
+    apply(next);
+  };
+})();
+"#;
+
 pub const STYLE: &str = "
+/* Dark is the base. Every colour below goes through a token, so a
+   theme is one block of tokens rather than overrides scattered
+   through the sheet: that is what let the light theme ship as a
+   palette instead of a second stylesheet. */
 :root {
-  color-scheme: dark light;
+  color-scheme: dark;
   --ground: #0e0e13;
   --raised: #16161d;
   --line: #262630;
@@ -79,10 +114,25 @@ pub const STYLE: &str = "
   --good: #6fcf8b;
   --bad: #f08a7c;
   --busy: #e3c069;
+  --field: #101017;
+  --field-line: #34343f;
+  --button: #1e2a3a;
+  --button-line: #3a5680;
+  --button-text: #f4f4f8;
+  --button-hover: #27374d;
+  --hover: #1c1c25;
+  --code: #a8cf9a;
+  --chip: #1e1e27;
+  --chip-good: #14231a;
+  --chip-good-line: #2f5c3d;
+  --chip-bad: #241614;
+  --chip-bad-line: #6b3630;
+  --chip-busy: #221e12;
+  --chip-busy-line: #5e4f26;
+  --note: #16202e;
   --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'Cascadia Code', Menlo, monospace;
 }
-
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.55 var(--mono);
   background: var(--ground); color: var(--text); }
@@ -95,6 +145,7 @@ header { display: flex; gap: 1.5rem; align-items: baseline; padding: .8rem 1.5re
   position: sticky; top: 0; z-index: 3; flex-wrap: wrap; }
 header .title { font-weight: 700; color: var(--bright); }
 header nav { display: flex; gap: 1.1rem; flex-wrap: wrap; }
+header .theme { margin-left: auto; }
 
 main { padding: 1.5rem; max-width: 120rem; margin: 0 auto; }
 h1 { font: 600 1.35rem/1.3 var(--ui); margin: 0 0 .25rem; color: var(--bright);
@@ -111,28 +162,25 @@ th, td { text-align: left; padding: .45rem .7rem; vertical-align: top;
   border-bottom: 1px solid var(--line); white-space: nowrap; }
 thead th { position: sticky; top: 0; background: var(--raised); z-index: 1;
   font: 600 .72rem/1.5 var(--ui); text-transform: uppercase; letter-spacing: .06em;
-  color: var(--soft); border-bottom-color: #33333f; }
+  color: var(--soft); }
 tbody tr:last-child td { border-bottom: 0; }
 /* A label/value table: the label hugs its text rather than taking
    half the page and leaving the value stranded. */
 table.fields th { width: 1px; white-space: nowrap; padding-right: 2rem;
   color: var(--soft); font-weight: 600; }
-tbody tr:hover td { background: #1c1c25; }
+tbody tr:hover td { background: var(--hover); }
 td { font-variant-numeric: tabular-nums; }
-code { color: #a8cf9a; }
+code { color: var(--code); }
 .dim { color: var(--faint); }
 .count { font-family: var(--ui); color: var(--soft); font-size: .8rem; margin: .5rem 0 0; }
 .card .count { margin: .1rem 0 .4rem; }
 ul.preview { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; }
 /* min-width:0 on the row as well as the label: a grid item defaults
    to min-width:auto and refuses to shrink below its content, so the
-   row overflowed the card at 338px inside 257px and clipped the time
-   however the label was styled. */
+   row overflowed the card and clipped the time however the label was
+   styled. */
 ul.preview li { display: flex; gap: .5rem; align-items: baseline; min-width: 0;
   font-size: .85rem; color: var(--text); }
-/* min-width:0 is what lets the ellipsis happen: a flex item will not
-   shrink below its content without it, so a long label pushed the
-   time off the card instead of truncating itself. */
 ul.preview .label { flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 ul.preview .when { flex: 0 0 auto; margin-left: auto; color: var(--faint);
@@ -148,13 +196,16 @@ details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: 
 
 /* State reads at a glance or the column is not worth its width. */
 .chip { display: inline-block; padding: .05rem .45rem; border-radius: 999px;
-  font-size: .78rem; border: 1px solid var(--line); background: #1e1e27;
+  font-size: .78rem; border: 1px solid var(--line); background: var(--chip);
   color: var(--soft); }
-.chip-good { color: var(--good); border-color: #2f5c3d; background: #14231a; }
-.chip-bad { color: var(--bad); border-color: #6b3630; background: #241614; }
-.chip-busy { color: var(--busy); border-color: #5e4f26; background: #221e12; }
+.chip-good { color: var(--good); border-color: var(--chip-good-line);
+  background: var(--chip-good); }
+.chip-bad { color: var(--bad); border-color: var(--chip-bad-line);
+  background: var(--chip-bad); }
+.chip-busy { color: var(--busy); border-color: var(--chip-busy-line);
+  background: var(--chip-busy); }
 .chip-gone { color: var(--faint); }
-.chip-yes { color: var(--good); border-color: #2f5c3d; }
+.chip-yes { color: var(--good); border-color: var(--chip-good-line); }
 .chip-no { color: var(--faint); }
 
 .cards { display: grid; gap: .75rem; margin: .5rem 0;
@@ -168,22 +219,23 @@ form.inline { display: flex; gap: .6rem; flex-wrap: wrap; align-items: end;
 label { display: flex; flex-direction: column; gap: .2rem;
   font: .75rem/1.4 var(--ui); color: var(--soft); }
 input, select, textarea, button { font: inherit; font-family: var(--mono);
-  background: #101017; color: var(--text); border: 1px solid #34343f;
+  background: var(--field); color: var(--text); border: 1px solid var(--field-line);
   border-radius: 3px; padding: .35rem .55rem; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
-button { cursor: pointer; background: #1e2a3a; border-color: #3a5680;
-  color: var(--bright); font-family: var(--ui); font-weight: 600; padding: .38rem .9rem; }
-button:hover { background: #27374d; }
-
+button { cursor: pointer; background: var(--button); border-color: var(--button-line);
+  color: var(--button-text); font-family: var(--ui); font-weight: 600;
+  padding: .38rem .9rem; }
+button:hover { background: var(--button-hover); }
 .choices { display: flex; gap: .7rem; flex-wrap: wrap; align-items: center;
   padding: .25rem 0; }
 .choice { flex-direction: row; align-items: center; gap: .3rem; color: var(--text);
   font-family: var(--mono); font-size: .85rem; cursor: pointer; }
 .choice input { margin: 0; accent-color: var(--accent); }
 
-.banner { border: 1px solid #3a5680; background: #16202e; padding: .6rem .85rem;
-  border-radius: 3px; margin-bottom: 1rem; font-family: var(--ui); }
-.error { border-color: #6b3630; background: #241614; }
+.banner { border: 1px solid var(--button-line); background: var(--note);
+  padding: .6rem .85rem; border-radius: 3px; margin-bottom: 1rem;
+  font-family: var(--ui); }
+.error { border-color: var(--chip-bad-line); background: var(--chip-bad); }
 
 .actions { display: grid; gap: 1rem;
   grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); align-items: start; }
@@ -192,39 +244,43 @@ button:hover { background: #27374d; }
 .action form.inline { display: grid; gap: .55rem; }
 .action input, .action select, .action textarea { width: 100%; }
 .action button { justify-self: start; }
-pre { background: #101017; border: 1px solid var(--line); border-radius: 3px;
+pre { background: var(--field); border: 1px solid var(--line); border-radius: 3px;
   padding: .8rem; overflow-x: auto; }
 
-/* Every colour above goes through a token, so daylight is the tokens
-   said again. An operator on a bright screen reading a black page is
-   the same problem as the reverse, and neither is a preference the
-   console gets to hold on their behalf. */
+/* Daylight. Written twice on purpose: once for a reader whose system
+   says so, once for a reader who said so here, and CSS has no way to
+   share a block between a media query and a selector. Both carry only
+   tokens, so nothing else in the sheet needs a second version.
+   `:not([data-theme])` is what lets the control win over the system. */
 @media (prefers-color-scheme: light) {
-  :root {
-    --ground: #fbfbfc;
-    --raised: #ffffff;
-    --line: #e2e2e8;
-    --text: #22222a;
-    --soft: #63636f;
-    --faint: #93939f;
-    --bright: #0d0d12;
-    --accent: #2c5fc4;
-    --good: #1f7a3d;
-    --bad: #b3372a;
-    --busy: #8a6412;
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --ground: #fbfbfc; --raised: #ffffff; --line: #e2e2e8;
+    --text: #22222a; --soft: #63636f; --faint: #93939f; --bright: #0d0d12;
+    --accent: #2c5fc4; --good: #1f7a3d; --bad: #b3372a; --busy: #8a6412;
+    --field: #ffffff; --field-line: #cfcfd8;
+    --button: #e8eefb; --button-line: #b6c6e6; --button-text: #143a7d;
+    --button-hover: #dbe5f8; --hover: #f2f2f6; --code: #2f6b2a;
+    --chip: #f1f1f5;
+    --chip-good: #e8f5ec; --chip-good-line: #b6ddc3;
+    --chip-bad: #fdeceb; --chip-bad-line: #eec2bd;
+    --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
+    --note: #eef3fd;
   }
-  input, select, textarea { background: #ffffff; border-color: #cfcfd8; }
-  button { background: #e8eefb; border-color: #b6c6e6; color: #143a7d; }
-  button:hover { background: #dbe5f8; }
-  tbody tr:hover td { background: #f2f2f6; }
-  code { color: #2f6b2a; }
-  pre { background: #f6f6f9; }
-  .chip { background: #f1f1f5; }
-  .chip-good { background: #e8f5ec; border-color: #b6ddc3; }
-  .chip-bad { background: #fdeceb; border-color: #eec2bd; }
-  .chip-busy { background: #fbf3df; border-color: #e6d5a6; }
-  .banner { background: #eef3fd; border-color: #b6c6e6; }
-  .error { background: #fdeceb; border-color: #eec2bd; }
+}
+:root[data-theme=light] {
+  color-scheme: light;
+  --ground: #fbfbfc; --raised: #ffffff; --line: #e2e2e8;
+  --text: #22222a; --soft: #63636f; --faint: #93939f; --bright: #0d0d12;
+  --accent: #2c5fc4; --good: #1f7a3d; --bad: #b3372a; --busy: #8a6412;
+  --field: #ffffff; --field-line: #cfcfd8;
+  --button: #e8eefb; --button-line: #b6c6e6; --button-text: #143a7d;
+  --button-hover: #dbe5f8; --hover: #f2f2f6; --code: #2f6b2a;
+  --chip: #f1f1f5;
+  --chip-good: #e8f5ec; --chip-good-line: #b6ddc3;
+  --chip-bad: #fdeceb; --chip-bad-line: #eec2bd;
+  --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
+  --note: #eef3fd;
 }
 ";
 
@@ -802,6 +858,7 @@ impl ConsoleRouter {
                     title { (title) " · " (self.config.title) }
                     link rel="icon" href="data:,";
                     style { (PreEscaped(STYLE)) }
+                    script { (PreEscaped(THEME_SCRIPT)) }
                 }
                 body {
                     header {
@@ -819,6 +876,10 @@ impl ConsoleRouter {
                                     (query.name)
                                 }
                             }
+                        }
+                        button.theme type="button" onclick="janusTheme()"
+                            title="follow the system, or force light or dark" {
+                            "theme"
                         }
                     }
                     main { (content) }

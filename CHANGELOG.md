@@ -21,11 +21,21 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   `multiple` on a field that lists no options, which would be several
   of nothing.
 
-- **A light theme.** Every colour already went through a token, so
-  daylight is the tokens said again under
-  `prefers-color-scheme: light`. An operator on a bright screen
-  reading a black page is the same problem as the reverse, and neither
-  is a preference the console gets to hold on their behalf.
+- **A light theme, and a control that overrides it.** Daylight arrives
+  on its own under `prefers-color-scheme: light`, since an operator on
+  a bright screen reading a black page is the same problem as the
+  reverse. A `theme` control in the header cycles system, light, dark,
+  and remembers the choice, because following the machine is a good
+  default rather than an answer for everyone.
+
+  The whole sheet moved onto tokens to make this cheap: every colour
+  reads a custom property, so a theme is one block of tokens and
+  nothing else in the sheet needs a second version. The control writes
+  `data-theme` on the root, which beats the media query in both
+  directions, and the two lines that apply a stored choice sit in the
+  head so a chosen theme never flashes the other one. All of it is
+  additive: with scripting off, the automatic behaviour is exactly
+  what it was.
 
 ### Changed
 

@@ -43,6 +43,13 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 - **A footer**, carrying the contract's name and version, so a page
   ends rather than stops.
 
+- **`document`, `Page`, and `rail_section` are exported**, so a host
+  renders its own pages in the same frame. A second implementation of
+  the frame is a second console: copal's deployment page kept its own
+  markup and stayed on the old layout while every generated page
+  moved, which is the failure the stylesheet already had before it
+  was shared. The generated pages go through the same function.
+
 ### Changed
 
 - **The console has a shape.** Navigation moved into a rail down the

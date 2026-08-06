@@ -9,6 +9,35 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Closed sets are declared, enforced, and offered as menus.** An
+  input whose values are a fixed list said so in prose and nowhere a
+  machine could read: the console gave a text box, the OpenAPI
+  document promised a string, and a caller learned the vocabulary by
+  guessing or by reading a description. `ActionField.options` and
+  `Resource.filter_options` declare the list.
+
+  It reaches every face. The OpenAPI document and the MCP manifest
+  carry it as `enum`, the console renders a menu in place of a box,
+  and the dispatcher refuses a value outside the list ahead of the
+  resolver, so the declaration cannot drift into a promise nothing
+  keeps. The differ reads a narrowing set as breaking, including the
+  introduction of a set where anything used to pass, and a widening
+  one as compatible.
+
+  `validate` refuses filter options that name a column outside
+  `filterable`, an empty list, options on a field that cannot hold a
+  string, and a value listed twice.
+
+### Fixed
+
+- **The narrow button answered 400 when no sort was chosen.** The sort
+  control offers "declared order" as an empty value, and the query
+  parser read that as a request to sort on a column named `""`, which
+  the dispatcher refused. Every other control already ignored an empty
+  value; sort and cursor now do too.
+
 ### Changed
 
 - **The console reads at a glance.** A listing is scanned rather than

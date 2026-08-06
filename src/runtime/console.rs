@@ -329,6 +329,13 @@ impl ConsoleRouter {
         let mut sort_state = String::new();
         for (key, value) in pairs {
             match key.as_str() {
+                // An empty value is the control saying nothing, which
+                // is what the form submits when a caller leaves it
+                // alone. Reading it as a request would sort on a
+                // column named "", and the narrow button answered 400
+                // for exactly that whenever the sort was left at
+                // declared order.
+                "cursor" | "sort" if value.is_empty() => {}
                 "cursor" => args.cursor = Some(value.clone()),
                 "sort" => {
                     sort_state = value.clone();
@@ -373,10 +380,23 @@ impl ConsoleRouter {
             @if !resource.filterable.is_empty() || !resource.sortable.is_empty() {
                 form.inline method="get" action=(format!("{}/r/{}", self.config.base, name)) {
                     @for column in &resource.filterable {
+                        @let chosen = filter_state
+                            .get(column)
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
                         label {
                             (column)
-                            input name=(column)
-                                value=(filter_state.get(column).and_then(Value::as_str).unwrap_or(""));
+                            @match resource.filter_options.get(column) {
+                                Some(options) => select name=(column) {
+                                    option value="" selected[chosen.is_empty()] { "any" }
+                                    @for option in options {
+                                        option value=(option) selected[chosen == option] {
+                                            (option)
+                                        }
+                                    }
+                                },
+                                None => input name=(column) value=(chosen);,
+                            }
                         }
                     }
                     @if !resource.sortable.is_empty() {
@@ -744,6 +764,20 @@ fn input_for(field: &ActionField, pairs: &[(String, String)]) -> Markup {
         .find(|(k, _)| k == &field.name)
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
+    // A closed set is a menu. Typing into a box and hoping is what
+    // this replaces, and the list is the contract's own.
+    if !field.options.is_empty() {
+        return html! {
+            select name=(field.name) {
+                @if !field.required {
+                    option value="" selected[current.is_empty()] { "unset" }
+                }
+                @for option in &field.options {
+                    option value=(option) selected[current == option] { (option) }
+                }
+            }
+        };
+    }
     match field.kind {
         TypeRef::Int => html! { input type="number" name=(field.name) value=(current); },
         TypeRef::Bool => html! {

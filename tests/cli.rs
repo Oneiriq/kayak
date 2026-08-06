@@ -58,6 +58,7 @@ fn contract() -> Contract {
                     kind: TypeRef::Int,
                     required: false,
                     description: None,
+                    options: Vec::new(),
                 }],
                 output: ActionOutput::Json,
                 description: None,
@@ -66,6 +67,7 @@ fn contract() -> Contract {
                 rate_class: None,
             }],
             content: None,
+            filter_options: Default::default(),
         }],
         // Both query shapes, so the real Python and Go toolchains
         // below parse what the generators emit for them.
@@ -79,12 +81,14 @@ fn contract() -> Contract {
                         kind: TypeRef::String,
                         required: true,
                         description: None,
+                        options: Vec::new(),
                     },
                     ActionField {
                         name: "limit".into(),
                         kind: TypeRef::Int,
                         required: false,
                         description: None,
+                        options: Vec::new(),
                     },
                 ],
                 description: None,
@@ -100,6 +104,7 @@ fn contract() -> Contract {
                     kind: TypeRef::String,
                     required: true,
                     description: None,
+                    options: Vec::new(),
                 }],
                 description: None,
                 graphql_field: None,

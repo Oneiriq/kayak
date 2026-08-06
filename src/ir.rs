@@ -7,6 +7,8 @@
 //! lives here is exclusively API-side: exposure, renaming, filter and
 //! sort allowlists, and pagination bounds.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// A complete API contract.
@@ -139,6 +141,13 @@ pub struct Resource {
     /// Columns callers may filter on. Validated against indexes.
     #[serde(default)]
     pub filterable: Vec<String>,
+    /// The values a filterable column accepts, for the columns whose
+    /// values are a closed set. Keyed by column name; a column absent
+    /// here takes anything. Same reasoning as an action field's
+    /// `options`, applied to the other place a caller supplies a
+    /// value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub filter_options: BTreeMap<String, Vec<String>>,
     /// Columns callers may sort on. Validated against index prefixes.
     #[serde(default)]
     pub sortable: Vec<String>,
@@ -416,6 +425,16 @@ pub struct ActionField {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The values this input accepts, when they are a closed set.
+    ///
+    /// Empty means anything the type allows. A non-empty list is a
+    /// constraint the dispatcher enforces, so it cannot drift from
+    /// what the resolver does: a value outside it is refused before
+    /// the resolver runs. It also reaches every face, as an `enum` in
+    /// the OpenAPI document and the MCP manifest, and as a menu in the
+    /// console instead of a box a caller has to guess into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 /// Wire types for action inputs, kept small; anything richer
@@ -526,6 +545,7 @@ mod tests {
                         kind: TypeRef::Int,
                         required: false,
                         description: None,
+                        options: Vec::new(),
                     }],
                     output: ActionOutput::Json,
                     description: Some("Issue a signed URL.".into()),
@@ -539,6 +559,7 @@ mod tests {
                 rate_class: None,
                 sub_resources: vec![],
                 content: None,
+                filter_options: Default::default(),
             }],
             queries: vec![],
         };

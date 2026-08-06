@@ -76,12 +76,14 @@ fn contract() -> Contract {
                             kind: TypeRef::Int,
                             required: false,
                             description: None,
+                            options: Vec::new(),
                         },
                         ActionField {
                             name: "max_uses".into(),
                             kind: TypeRef::Int,
                             required: false,
                             description: None,
+                            options: Vec::new(),
                         },
                     ],
                     output: ActionOutput::Json,
@@ -103,6 +105,7 @@ fn contract() -> Contract {
                 },
             ],
             content: None,
+            filter_options: Default::default(),
         }],
         // One query with a path parameter and one without, so the
         // goldens carry both shapes and the CLI test's real Python and
@@ -117,12 +120,14 @@ fn contract() -> Contract {
                         kind: TypeRef::String,
                         required: true,
                         description: Some("What to look for.".into()),
+                        options: Vec::new(),
                     },
                     ActionField {
                         name: "limit".into(),
                         kind: TypeRef::Int,
                         required: false,
                         description: None,
+                        options: Vec::new(),
                     },
                 ],
                 description: Some("Retrieval across the tenant's text.".into()),
@@ -138,6 +143,7 @@ fn contract() -> Contract {
                     kind: TypeRef::String,
                     required: true,
                     description: None,
+                    options: Vec::new(),
                 }],
                 description: None,
                 graphql_field: None,
@@ -308,6 +314,7 @@ fn differ_classifies_changes() {
         kind: TypeRef::String,
         required: false,
         description: None,
+        options: Vec::new(),
     });
     let changes = diff(&old, &compatible);
     assert!(!changes.is_empty());
@@ -326,6 +333,7 @@ fn differ_classifies_changes() {
         kind: TypeRef::String,
         required: true,
         description: None,
+        options: Vec::new(),
     });
     breaking.resources[0].max_page_size = 10;
     let changes = diff(&old, &breaking);
@@ -558,12 +566,14 @@ fn clients_carry_query_methods() {
                     kind: TypeRef::String,
                     required: true,
                     description: None,
+                    options: Vec::new(),
                 },
                 ActionField {
                     name: "limit".into(),
                     kind: TypeRef::Int,
                     required: false,
                     description: None,
+                    options: Vec::new(),
                 },
             ],
             description: None,
@@ -579,6 +589,7 @@ fn clients_carry_query_methods() {
                 kind: TypeRef::String,
                 required: true,
                 description: None,
+                options: Vec::new(),
             }],
             description: None,
             graphql_field: None,
@@ -647,12 +658,14 @@ fn required_query_parameters_lead() {
                 kind: TypeRef::String,
                 required: false,
                 description: None,
+                options: Vec::new(),
             },
             ActionField {
                 name: "q".into(),
                 kind: TypeRef::String,
                 required: true,
                 description: None,
+                options: Vec::new(),
             },
         ],
         description: None,
@@ -672,4 +685,129 @@ fn required_query_parameters_lead() {
         py.contains("def search(self, q: str, cursor: str | None = None)"),
         "{py}",
     );
+}
+
+/// A closed set reaches every face and is enforced on the wire.
+///
+/// A menu the server does not honour is worse than a text box: the
+/// console offers three values, the OpenAPI document promises three,
+/// and the wire quietly takes a fourth. So the declaration renders as
+/// an `enum` in both documents and the dispatcher refuses anything
+/// outside it, ahead of the resolver.
+#[test]
+fn a_closed_set_reaches_the_documents() {
+    let mut contract = contract();
+    contract.queries = vec![Query {
+        name: "search".into(),
+        path: "/v1/search".into(),
+        input: vec![ActionField {
+            name: "mode".into(),
+            kind: TypeRef::String,
+            required: false,
+            description: None,
+            options: vec!["lexical".into(), "semantic".into(), "hybrid".into()],
+        }],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+    }];
+    let schema = vec![file_table()];
+
+    let openapi =
+        serde_json::to_string(&janus::openapi::generate_openapi(&contract, &schema).unwrap())
+            .unwrap();
+    // Named against the parameter, since an unrelated `enum` elsewhere
+    // in the document would otherwise satisfy this.
+    assert!(
+        openapi.contains(r#""enum":["lexical","semantic","hybrid"]"#),
+        "the mode parameter carries the set: {openapi}",
+    );
+
+    let mcp = serde_json::to_string(&janus::mcp::generate_mcp_tools(&contract)).unwrap();
+    assert!(
+        mcp.contains("\"enum\""),
+        "the manifest carries it too: {mcp}"
+    );
+    assert!(mcp.contains("hybrid"), "{mcp}");
+}
+
+/// Narrowing what a caller may send breaks them; widening does not.
+#[test]
+fn the_differ_reads_a_narrowing_set_as_breaking() {
+    let open = |options: Vec<String>| {
+        let mut contract = contract();
+        contract.queries = vec![Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![ActionField {
+                name: "mode".into(),
+                kind: TypeRef::String,
+                required: false,
+                description: None,
+                options,
+            }],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+        }];
+        contract
+    };
+
+    // Anything, then only two: callers sending a third now fail.
+    let changes = diff(&open(vec![]), &open(vec!["a".into(), "b".into()]));
+    assert!(
+        changes
+            .iter()
+            .any(|c| matches!(c, Change::Breaking(m) if m.contains("takes only"))),
+        "{changes:?}",
+    );
+
+    // Losing a value refuses callers who were sending it.
+    let changes = diff(&open(vec!["a".into(), "b".into()]), &open(vec!["a".into()]));
+    assert!(
+        changes
+            .iter()
+            .any(|c| matches!(c, Change::Breaking(m) if m.contains("no longer takes b"))),
+        "{changes:?}",
+    );
+
+    // Gaining one accepts more than before, which breaks nobody.
+    let changes = diff(&open(vec!["a".into()]), &open(vec!["a".into(), "b".into()]));
+    assert!(
+        changes
+            .iter()
+            .any(|c| matches!(c, Change::Compatible(m) if m.contains("also takes b"))),
+        "{changes:?}",
+    );
+    assert!(
+        !changes.iter().any(|c| matches!(c, Change::Breaking(_))),
+        "{changes:?}",
+    );
+}
+
+/// Filter options describe a column a caller may narrow by, so naming
+/// one that is not filterable offers a menu beside a refusal.
+#[test]
+fn filter_options_answer_to_the_filterable_list() {
+    let mut contract = contract();
+    contract.resources[0]
+        .filter_options
+        .insert("content_type".into(), vec!["text/plain".into()]);
+    let violations = janus::validate(&contract, &[file_table()]);
+    assert!(
+        violations
+            .iter()
+            .any(|v| format!("{v}").contains("not filterable")),
+        "{violations:?}",
+    );
+
+    // A column that is filterable passes.
+    let mut ok = contract.clone();
+    ok.resources[0].filter_options.clear();
+    ok.resources[0]
+        .filter_options
+        .insert("state".into(), vec!["ready".into(), "failed".into()]);
+    assert_eq!(janus::validate(&ok, &[file_table()]), vec![]);
 }

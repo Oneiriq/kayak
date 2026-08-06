@@ -124,6 +124,9 @@ fn action_tool(resource: &Resource, action: &crate::ir::Action) -> Value {
     }
     for field in &action.input {
         let mut schema = type_schema(field.kind);
+        if !field.options.is_empty() {
+            schema["enum"] = json!(field.options);
+        }
         if let (Some(description), Some(object)) = (&field.description, schema.as_object_mut()) {
             object.insert("description".to_owned(), json!(description));
         }
@@ -158,6 +161,9 @@ fn query_tool(query: &Query) -> Value {
     let mut required = Vec::new();
     for field in &query.input {
         let mut schema = type_schema(field.kind);
+        if !field.options.is_empty() {
+            schema["enum"] = json!(field.options);
+        }
         if let (Some(description), Some(object)) = (&field.description, schema.as_object_mut()) {
             object.insert("description".to_owned(), json!(description));
         }
@@ -219,6 +225,7 @@ mod tests {
                     rate_class: Some("mutations".into()),
                 }],
                 content: None,
+                filter_options: Default::default(),
             }],
             queries: vec![Query {
                 name: "search".into(),
@@ -228,6 +235,7 @@ mod tests {
                     kind: TypeRef::String,
                     required: true,
                     description: None,
+                    options: Vec::new(),
                 }],
                 description: None,
                 graphql_field: None,

@@ -167,6 +167,10 @@ fn resource_from(
         fields,
         pinned: bound,
         filterable,
+        // A schema states its closed sets as an assertion, which is
+        // arbitrary SurrealQL rather than a list, so the scaffold
+        // declares none and leaves them to be written by hand.
+        filter_options: Default::default(),
         sortable,
         max_page_size: 100,
         actions: Vec::new(),

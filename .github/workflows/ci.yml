@@ -7,6 +7,13 @@ on:
   push:
     branches:
       - main
+  # A run that nothing pushed. Two things need it: an outage that
+  # abandons a run mid-flight, where the commit is already on main and
+  # there is nothing left to push at it, and drift arriving without a
+  # commit, which is how a new advisory reddens a branch that has not
+  # changed. Without this the only way to re-run janus CI was another
+  # commit, and `gh workflow run` answered 422.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,7 +28,10 @@ env:
 jobs:
   check:
     name: fmt + clippy + test
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # Stated as what it refuses, so an event added later runs by
+    # default. Written the other way around, a dispatched run would
+    # match neither arm and skip every job while reporting success.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, aur0]
     steps:
       - uses: actions/checkout@v6

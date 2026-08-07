@@ -310,3 +310,256 @@ fn generate_and_diff_through_the_binary() {
     assert!(stdout.contains("BREAKING"), "{stdout}");
     assert!(stdout.contains("sort created_at removed"), "{stdout}");
 }
+
+/// Write `whole` into `at` as one file per entity, naming each with
+/// `prefix` applied to its position.
+fn split_into(whole: &Contract, at: &std::path::Path, prefix: impl Fn(usize, &str) -> String) {
+    std::fs::create_dir_all(at.join("resources")).unwrap();
+    std::fs::create_dir_all(at.join("queries")).unwrap();
+    let mut head = serde_json::to_value(whole).unwrap();
+    let fields = head.as_object_mut().unwrap();
+    fields.remove("resources");
+    fields.remove("queries");
+    std::fs::write(
+        at.join("contract.json"),
+        serde_json::to_string_pretty(&head).unwrap(),
+    )
+    .unwrap();
+    for (index, resource) in whole.resources.iter().enumerate() {
+        std::fs::write(
+            at.join("resources").join(prefix(index, &resource.name)),
+            serde_json::to_string_pretty(resource).unwrap(),
+        )
+        .unwrap();
+    }
+    for (index, query) in whole.queries.iter().enumerate() {
+        std::fs::write(
+            at.join("queries").join(prefix(index, &query.name)),
+            serde_json::to_string_pretty(query).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+/// A contract split one entity per file generates what the single
+/// file generates.
+///
+/// Splitting is how a reader gets to open `resources/files.json` and
+/// know that everything in front of them is that entity. Files are
+/// read in the order their names sort, so a split that keeps the
+/// declared order produces the documents byte for byte, which is what
+/// lets a service with artifacts already checked in take the move as
+/// a pure change of shape.
+#[test]
+fn a_directory_of_entities_generates_what_one_file_generates() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+
+    let whole = contract();
+    let from_file = dir.path().join("contract.json");
+    std::fs::write(&from_file, serde_json::to_string_pretty(&whole).unwrap()).unwrap();
+
+    let ordered = dir.path().join("ordered");
+    split_into(&whole, &ordered, |index, name| {
+        format!("{index}-{name}.json")
+    });
+
+    let generate = |contract: &std::path::Path, out: &std::path::Path| {
+        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+            .args([
+                "generate",
+                "--contract",
+                contract.to_str().unwrap(),
+                "--schema",
+                schema_path.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "generate from {}: {}",
+            contract.display(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    };
+    let one = dir.path().join("from-one");
+    let many = dir.path().join("from-many");
+    generate(&from_file, &one);
+    generate(&ordered, &many);
+
+    for artifact in [
+        "openapi.json",
+        "schema.graphql",
+        "client.rs",
+        "client.ts",
+        "client.py",
+        "client.go",
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(one.join(artifact)).unwrap(),
+            std::fs::read_to_string(many.join(artifact)).unwrap(),
+            "{artifact} differs between the one file and the directory",
+        );
+    }
+}
+
+/// Where the files sort decides where the entities print, and nothing
+/// else.
+///
+/// Naming the files without regard to the declared order moves things
+/// around inside the documents, because that order is the order they
+/// were handed over. It is presentation: the differ matches entities
+/// by name, so it reports the reordering as no change at all, and a
+/// service that does not mind the churn can name its files whatever
+/// reads best.
+#[test]
+fn file_names_decide_the_order_and_not_the_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+    let whole = contract();
+    let from_file = dir.path().join("contract.json");
+    std::fs::write(&from_file, serde_json::to_string_pretty(&whole).unwrap()).unwrap();
+
+    // `file_text` sorts before `search`; the contract declares them
+    // the other way around.
+    let plain = dir.path().join("plain");
+    split_into(&whole, &plain, |_, name| format!("{name}.json"));
+    assert!(whole.queries.len() > 1, "the fixture has an order to lose");
+
+    let out = dir.path().join("out");
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args([
+            "generate",
+            "--contract",
+            plain.to_str().unwrap(),
+            "--schema",
+            schema_path.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let sdl = std::fs::read_to_string(out.join("schema.graphql")).unwrap();
+    assert!(
+        sdl.find("fileText(").unwrap() < sdl.find("search(").unwrap(),
+        "the file names set the order: {sdl}",
+    );
+
+    // The contract is the same contract either way.
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args(["diff", from_file.to_str().unwrap(), plain.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "diff refused: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("no contract changes"),
+        "reordering is not a contract change: {}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+}
+
+/// What a directory contract refuses, and what it says.
+///
+/// Each of these is a shape someone will write by accident. A message
+/// that names the file and the problem is the difference between a
+/// two-second fix and a hunt through generated output for the entity
+/// that went missing.
+#[test]
+fn a_directory_contract_refuses_what_it_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+    let whole = contract();
+
+    let refusal = |at: &std::path::Path| -> String {
+        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+            .args([
+                "generate",
+                "--contract",
+                at.to_str().unwrap(),
+                "--schema",
+                schema_path.to_str().unwrap(),
+                "--out",
+                &format!("{}-out", at.to_str().unwrap()),
+            ])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{} was accepted", at.display());
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    // Entities left in the head, where they would be read twice or
+    // not at all.
+    let doubled = dir.path().join("doubled");
+    split_into(&whole, &doubled, |_, name| format!("{name}.json"));
+    std::fs::write(
+        doubled.join("contract.json"),
+        serde_json::to_string_pretty(&whole).unwrap(),
+    )
+    .unwrap();
+    let said = refusal(&doubled);
+    assert!(
+        said.contains("contract.json") && said.contains("resources/"),
+        "names the file and where they belong: {said}",
+    );
+
+    // An extension typo, which would otherwise be a resource that
+    // quietly does not exist.
+    let typo = dir.path().join("typo");
+    split_into(&whole, &typo, |_, name| format!("{name}.json"));
+    std::fs::rename(
+        typo.join("resources").join("files.json"),
+        typo.join("resources").join("files.jsonc"),
+    )
+    .unwrap();
+    let said = refusal(&typo);
+    assert!(
+        said.contains("files.jsonc") && said.contains(".json"),
+        "names the file it will not read: {said}",
+    );
+
+    // A directory that declares nothing.
+    let bare = dir.path().join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    let mut head = serde_json::to_value(&whole).unwrap();
+    let fields = head.as_object_mut().unwrap();
+    fields.remove("resources");
+    fields.remove("queries");
+    std::fs::write(
+        bare.join("contract.json"),
+        serde_json::to_string_pretty(&head).unwrap(),
+    )
+    .unwrap();
+    let said = refusal(&bare);
+    assert!(said.contains("declares no"), "says so plainly: {said}");
+
+    // No head at all.
+    let headless = dir.path().join("headless");
+    std::fs::create_dir_all(headless.join("resources")).unwrap();
+    let said = refusal(&headless);
+    assert!(
+        said.contains("contract.json"),
+        "names what is missing: {said}"
+    );
+}

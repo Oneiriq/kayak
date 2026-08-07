@@ -275,3 +275,27 @@ fn chosen_names_are_gated_against_surrealdb_reserved_words() {
     assert!(janus::is_reserved("$auth"));
     assert!(!janus::is_reserved("tenant_id"));
 }
+
+/// Two resources cannot share a name.
+///
+/// Both would claim the same REST prefix and the same GraphQL field,
+/// and whichever the generator wrote second would win silently. The
+/// contract already refuses this for queries, rate classes, actions
+/// and sub-collections; resources were the one level that let it
+/// through, which a contract assembled from several files makes easy
+/// to do by accident.
+#[test]
+fn two_resources_cannot_share_a_name() {
+    let violations = validate(
+        &contract(vec![files_resource(), files_resource()]),
+        &[file_table()],
+    );
+    assert!(
+        violations.iter().any(|v| matches!(
+            v,
+            Violation::InvalidName { name, problem, .. }
+                if name == "files" && problem.contains("duplicate")
+        )),
+        "the collision is named: {violations:?}",
+    );
+}

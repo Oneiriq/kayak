@@ -92,7 +92,18 @@ pub enum Violation {
 /// Validate a contract against schema definitions; empty means valid.
 pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violation> {
     let mut violations = Vec::new();
+    // Two resources under one name would claim the same REST prefix
+    // and the same GraphQL field, and the one written second would
+    // win without saying so.
+    let mut resource_names = std::collections::BTreeSet::new();
     for resource in &contract.resources {
+        if !resource_names.insert(resource.name.clone()) {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {}", resource.name),
+                name: resource.name.clone(),
+                problem: "duplicate resource".into(),
+            });
+        }
         validate_names(resource, &mut violations);
         validate_filter_options(resource, &mut violations);
         match schema.iter().find(|t| t.name == resource.table) {

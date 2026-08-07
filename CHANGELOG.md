@@ -113,13 +113,13 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   and remembers the choice, because following the machine is a good
   default rather than an answer for everyone.
 
-  The whole sheet moved onto tokens to make this cheap: every colour
+  The whole sheet moved onto tokens to make this cheap: every color
   reads a custom property, so a theme is one block of tokens and
   nothing else in the sheet needs a second version. The control writes
   `data-theme` on the root, which beats the media query in both
   directions, and the two lines that apply a stored choice sit in the
   head so a chosen theme never flashes the other one. All of it is
-  additive: with scripting off, the automatic behaviour is exactly
+  additive: with scripting off, the automatic behavior is exactly
   what it was.
 
 ### Changed
@@ -186,8 +186,8 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   to a stub, timestamps lose their sub-seconds, byte counts read in
   units, and every shortening keeps the exact value in `title`, so the
   table never becomes the reason a value cannot be read. A state gets
-  a chip coloured by a small fixed vocabulary; a word outside it stays
-  neutral, because colour is the one thing an operator trusts without
+  a chip colored by a small fixed vocabulary; a word outside it stays
+  neutral, because color is the one thing an operator trusts without
   reading. Access levels stay neutral for the same reason turned
   around: green reads as healthy, and `public` is the most exposed a
   record gets.

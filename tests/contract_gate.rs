@@ -299,3 +299,38 @@ fn two_resources_cannot_share_a_name() {
         "the collision is named: {violations:?}",
     );
 }
+
+/// A stored string cannot panic the page that renders it.
+///
+/// `shorten_timestamp` checked bytes 4, 7, 10 and 13 looked like a
+/// timestamp and then sliced to byte 19. Nothing constrained bytes 14
+/// through 19, so a value that passed the shape check and carried a
+/// multi-byte character across byte 19 was sliced through the middle
+/// of it. Field values are caller-controlled: a file path or a
+/// metadata string of that shape took down the listing that showed
+/// it.
+#[test]
+fn a_crafted_field_value_does_not_panic_the_cell() {
+    // Passes every shape check, and '€' occupies bytes 17, 18 and 19.
+    let crafted = "2026-08-05T19:00x\u{20ac}Z";
+    assert!(crafted.len() >= 20);
+    for value in [
+        crafted.to_owned(),
+        "2026-08-05T19:29:23Z".to_owned(),
+        "2026-08-05T19:29:2\u{20ac}Z".to_owned(),
+        "\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}\u{20ac}Z".to_owned(),
+        "not a timestamp at all".to_owned(),
+    ] {
+        let json = serde_json::Value::String(value.clone());
+        // Rendering at all is the assertion.
+        let _ = janus::runtime::cell("created_at", Some(&json));
+    }
+
+    // The ordinary value still shortens the way it did.
+    let ordinary = serde_json::Value::String("2026-08-05T19:29:23.394140700Z".to_owned());
+    let rendered = janus::runtime::cell("created_at", Some(&ordinary)).into_string();
+    assert!(
+        rendered.contains("2026-08-05 19:29:23"),
+        "the shortened form survives: {rendered}",
+    );
+}

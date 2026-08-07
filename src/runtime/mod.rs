@@ -30,6 +30,7 @@ pub mod principal;
 pub mod rate;
 pub mod resolvers;
 pub mod rest;
+mod wire;
 
 #[cfg(feature = "graphql")]
 pub mod graphql;

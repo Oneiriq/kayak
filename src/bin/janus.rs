@@ -244,7 +244,16 @@ fn run_diff(arguments: &[String]) -> ExitCode {
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    serde_json::from_str(text_of(&text)).map_err(|e| e.to_string())
+}
+
+/// The text of a file, without a byte-order mark in front of it.
+///
+/// Several Windows editors write one, JSON has no place for it, and
+/// what a reader gets back is "expected value at line 1 column 1"
+/// about a character they cannot see.
+fn text_of(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
 /// A contract, from one file or from a directory of them.
@@ -267,8 +276,8 @@ fn read_contract(path: &str) -> Result<Contract, String> {
     let head_path = at.join("contract.json");
     let text =
         std::fs::read_to_string(&head_path).map_err(|e| format!("{}: {e}", head_path.display()))?;
-    let mut head: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", head_path.display()))?;
+    let mut head: serde_json::Value = serde_json::from_str(text_of(&text))
+        .map_err(|e| format!("{}: {e}", head_path.display()))?;
     let Some(fields) = head.as_object_mut() else {
         return Err(format!("{}: not an object", head_path.display()));
     };
@@ -324,7 +333,9 @@ fn read_each<T: serde::de::DeserializeOwned>(at: &std::path::Path) -> Result<Vec
     for path in paths {
         let text =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        out.push(serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?);
+        out.push(
+            serde_json::from_str(text_of(&text)).map_err(|e| format!("{}: {e}", path.display()))?,
+        );
     }
     Ok(out)
 }

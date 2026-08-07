@@ -26,6 +26,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::JanusError;
+use crate::runtime::wire::percent_decode as decode;
 use surql::schema::TableDefinition;
 
 /// One rendered page: an HTTP status and a complete HTML document.
@@ -116,7 +117,7 @@ document.addEventListener('click', function (event) {
 /// Without this the console follows `prefers-color-scheme`, which is
 /// right for most readers and stays right when this script does not
 /// run: everything here is additive, and a browser with scripting off
-/// keeps the automatic behaviour.
+/// keeps the automatic behavior.
 ///
 /// It sits in the head so the attribute lands before first paint. A
 /// choice applied after the page draws is a flash of the other theme,
@@ -143,7 +144,7 @@ const THEME_SCRIPT: &str = r#"
 "#;
 
 pub const STYLE: &str = "
-/* Dark is the base. Every colour below goes through a token, so a
+/* Dark is the base. Every color below goes through a token, so a
    theme is one block of tokens rather than overrides scattered
    through the sheet: that is what let the light theme ship as a
    palette instead of a second stylesheet. */
@@ -1701,8 +1702,8 @@ fn preview_columns<'a>(resource: &'a crate::ir::Resource, items: &[Value]) -> Pr
         let candidate = (api, distinct.len(), LABELS.contains(&api));
         let better = match label {
             None => true,
-            Some((_, count, labelled)) => {
-                candidate.1 > count || (candidate.1 == count && candidate.2 && !labelled)
+            Some((_, count, labeled)) => {
+                candidate.1 > count || (candidate.1 == count && candidate.2 && !labeled)
             }
         };
         if better {
@@ -2401,12 +2402,12 @@ fn is_state_column(column: &str) -> bool {
 }
 
 /// The tone a state carries. Unknown words are neutral, because a
-/// console that colours a word it does not understand is guessing in
-/// the one place an operator trusts colour.
+/// console that colors a word it does not understand is guessing in
+/// the one place an operator trusts color.
 ///
 /// Access levels stay neutral for the same reason turned around.
 /// Green reads as healthy, and `public` on a storage service is the
-/// most exposed a record gets; colouring it well would say the
+/// most exposed a record gets; coloring it well would say the
 /// opposite of what it means.
 fn state_tone(text: &str) -> &'static str {
     match text {
@@ -2444,14 +2445,26 @@ fn shorten_digest(text: &str) -> Option<String> {
 ///
 /// Sub-second precision belongs in an audit export rather than in a
 /// column a reader scans, and the full value stays in `title`.
+///
+/// Every byte the shortened form is built from is checked to be the
+/// ASCII this shape calls for. Checking four separators and then
+/// slicing to byte 19 left bytes 14 through 18 to be anything, so a
+/// value that passed the shape check and carried a multi-byte
+/// character across the end of the slice was cut through the middle
+/// of it. Field values are the caller's to choose.
 fn shorten_timestamp(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
-    let shaped = text.len() >= 20
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[10] == b'T'
-        && bytes[13] == b':'
-        && text.ends_with('Z');
+    if bytes.len() < 20 || !text.ends_with('Z') {
+        return None;
+    }
+    let shaped = bytes[..19].iter().enumerate().all(|(at, byte)| match at {
+        4 | 7 => *byte == b'-',
+        10 => *byte == b'T',
+        13 | 16 => *byte == b':',
+        _ => byte.is_ascii_digit(),
+    });
+    // Every one of those 19 bytes is ASCII, so both halves land on
+    // character boundaries.
     shaped.then(|| format!("{} {}", &text[..10], &text[11..19]))
 }
 
@@ -2529,37 +2542,6 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
     collected
 }
 
-fn decode(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                match u8::from_str_radix(&raw[index + 1..index + 3], 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        index += 3;
-                    }
-                    Err(_) => {
-                        out.push(b'%');
-                        index += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 fn encode(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for byte in raw.bytes() {
@@ -2631,7 +2613,7 @@ mod cells {
         assert!(rendered("size", json!(512)).contains("512 B"));
     }
 
-    /// Colour is the one thing an operator trusts without reading, so
+    /// Color is the one thing an operator trusts without reading, so
     /// a word the vocabulary does not know gets none.
     #[test]
     fn only_known_states_carry_a_tone() {

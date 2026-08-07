@@ -141,7 +141,7 @@ fn rows() -> Vec<serde_json::Value> {
             "size": 3, "created_at": "2026-07-30T00:00:00Z",
         }),
         serde_json::json!({
-            "id": "01B", "path": "b.txt", "state": "uploading",
+            "id": "01kz9as7fqsnybjs5v04d7z4n4", "path": "b.txt", "state": "uploading",
             "size": null, "created_at": "2026-07-30T01:00:00Z",
         }),
     ]
@@ -403,11 +403,13 @@ async fn get_returns_row_or_null_and_nullables_render() {
     let fixture = fixture(contract());
     let response = fixture
         .schema
-        .execute(tenant_request(r#"{ file(id: "01B") { id size state } }"#))
+        .execute(tenant_request(
+            r#"{ file(id: "01kz9as7fqsnybjs5v04d7z4n4") { id size state } }"#,
+        ))
         .await;
     assert!(response.errors.is_empty(), "{:?}", response.errors);
     let data = response.data.into_json().unwrap();
-    assert_eq!(data["file"]["id"], "01B");
+    assert_eq!(data["file"]["id"], "01kz9as7fqsnybjs5v04d7z4n4");
     assert_eq!(data["file"]["size"], serde_json::Value::Null);
 
     let response = fixture
@@ -701,7 +703,7 @@ async fn a_sub_collection_enforces_its_own_declarations() {
     let response = fixture
         .schema
         .execute(tenant_request(
-            r#"{ file(id: "01B") { versions { items { id } } } }"#,
+            r#"{ file(id: "01kz9as7fqsnybjs5v04d7z4n4") { versions { items { id } } } }"#,
         ))
         .await;
     assert!(response.errors.is_empty(), "{:?}", response.errors);
@@ -1914,6 +1916,22 @@ mod console_pages {
         let listing = console.page("/r/files", "", tenant_ctx()).await;
         assert_eq!(listing.status, 200);
         assert!(listing.html.contains("01A"), "fixture rows render");
+        // An identifier long enough to push every other column off a
+        // laptop screen is cut to the part that tells two apart, and
+        // keeps the whole of itself in `title`.
+        assert!(
+            listing
+                .html
+                .contains("title=\"01kz9as7fqsnybjs5v04d7z4n4\">01kz9as7fqsn\u{2026}<"),
+            "a long id is shortened: {}",
+            listing.html,
+        );
+        // One short enough to read is left alone.
+        assert!(
+            !listing.html.contains("01A\u{2026}"),
+            "a short id is left whole: {}",
+            listing.html,
+        );
         assert!(
             listing.html.contains("/console/r/files/01A"),
             "ids link to the detail page",

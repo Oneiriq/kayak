@@ -178,6 +178,7 @@ pub const STYLE: &str = "
   --chip-busy-line: #5e4f26;
   --note: #16202e;
   --shadow: 0 20px 50px rgba(0, 0, 0, .5);
+  --shade: rgba(0, 0, 0, .5);
   --ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, monospace;
   /* One radius for surfaces, one for the controls inside them. Two
@@ -227,10 +228,11 @@ header .icon { margin-left: auto; }
   overflow-y: auto; overscroll-behavior: contain; }
 .rail .filter { width: 100%; margin: 0 0 .4rem; font-size: .82rem; }
 .rail .no-match { display: none; margin: .1rem .6rem; font-size: .82rem; }
-/* A scrollbar the width of a border, so a long list does not put a
-   second rule down the middle of the window. */
+/* Thin, and with a track that can be seen. A table wider than its
+   box shows nothing else to say there is more to the right, and an
+   overlay scrollbar appears only once a reader already scrolled. */
 .rail, .scroll, pre { scrollbar-width: thin;
-  scrollbar-color: var(--field-line) transparent; }
+  scrollbar-color: var(--field-line) var(--chip); }
 .rail-heading { font: 600 .68rem/1.4 var(--ui); text-transform: uppercase;
   letter-spacing: .09em; color: var(--faint); padding: 0 .6rem; margin: 0 0 .4rem; }
 .rail-heading + nav { margin-bottom: 1.4rem; }
@@ -256,7 +258,8 @@ footer .dim { margin-left: auto; }
 /* The reference reads as documentation, so the schema it serves is
    listed in the rail and the page keeps the width for the thing being
    read. */
-.reference { min-width: 0; max-width: 82rem; }
+.reference { min-width: 0; }
+.reference > p { max-width: 62rem; }
 .rail nav.filterable { margin-bottom: 1.4rem; }
 .rail nav.filterable a { font-family: var(--mono); font-size: .8rem;
   color: var(--soft); overflow: hidden; text-overflow: ellipsis;
@@ -324,9 +327,24 @@ h2 { font: 600 .8rem/1.4 var(--ui); margin: 2.25rem 0 .7rem; color: var(--soft);
   text-transform: uppercase; letter-spacing: .08em; }
 h1 + p.dim { margin-top: 0; }
 
-/* Wide tables scroll in their own box, so the page never does. */
+/* Wide tables scroll in their own box, so the page never does. A
+   table cut off at a hard edge reads as broken rather than as
+   scrollable, and an overlay scrollbar shows up only after a reader
+   has already scrolled. So each end that has more behind it carries a
+   shadow: the `local` layers ride with the content and cover the
+   shadow once that end is reached. */
 .scroll { overflow-x: auto; border: 1px solid var(--line);
-  border-radius: var(--radius); background: var(--raised); }
+  border-radius: var(--radius);
+  background:
+    linear-gradient(to right, var(--raised) 45%, transparent)
+      0 0 / 3rem 100% no-repeat local,
+    linear-gradient(to left, var(--raised) 45%, transparent)
+      100% 0 / 3rem 100% no-repeat local,
+    linear-gradient(to right, var(--shade), transparent)
+      0 0 / 1.4rem 100% no-repeat scroll,
+    linear-gradient(to left, var(--shade), transparent)
+      100% 0 / 1.4rem 100% no-repeat scroll,
+    var(--raised); }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: .5rem .8rem; vertical-align: top;
   border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -478,6 +496,7 @@ pre { background: var(--well); border: 1px solid var(--line);
     --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
     --note: #eef3fd;
     --shadow: 0 20px 50px rgba(16, 18, 32, .16);
+  --shade: rgba(16, 18, 32, .22);
   }
 }
 :root[data-theme=light] {
@@ -494,6 +513,7 @@ pre { background: var(--well); border: 1px solid var(--line);
   --chip-busy: #fbf3df; --chip-busy-line: #e6d5a6;
   --note: #eef3fd;
   --shadow: 0 20px 50px rgba(16, 18, 32, .16);
+  --shade: rgba(16, 18, 32, .22);
 }
 ";
 
@@ -1182,8 +1202,8 @@ impl ConsoleRouter {
                                 td {
                                     @if column == "id" {
                                         @if let Some(id) = item.get("id").and_then(Value::as_str) {
-                                            a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) {
-                                                (id)
+                                            a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) title=(id) {
+                                                (shorten_id(id))
                                             }
                                         } @else { (cell(column, item.get(column.as_str()))) }
                                     } @else {
@@ -2399,6 +2419,22 @@ fn state_tone(text: &str) -> &'static str {
 }
 
 /// Content digests and other long hex runs, cut to a readable stub.
+/// An identifier down to the part that tells two of them apart.
+///
+/// The same treatment a digest gets, for the same reason: the column
+/// is scanned, the full value is in `title`, and the row opens a page
+/// that shows all of it. Anything short enough to read is left alone,
+/// and so is anything with a space in it, which is a name rather than
+/// an identifier.
+fn shorten_id(text: &str) -> String {
+    let opaque = text.len() > 16 && !text.contains(' ');
+    if !opaque {
+        return text.to_owned();
+    }
+    let head: String = text.chars().take(12).collect();
+    format!("{head}\u{2026}")
+}
+
 fn shorten_digest(text: &str) -> Option<String> {
     let long_hex = text.len() >= 32 && text.chars().all(|c| c.is_ascii_hexdigit());
     long_hex.then(|| text.chars().take(12).collect())

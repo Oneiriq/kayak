@@ -1,0 +1,257 @@
+//! Every change that takes something away from a caller is named.
+//!
+//! A differ that misses one is the worst thing in the toolchain: the
+//! gate goes green and the break reaches whoever was calling. So
+//! rather than checking the cases the differ already knows it makes,
+//! this states the changes that are breaking by definition, applies
+//! each to a contract, and insists each is reported.
+
+use janus::diff::diff;
+use janus::{
+    Action, ActionField, ActionOutput, Contract, FieldExposure, Query, RateClass, Resource,
+    SubResource, TypeRef,
+};
+
+fn base() -> Contract {
+    Contract {
+        name: "probe".into(),
+        version: "1.0.0".into(),
+        ir_revision: 1,
+        limits: None,
+        rate_classes: vec![RateClass {
+            name: "reads".into(),
+            units_per_minute: 1_000,
+        }],
+        resources: vec![Resource {
+            name: "files".into(),
+            table: "file".into(),
+            fields: vec![
+                FieldExposure::column("path"),
+                FieldExposure::column("state"),
+                FieldExposure::renamed("size_bytes", "size"),
+            ],
+            pinned: vec!["tenant_id".into()],
+            filterable: vec!["state".into()],
+            filter_options: Default::default(),
+            sortable: vec!["created_at".into()],
+            max_page_size: 100,
+            watchable: true,
+            actions: vec![Action {
+                name: "issue_url".into(),
+                method: "POST".into(),
+                path: "/{id}/url".into(),
+                input: vec![ActionField {
+                    name: "ttl_secs".into(),
+                    kind: TypeRef::Int,
+                    required: false,
+                    multiple: false,
+                    options: Vec::new(),
+                    description: None,
+                }],
+                output: ActionOutput::Json,
+                description: None,
+                graphql_field: None,
+                requires: vec!["read".into()],
+                rate_class: None,
+            }],
+            content: None,
+            sub_resources: vec![SubResource {
+                name: "versions".into(),
+                table: "file_version".into(),
+                parent_key: "file".into(),
+                fields: vec![FieldExposure::column("ordinal")],
+                pinned: vec![],
+                filterable: vec![],
+                sortable: vec!["created_at".into()],
+                description: None,
+                max_page_size: 50,
+                graphql: None,
+            }],
+            rate_class: Some("reads".into()),
+            reads_require: vec!["read".into()],
+            graphql: None,
+        }],
+        queries: vec![Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![ActionField {
+                name: "q".into(),
+                kind: TypeRef::String,
+                required: true,
+                multiple: false,
+                options: Vec::new(),
+                description: None,
+            }],
+            description: None,
+            graphql_field: None,
+            requires: vec!["search".into()],
+            rate_class: None,
+        }],
+    }
+}
+
+/// One change, and what it takes away said in words.
+type Mutation = (&'static str, Box<dyn Fn(&mut Contract)>);
+
+/// Each entry takes something away that a caller could have been
+/// using. Every one has to come back Breaking.
+fn taking_something_away() -> Vec<Mutation> {
+    vec![
+        (
+            "a resource is gone",
+            Box::new(|c: &mut Contract| c.resources.clear()),
+        ),
+        (
+            "a query is gone",
+            Box::new(|c: &mut Contract| c.queries.clear()),
+        ),
+        (
+            "an action is gone",
+            Box::new(|c: &mut Contract| c.resources[0].actions.clear()),
+        ),
+        (
+            "a sub-collection is gone",
+            Box::new(|c: &mut Contract| c.resources[0].sub_resources.clear()),
+        ),
+        (
+            "an exposed field is gone",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].fields.pop();
+            }),
+        ),
+        (
+            "a filter is gone",
+            Box::new(|c: &mut Contract| c.resources[0].filterable.clear()),
+        ),
+        (
+            "a sort is gone",
+            Box::new(|c: &mut Contract| c.resources[0].sortable.clear()),
+        ),
+        (
+            "the page ceiling is lower",
+            Box::new(|c: &mut Contract| c.resources[0].max_page_size = 10),
+        ),
+        (
+            "a resource stopped being watchable",
+            Box::new(|c: &mut Contract| c.resources[0].watchable = false),
+        ),
+        (
+            "reading takes another scope",
+            Box::new(|c: &mut Contract| c.resources[0].reads_require.push("admin".into())),
+        ),
+        (
+            "an action takes another scope",
+            Box::new(|c: &mut Contract| c.resources[0].actions[0].requires.push("admin".into())),
+        ),
+        (
+            "a query takes another scope",
+            Box::new(|c: &mut Contract| c.queries[0].requires.push("admin".into())),
+        ),
+        (
+            "an action gained a required input",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].actions[0].input.push(ActionField {
+                    name: "reason".into(),
+                    kind: TypeRef::String,
+                    required: true,
+                    multiple: false,
+                    options: Vec::new(),
+                    description: None,
+                })
+            }),
+        ),
+        (
+            "an optional input became required",
+            Box::new(|c: &mut Contract| c.resources[0].actions[0].input[0].required = true),
+        ),
+        (
+            "an input changed type",
+            Box::new(|c: &mut Contract| c.resources[0].actions[0].input[0].kind = TypeRef::String),
+        ),
+        (
+            "an action moved",
+            Box::new(|c: &mut Contract| c.resources[0].actions[0].path = "/{id}/elsewhere".into()),
+        ),
+        (
+            "a budget shrank",
+            Box::new(|c: &mut Contract| c.rate_classes[0].units_per_minute = 10),
+        ),
+        (
+            "an operation started being metered",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].actions[0].rate_class = Some("reads".into())
+            }),
+        ),
+        (
+            "a ceiling appeared",
+            Box::new(|c: &mut Contract| {
+                c.limits = Some(janus::ContractLimits {
+                    max_depth: Some(3),
+                    max_complexity: None,
+                    max_watches_per_principal: None,
+                })
+            }),
+        ),
+        (
+            "an action's answer changed shape",
+            Box::new(|c: &mut Contract| c.resources[0].actions[0].output = ActionOutput::None),
+        ),
+    ]
+}
+
+#[test]
+fn every_change_that_takes_something_away_is_breaking() {
+    let mut missed = Vec::new();
+    for (what, apply) in taking_something_away() {
+        let before = base();
+        let mut after = base();
+        apply(&mut after);
+        let changes = diff(&before, &after);
+        if !changes.iter().any(janus::diff::Change::is_breaking) {
+            missed.push(format!("{what}  ->  reported {changes:?}"));
+        }
+    }
+    assert!(
+        missed.is_empty(),
+        "the differ let these through:\n  {}",
+        missed.join("\n  "),
+    );
+}
+
+/// A contract compared with itself has nothing to say.
+///
+/// A differ that invents a change on an unchanged contract turns the
+/// gate into noise, and noise gets waved through.
+#[test]
+fn a_contract_has_no_quarrel_with_itself() {
+    assert_eq!(diff(&base(), &base()), vec![]);
+}
+
+/// Adding is not taking away.
+#[test]
+fn additions_are_compatible() {
+    let before = base();
+    let mut after = base();
+    after.resources[0].filterable.push("path".into());
+    after.resources[0].max_page_size = 500;
+    after.rate_classes[0].units_per_minute = 10_000;
+    after.resources[0].actions[0].input.push(ActionField {
+        name: "note".into(),
+        kind: TypeRef::String,
+        required: false,
+        multiple: false,
+        options: Vec::new(),
+        description: None,
+    });
+    let changes = diff(&before, &after);
+    let breaking: Vec<_> = changes
+        .iter()
+        .filter(|c| c.is_breaking())
+        .map(janus::diff::Change::message)
+        .collect();
+    assert!(
+        breaking.is_empty(),
+        "additions read as breaking: {breaking:?}"
+    );
+    assert!(!changes.is_empty(), "and they are still reported");
+}

@@ -397,6 +397,10 @@ details.nested pre { margin: 0; max-height: 20rem; overflow: auto; white-space: 
   background: var(--chip-bad); }
 .chip-busy { color: var(--busy); border-color: var(--chip-busy-line);
   background: var(--chip-busy); }
+/* A word the console does not know keeps the neutral tone rather
+   than being guessed at, and says so in the markup so the sheet
+   accounts for every class a cell can write. */
+.chip-flat { color: var(--soft); }
 .chip-gone { color: var(--faint); }
 .chip-yes { color: var(--good); border-color: var(--chip-good-line); }
 .chip-no { color: var(--faint); }

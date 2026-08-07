@@ -102,6 +102,42 @@ mod tests {
         assert_eq!(percent_decode("%2Fa"), "/a");
     }
 
+    /// Every short string over an alphabet built to break it.
+    ///
+    /// Three defects in a row came from a byte position assumed to be
+    /// a character boundary, each found by hand after it shipped.
+    /// This generates the space instead: one-, two-, three- and
+    /// four-byte characters beside the escape characters the decoder
+    /// looks for, in every arrangement up to four of them. Exhaustive
+    /// and in a fixed order, so a failure names an input rather than
+    /// a seed.
+    #[test]
+    fn every_short_string_decodes() {
+        const ALPHABET: [&str; 8] = ["a", "0", "%", "+", "f", "\u{e9}", "\u{20ac}", "\u{10348}"];
+        let mut row: Vec<String> = ALPHABET.iter().map(|s| (*s).to_owned()).collect();
+        let mut count = row.len();
+        for word in &row {
+            let _ = percent_decode(word);
+        }
+        for _ in 1..4 {
+            let mut next = Vec::with_capacity(row.len() * ALPHABET.len());
+            for prefix in &row {
+                for piece in ALPHABET {
+                    let word = format!("{prefix}{piece}");
+                    // Answering at all is the claim.
+                    let once = percent_decode(&word);
+                    // Decoding the answer again stays defined too,
+                    // which is what a double-encoding caller reaches.
+                    let _ = percent_decode(&once);
+                    next.push(word);
+                }
+            }
+            count += next.len();
+            row = next;
+        }
+        assert_eq!(count, 8 + 64 + 512 + 4096);
+    }
+
     /// Bytes that do not spell UTF-8 come back as the replacement
     /// character rather than as an error or a panic.
     #[test]

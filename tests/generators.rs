@@ -701,7 +701,7 @@ fn required_query_parameters_lead() {
 
 /// A closed set reaches every face and is enforced on the wire.
 ///
-/// A menu the server does not honour is worse than a text box: the
+/// A menu the server does not honor is worse than a text box: the
 /// console offers three values, the OpenAPI document promises three,
 /// and the wire quietly takes a fourth. So the declaration renders as
 /// an `enum` in both documents and the dispatcher refuses anything

@@ -22,7 +22,7 @@ pub enum GenerateError {
     /// The contract does not match the schema; every violation listed.
     #[error("contract failed validation:\n{}", format_violations(.0))]
     Invalid(Vec<Violation>),
-    /// A target name the orchestrator does not recognise.
+    /// A target name the orchestrator does not recognize.
     #[error("unknown generation target {0:?}")]
     UnknownTarget(String),
 }

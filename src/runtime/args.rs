@@ -189,7 +189,7 @@ fn check_options(
 /// differ promises that removing an optional input is compatible, and
 /// that only holds if servers ignore fields they no longer declare.
 /// Check a query's parameters against its declaration: required ones
-/// present, declared types honoured, undeclared ones refused. The
+/// present, declared types honored, undeclared ones refused. The
 /// same discipline actions get, because a query is a wire surface
 /// like any other.
 pub(crate) fn validate_query(

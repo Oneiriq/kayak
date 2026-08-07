@@ -563,3 +563,96 @@ fn a_directory_contract_refuses_what_it_cannot_read() {
         "names what is missing: {said}"
     );
 }
+
+/// A byte-order mark in front of a contract is read through.
+///
+/// Several Windows editors write one. JSON has no place for it, so
+/// what a reader got back was "expected value at line 1 column 1"
+/// about a character their editor does not show them.
+#[test]
+fn a_byte_order_mark_does_not_hide_a_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+
+    let whole = contract();
+    // One file, and a directory, each with a mark in front.
+    let marked = dir.path().join("contract.json");
+    std::fs::write(
+        &marked,
+        format!("\u{feff}{}", serde_json::to_string_pretty(&whole).unwrap()),
+    )
+    .unwrap();
+
+    let split = dir.path().join("split");
+    split_into(&whole, &split, |index, name| format!("{index}-{name}.json"));
+    let head = split.join("contract.json");
+    let text = std::fs::read_to_string(&head).unwrap();
+    std::fs::write(&head, format!("\u{feff}{text}")).unwrap();
+
+    for (label, at) in [("one file", &marked), ("a directory", &split)] {
+        let out = dir.path().join(format!("out-{}", label.replace(' ', "-")));
+        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+            .args([
+                "generate",
+                "--contract",
+                at.to_str().unwrap(),
+                "--schema",
+                schema_path.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{label} with a mark: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}
+
+/// Two files cannot declare the same resource.
+///
+/// One name is one REST prefix and one GraphQL field. Split across
+/// files the collision is easy to write and impossible to see, so the
+/// refusal names it.
+#[test]
+fn two_files_cannot_declare_the_same_resource() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("schema.json");
+    std::fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&vec![file_table()]).unwrap(),
+    )
+    .unwrap();
+
+    let whole = contract();
+    let split = dir.path().join("split");
+    split_into(&whole, &split, |_, name| format!("{name}.json"));
+    let first = split.join("resources").join("files.json");
+    std::fs::copy(&first, split.join("resources").join("also-files.json")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args([
+            "generate",
+            "--contract",
+            split.to_str().unwrap(),
+            "--schema",
+            schema_path.to_str().unwrap(),
+            "--out",
+            dir.path().join("out").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the collision was accepted");
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.contains("duplicate resource") && said.contains("files"),
+        "the refusal names it: {said}",
+    );
+}

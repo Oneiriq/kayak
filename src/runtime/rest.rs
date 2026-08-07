@@ -23,6 +23,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::JanusContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::JanusError;
+use crate::runtime::wire::percent_decode;
 
 /// One answered request: an HTTP status and a JSON body.
 #[derive(Debug, Clone)]
@@ -348,36 +349,4 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
             None => (percent_decode(pair), String::new()),
         })
         .collect()
-}
-
-fn percent_decode(raw: &str) -> String {
-    let bytes = raw.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                let hex = &raw[index + 1..index + 3];
-                match u8::from_str_radix(hex, 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        index += 3;
-                    }
-                    Err(_) => {
-                        out.push(b'%');
-                        index += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }

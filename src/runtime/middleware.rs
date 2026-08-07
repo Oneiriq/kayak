@@ -49,7 +49,7 @@ pub struct Operation {
     pub sub: Option<String>,
 }
 
-/// The validated arguments travelling through the chain.
+/// The validated arguments traveling through the chain.
 #[derive(Debug, Clone)]
 pub enum Payload {
     List(ListArgs),

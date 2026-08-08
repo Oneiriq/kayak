@@ -9,6 +9,49 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A filter or a sort could rest on an index that cannot serve it.**
+  The gate asked whether a claimed column appeared in any index on the
+  table and stopped there. SurrealDB spells five kinds of index with
+  one `DEFINE INDEX`, and three of them have no b-tree behind them:
+  FULLTEXT answers `@@` against an analyzer's terms, HNSW and MTREE
+  answer nearest-neighbour over a vector, and none of the three
+  narrows an equality or supplies an order. A column covered only by
+  one of them read as covered, so an equality filter on a BM25-indexed
+  body passed validation and scanned the table, and an `ORDER BY` down
+  an HNSW index passed validation and is not a thing the engine will
+  do. That is the exact failure janus exists to prevent, admitted by
+  the thing that prevents it.
+
+  The scaffold had the rule right all along and filtered on index
+  type, which is what made this hard to see. The half that reads a
+  schema and writes claims was careful; the half that reads claims a
+  person wrote was not, and a person is who writes the contracts. The
+  scaffold's own test asserted only that it declined to claim a
+  full-text column, never that a hand-written claim on one was
+  refused, so the strict rule never ran on human input. There is one
+  predicate now and both halves read it, because two copies of a rule
+  is how they came to disagree.
+
+  `Violation::WrongIndexType` is the refusal, and it names the index
+  rather than denying that one exists. An author looking straight at
+  `DEFINE INDEX idx_chunk_body ... FULLTEXT` and told the column was
+  "not covered by any index" goes hunting for the bug in janus; the
+  message now reads "filterable column body is indexed on text_chunk,
+  but only by the FULLTEXT index idx_chunk_body, which serves neither
+  an equality filter nor an ORDER BY". A column a standard index does
+  hold, behind an unbound prefix, keeps the older prefix violation,
+  since naming the index type there would send the author off to
+  define an index they already have. A column carrying both kinds is
+  the ordinary way to make one searchable and filterable at once, and
+  is accepted as it always was.
+
+  Copal's checked-in contract is unaffected. Its only two non-ordering
+  indexes sit on `text_chunk`, and no resource or sub-resource targets
+  that table: it is reached through queries, which declare no filter
+  or sort claims.
+
 ### Added
 
 - **A reference page: the contract, as the surface it becomes.** A

@@ -10,6 +10,7 @@
 pub mod clients;
 pub mod diff;
 pub mod generate;
+mod indexes;
 pub mod ir;
 pub mod mcp;
 mod naming;

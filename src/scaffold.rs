@@ -25,8 +25,9 @@
 //! omits costs a line to add. That asymmetry is why sortable comes out
 //! narrower than the validator would tolerate.
 
-use surql::schema::{IndexType, TableDefinition};
+use surql::schema::TableDefinition;
 
+use crate::indexes::ordering_indexes;
 use crate::ir::{Contract, FieldExposure, Resource};
 
 /// What a scaffold produced, and what it declined to.
@@ -88,18 +89,6 @@ fn plural(name: &str) -> String {
     }
 }
 
-/// Indexes that answer equality and ordering. A full-text or vector
-/// index covers a column without serving either, so a claim resting on
-/// one would read as covered and behave like a scan.
-fn ordering_indexes(table: &TableDefinition) -> Vec<&Vec<String>> {
-    table
-        .indexes
-        .iter()
-        .filter(|index| matches!(index.index_type, IndexType::Standard | IndexType::Unique))
-        .map(|index| &index.columns)
-        .collect()
-}
-
 fn resource_from(
     table: &TableDefinition,
     pinned: &[String],
@@ -131,7 +120,11 @@ fn resource_from(
     let filterable: Vec<String> = columns
         .iter()
         .filter(|column| exposed(column))
-        .filter(|column| indexes.iter().any(|c| c.iter().any(|i| i == *column)))
+        .filter(|column| {
+            indexes
+                .iter()
+                .any(|index| index.columns.iter().any(|c| c == *column))
+        })
         .map(|column| (*column).to_owned())
         .collect();
 
@@ -153,9 +146,10 @@ fn resource_from(
         .filter(|column| {
             indexes.iter().any(|index| {
                 index
+                    .columns
                     .iter()
                     .position(|c| c == *column)
-                    .is_some_and(|k| index[..k].iter().all(|earlier| boundable(earlier)))
+                    .is_some_and(|k| index.columns[..k].iter().all(|earlier| boundable(earlier)))
             })
         })
         .map(|column| (*column).to_owned())
@@ -315,6 +309,12 @@ mod tests {
 
     /// A full-text index covers a column without ordering it, so a
     /// claim resting on one would read as covered and scan.
+    ///
+    /// Both halves are asserted here because for a long time only the
+    /// first was, and the omission read as proof of a rule that was
+    /// never enforced. The scaffold declining to claim `body` says
+    /// nothing about what happens when a person claims it by hand, and
+    /// a person is who writes the contracts.
     #[test]
     fn a_search_index_does_not_make_a_claim() {
         let schema = vec![table_schema("note")
@@ -326,6 +326,26 @@ mod tests {
         assert!(resource.filterable.is_empty());
         assert!(resource.sortable.is_empty());
         assert_eq!(crate::validate(&made.contract, &schema), vec![]);
+
+        let mut authored = made.contract;
+        authored.resources[0].filterable.push("body".to_owned());
+        authored.resources[0].sortable.push("body".to_owned());
+        let violations = crate::validate(&authored, &schema);
+        assert_eq!(
+            violations.len(),
+            2,
+            "the claim the scaffold declined to make is refused when written by hand: {violations:?}",
+        );
+        for violation in &violations {
+            assert!(
+                matches!(
+                    violation,
+                    crate::Violation::WrongIndexType { column, index, .. }
+                        if column == "body" && index == "idx_body"
+                ),
+                "the index that misled the author is named: {violation:?}",
+            );
+        }
     }
 
     #[test]

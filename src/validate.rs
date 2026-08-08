@@ -15,9 +15,17 @@
 //!   every EARLIER column is pinned or filterable; an index serves an
 //!   ORDER BY only from a prefix whose head is equality-bound. A bare
 //!   leading column is the degenerate case.
+//!
+//! Both index rules read [`crate::indexes`] rather than the table's
+//! index list, because only a standard or unique index counts toward
+//! either. A FULLTEXT or vector index covers a column without narrowing
+//! an equality on it or ordering by it, and a claim resting on one is
+//! the failure this file exists to catch wearing the disguise of the
+//! thing that would have caught it.
 
-use surql::schema::TableDefinition;
+use surql::schema::{IndexDefinition, IndexType, TableDefinition};
 
+use crate::indexes::{ordering_indexes, serves_ordering};
 use crate::ir::{Contract, FieldExposure, Resource, SubResource};
 
 /// One listing surface's index-relevant claims, so a resource and a
@@ -86,6 +94,23 @@ pub enum Violation {
         resource: String,
         table: String,
         column: String,
+    },
+
+    #[error(
+        "resource {resource}: {claim} column {column} is indexed on {table}, but \
+         only by the {index_type} index {index}, which serves neither an equality \
+         filter nor an ORDER BY; add a standard index holding {column}, or drop \
+         the claim"
+    )]
+    WrongIndexType {
+        resource: String,
+        table: String,
+        column: String,
+        /// `filterable` or `sortable`: which claim the index fails to
+        /// answer, so one sentence serves both.
+        claim: String,
+        index: String,
+        index_type: IndexType,
     },
 }
 
@@ -241,6 +266,27 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
     violations
 }
 
+/// The index an author most likely mistook for coverage: one that holds
+/// `column` and cannot order it, reported only when nothing that CAN
+/// order it holds it at all.
+///
+/// The distinction matters because the two mistakes want different
+/// repairs. Where a standard index does hold the column, the index type
+/// is not what went wrong, and saying it was would send the author off
+/// to define an index they already have; the prefix is the problem, and
+/// [`Violation::UnindexedSort`] already explains prefixes.
+fn misleading_index<'a>(table: &'a TableDefinition, column: &str) -> Option<&'a IndexDefinition> {
+    let holds = |index: &IndexDefinition| index.columns.iter().any(|c| c == column);
+    if table
+        .indexes
+        .iter()
+        .any(|index| serves_ordering(index) && holds(index))
+    {
+        return None;
+    }
+    table.indexes.iter().find(|index| holds(index))
+}
+
 /// The index rulebook, applied identically to a resource and to a
 /// sub-resource. Only the scope string and the set of server-bound
 /// columns differ between them.
@@ -277,22 +323,46 @@ fn validate_listing(
         }
     }
 
+    let ordering = ordering_indexes(table);
+    // An author who reached a claim through an index that turns out not
+    // to serve it is in a different position from one who claimed
+    // against nothing: they looked, they found something, and they were
+    // right about everything except the one property that mattered. The
+    // violation says which index they were looking at.
+    let wrong_index = |column: &String, claim: &str, violations: &mut Vec<Violation>| {
+        let Some(index) = misleading_index(table, column) else {
+            return false;
+        };
+        violations.push(Violation::WrongIndexType {
+            resource: listing.scope.clone(),
+            table: listing.table.to_owned(),
+            column: column.clone(),
+            claim: claim.to_owned(),
+            index: index.name.clone(),
+            index_type: index.index_type,
+        });
+        true
+    };
+
     for column in listing.filterable {
         if !column_exists(column) {
             push_unknown(column, violations);
             continue;
         }
-        let covered = table
-            .indexes
+        let covered = ordering
             .iter()
             .any(|index| index.columns.iter().any(|c| c == column));
-        if !covered {
-            violations.push(Violation::UnindexedFilter {
-                resource: listing.scope.clone(),
-                table: listing.table.to_owned(),
-                column: column.clone(),
-            });
+        if covered {
+            continue;
         }
+        if wrong_index(column, "filterable", violations) {
+            continue;
+        }
+        violations.push(Violation::UnindexedFilter {
+            resource: listing.scope.clone(),
+            table: listing.table.to_owned(),
+            column: column.clone(),
+        });
     }
 
     for column in &listing.bound {
@@ -311,20 +381,24 @@ fn validate_listing(
             push_unknown(column, violations);
             continue;
         }
-        let reachable = table.indexes.iter().any(|index| {
+        let reachable = ordering.iter().any(|index| {
             index
                 .columns
                 .iter()
                 .position(|c| c == column)
                 .is_some_and(|k| index.columns[..k].iter().all(|earlier| boundable(earlier)))
         });
-        if !reachable {
-            violations.push(Violation::UnindexedSort {
-                resource: listing.scope.clone(),
-                table: listing.table.to_owned(),
-                column: column.clone(),
-            });
+        if reachable {
+            continue;
         }
+        if wrong_index(column, "sortable", violations) {
+            continue;
+        }
+        violations.push(Violation::UnindexedSort {
+            resource: listing.scope.clone(),
+            table: listing.table.to_owned(),
+            column: column.clone(),
+        });
     }
 }
 

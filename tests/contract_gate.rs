@@ -4,8 +4,9 @@
 
 use janus::{generate_openapi, validate, Contract, FieldExposure, Resource, Violation};
 use surql::schema::{
-    datetime_field, index, int_field, string_field, table_schema, unique_index, TableDefinition,
-    TableMode,
+    array_field, bm25_index, datetime_field, hnsw_index, index, int_field, mtree_index,
+    string_field, table_schema, unique_index, HnswDistanceType, IndexType, MTreeDistanceType,
+    MTreeVectorType, TableDefinition, TableMode,
 };
 
 fn file_table() -> TableDefinition {
@@ -28,6 +29,50 @@ fn file_table() -> TableDefinition {
             // what the prefix rule exists to credit.
             index("idx_listing", ["tenant_id", "state", "created_at"]),
         ])
+}
+
+/// Copal's `text_chunk` shape, with the index set left open because
+/// what varies between these cases is only which index covers what.
+fn chunk_table(
+    indexes: impl IntoIterator<Item = surql::schema::IndexDefinition>,
+) -> TableDefinition {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    table_schema("text_chunk")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("tenant_id")),
+            built(string_field("file")),
+            built(int_field("ordinal")),
+            built(string_field("body")),
+            built(array_field("embedding")),
+            built(array_field("locator")),
+        ])
+        .with_indexes(indexes)
+}
+
+/// The real thing: plainly indexed, and none of it in a way that
+/// answers a filter or a sort on the columns anyone wants to claim.
+fn text_chunk_table() -> TableDefinition {
+    chunk_table([
+        unique_index("uniq_chunk_position", ["file", "ordinal"]),
+        bm25_index("idx_chunk_body", ["body"], "copal_text"),
+        hnsw_index(
+            "idx_chunk_embedding",
+            "embedding",
+            768,
+            HnswDistanceType::Cosine,
+            MTreeVectorType::F32,
+            None,
+            None,
+        ),
+        mtree_index(
+            "idx_chunk_locator",
+            "locator",
+            3,
+            MTreeDistanceType::Euclidean,
+            MTreeVectorType::F64,
+        ),
+    ])
 }
 
 fn files_resource() -> Resource {
@@ -126,6 +171,136 @@ fn prefix_rule_credits_pinned_and_filterable_columns() {
         &violations[0],
         Violation::UnindexedSort { column, .. } if column == "created_at"
     ));
+}
+
+/// A column can be indexed and still be neither filterable nor
+/// sortable, and that is the case most likely to be got wrong.
+///
+/// The shape is copal's `text_chunk`: `body` carries a BM25 index for
+/// lexical recall, `embedding` an HNSW index for vector recall,
+/// `locator` an MTREE one. None of the three has a b-tree behind it, so
+/// an equality filter on `body` scans the table and an ORDER BY down
+/// `embedding` is not a thing the engine will do. The gate matched on
+/// column membership alone and accepted every one of them, which is
+/// worse than accepting a claim against no index at all: the author
+/// looked, found an index, and was told they were right.
+#[test]
+fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
+    let resource = Resource {
+        table: "text_chunk".into(),
+        fields: vec![
+            FieldExposure::column("body"),
+            FieldExposure::column("embedding"),
+            FieldExposure::column("locator"),
+        ],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec!["body".into(), "embedding".into(), "locator".into()],
+        sortable: vec!["body".into(), "embedding".into(), "locator".into()],
+        ..files_resource()
+    };
+    let violations = validate(&contract(vec![resource]), &[text_chunk_table()]);
+
+    for (column, index, kind) in [
+        ("body", "idx_chunk_body", IndexType::Search),
+        ("embedding", "idx_chunk_embedding", IndexType::Hnsw),
+        ("locator", "idx_chunk_locator", IndexType::Mtree),
+    ] {
+        for claim in ["filterable", "sortable"] {
+            assert!(
+                violations.iter().any(|v| matches!(
+                    v,
+                    Violation::WrongIndexType {
+                        column: c, claim: k, index: i, index_type: t, ..
+                    } if c == column && k == claim && i == index && *t == kind
+                )),
+                "{claim} {column} rests on {index} alone and must be refused: {violations:?}",
+            );
+        }
+    }
+    assert_eq!(violations.len(), 6, "{violations:?}");
+
+    // Refusing is half the job. An author who reads "not covered by any
+    // index" against a table that visibly has one goes looking for the
+    // bug in janus, so the message names the index they were looking at
+    // and what it turned out to be.
+    let text = violations
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("the FULLTEXT index idx_chunk_body"), "{text}");
+    assert!(
+        text.contains("the HNSW index idx_chunk_embedding"),
+        "{text}"
+    );
+    assert!(text.contains("the MTREE index idx_chunk_locator"), "{text}");
+
+    // And generation refuses rather than shipping the scan.
+    let err = generate_openapi(
+        &contract(vec![Resource {
+            table: "text_chunk".into(),
+            fields: vec![FieldExposure::column("body")],
+            pinned: vec!["tenant_id".into()],
+            filterable: vec!["body".into()],
+            sortable: vec![],
+            ..files_resource()
+        }]),
+        &[text_chunk_table()],
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("idx_chunk_body"), "{err}");
+}
+
+/// The same column under both kinds of index is a different answer.
+///
+/// A BM25 index beside a standard one is the ordinary way to make a
+/// column both searchable and filterable, and refusing that would push
+/// authors to drop the search index to satisfy a gate. The rule is
+/// about what covers the column, not about what else exists.
+#[test]
+fn an_ordering_index_beside_a_search_one_still_carries_the_claim() {
+    let table = chunk_table([
+        index("idx_chunk_tenant", ["tenant_id", "body"]),
+        bm25_index("idx_chunk_body", ["body"], "copal_text"),
+    ]);
+    let resource = Resource {
+        table: "text_chunk".into(),
+        fields: vec![FieldExposure::column("body")],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec!["body".into()],
+        sortable: vec!["body".into()],
+        ..files_resource()
+    };
+    assert_eq!(validate(&contract(vec![resource]), &[table]), vec![]);
+}
+
+/// A sort a standard index does hold, but behind an unbound prefix, is
+/// still a prefix problem.
+///
+/// Naming the search index there would send the author to define an
+/// index they already have, so the older violation keeps the case.
+#[test]
+fn an_unbound_prefix_is_reported_as_a_prefix_and_not_as_an_index_type() {
+    let table = chunk_table([
+        index("idx_chunk_body", ["file", "body"]),
+        bm25_index("idx_chunk_search", ["body"], "copal_text"),
+    ]);
+    let resource = Resource {
+        table: "text_chunk".into(),
+        fields: vec![FieldExposure::column("body")],
+        pinned: vec![],
+        filterable: vec![],
+        sortable: vec!["body".into()],
+        ..files_resource()
+    };
+    let violations = validate(&contract(vec![resource]), &[table]);
+    assert!(
+        matches!(
+            &violations[0],
+            Violation::UnindexedSort { column, .. } if column == "body"
+        ),
+        "{violations:?}",
+    );
 }
 
 #[test]

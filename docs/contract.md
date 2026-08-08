@@ -56,6 +56,15 @@ Given `(tenant_id, state, created_at)` with `tenant_id` pinned and `state`
 filterable, `created_at` is a valid sort. Declaring a sort no index can serve
 is a generation error naming the column.
 
+Only a standard or unique index counts toward either rule. `DEFINE INDEX`
+also spells FULLTEXT, HNSW, and MTREE, and none of the three narrows an
+equality or supplies an order: a column covered only by one of them is, for a
+filter or a sort, uncovered. Claiming it is a generation error that names the
+index and its type, because "not covered by any index" against a table that
+visibly has one sends the reader hunting the wrong bug. A column may of
+course carry both, and a BM25 index beside a standard one is the ordinary way
+to make a column searchable and filterable at once.
+
 ## Actions
 
 Actions model verbs beyond list and get: uploads, deletions, signed URLs,
@@ -225,8 +234,9 @@ layers to reuse. Field renames pass through the same reserved gate.
 `janus::validate(&contract, &schema)` returns a list of violations; empty
 means valid. Generation refuses invalid contracts with every violation named.
 The checks: tables and columns exist, renames do not collide, filters are
-indexed, sorts are reachable through an index prefix, action definitions are
-well-formed, chosen names are valid for every surface they reach.
+indexed by an index that can narrow one, sorts are reachable through such an
+index's prefix, action definitions are well-formed, chosen names are valid
+for every surface they reach.
 
 Run the gate in the owning service's tests against the real schema
 definitions. Schema drift then fails a test naming the offending column before anything

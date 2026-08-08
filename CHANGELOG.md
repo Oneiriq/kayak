@@ -11,6 +11,41 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Fixed
 
+- **A pinned column set could reach no index at all, and validation
+  said nothing.** Pins are the one predicate with nothing optional
+  about it: filterable describes what a caller MAY send and sortable
+  what they may ask for, but the bound columns ride every read the
+  resource serves. The gate checked that each pin existed and asked
+  no more, so a tenant-scoped resource over a table whose every index
+  serves someone else validated clean, and its plain listing, nothing
+  filtered and nothing sorted, scanned the table with the pins as its
+  only predicate. The same shape as the index-type fix below, through
+  the other door: that one caught claims a caller might exercise,
+  this one catches the query the contract compels.
+
+  The rule belongs to the set, not to any single pin.
+  `Violation::UnreachableListing` fires when no standard or unique
+  index leads with a bound column; one leading bound column is
+  enough, because the engine seeks its range and checks the remaining
+  pins inside it. That is what keeps copal's deliveries sub-collection
+  legal, and it is why the rule credits a sub-resource's `parent_key`:
+  a delivery log indexed by endpoint and never by tenant is cheap
+  reached through the endpoint and a scan reached directly, and the
+  violation distinguishes the two reaches rather than the table.
+
+  The scaffold now declines such a table entirely and names it on
+  stderr beside the withheld secret columns, for the same reason it
+  withholds them: exposing it without the pins would publish across
+  the boundary the pins draw, exposing it with them writes a resource
+  the validator refuses, and the missing index is a schema change a
+  contract tool does not get to make. Against copal's 25 tables the
+  scaffold now exposes 22, and the three it declines (`file_version`,
+  `tus_upload`, `webhook_delivery`) are exactly the tables copal's
+  hand-written contract never lists at the top level. The shared
+  predicate lives in `indexes.rs` with the ordering-index rule, read
+  by both the scaffold and the validator, so the two halves cannot
+  drift on this either.
+
 - **A filter or a sort could rest on an index that cannot serve it.**
   The gate asked whether a claimed column appeared in any index on the
   table and stopped there. SurrealDB spells five kinds of index with

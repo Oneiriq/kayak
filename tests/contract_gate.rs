@@ -55,6 +55,11 @@ fn chunk_table(
 fn text_chunk_table() -> TableDefinition {
     chunk_table([
         unique_index("uniq_chunk_position", ["file", "ordinal"]),
+        // The real table's tenant listing index, which is also what
+        // seats the pinned tenant_id: without it the resource under
+        // test would additionally be an unreachable listing, and these
+        // tests are about the claims.
+        index("idx_chunk_tenant", ["tenant_id", "created_at"]),
         bm25_index("idx_chunk_body", ["body"], "copal_text"),
         hnsw_index(
             "idx_chunk_embedding",
@@ -311,6 +316,168 @@ fn pinned_columns_must_exist() {
     assert!(matches!(
         &violations[0],
         Violation::UnknownColumn { column, .. } if column == "no_such_pin"
+    ));
+}
+
+/// Copal's `webhook_delivery` shape: tenant-scoped rows whose indexes
+/// serve the dispatcher and the parent endpoint, never the tenant.
+/// Exposed as a top-level resource this scans; reached through the
+/// endpoint it is the sub-collection copal actually ships.
+fn delivery_table() -> TableDefinition {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    table_schema("webhook_delivery")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("tenant_id")),
+            built(string_field("endpoint")),
+            built(string_field("state")),
+            built(datetime_field("created_at")),
+        ])
+        .with_indexes([
+            index("idx_delivery_due", ["state", "created_at"]),
+            index("idx_delivery_endpoint", ["endpoint", "created_at"]),
+        ])
+}
+
+/// Pins are bound on every read, so the bound set must reach an index
+/// or the plain listing scans. The claims rules never see this: the
+/// resource below claims nothing a caller could send wrong, and it
+/// still cannot be listed well.
+#[test]
+fn pins_no_index_leads_with_are_refused() {
+    let resource = Resource {
+        name: "deliveries".into(),
+        table: "webhook_delivery".into(),
+        filter_options: Default::default(),
+        fields: vec![
+            FieldExposure::column("endpoint"),
+            FieldExposure::column("state"),
+            FieldExposure::column("created_at"),
+        ],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec!["state".into()],
+        sortable: vec![],
+        max_page_size: 100,
+        graphql: None,
+        watchable: false,
+        reads_require: vec![],
+        rate_class: None,
+        sub_resources: vec![],
+        actions: vec![],
+        content: None,
+    };
+    let violations = validate(&contract(vec![resource]), &[delivery_table()]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        matches!(
+            &violations[0],
+            Violation::UnreachableListing { table, bound, .. }
+                if table == "webhook_delivery" && bound == &vec!["tenant_id".to_owned()]
+        ),
+        "{violations:?}",
+    );
+    let message = violations[0].to_string();
+    assert!(message.contains("tenant_id"), "{message}");
+    assert!(message.contains("no index leads"), "{message}");
+}
+
+/// The same table with the same unindexed pin is fine as a
+/// sub-collection, because the parent key is bound on every read too
+/// and an index leads with it: the seek narrows to one endpoint's rows
+/// and the pin rides as a residual check. This is copal's real
+/// contract, kept passing on purpose.
+#[test]
+fn a_parent_key_leading_an_index_carries_the_pins() {
+    let mut parent = files_resource();
+    parent.sub_resources = vec![janus::SubResource {
+        name: "deliveries".into(),
+        table: "webhook_delivery".into(),
+        parent_key: "endpoint".into(),
+        fields: vec![
+            FieldExposure::column("state"),
+            FieldExposure::column("created_at"),
+        ],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec!["state".into()],
+        sortable: vec![],
+        max_page_size: 100,
+        description: None,
+        graphql: None,
+    }];
+    assert_eq!(
+        validate(&contract(vec![parent]), &[file_table(), delivery_table()]),
+        vec![],
+    );
+}
+
+/// A FULLTEXT index leading with the pinned column is the perverse
+/// case: only the index-type predicate stands between it and being
+/// credited as a seek.
+#[test]
+fn a_search_index_leading_with_the_pin_is_not_a_seek() {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    let table = table_schema("note")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("tenant_id")),
+            built(string_field("body")),
+        ])
+        .with_indexes([bm25_index("idx_tenant_text", ["tenant_id"], "copal_text")]);
+    let resource = Resource {
+        name: "notes".into(),
+        table: "note".into(),
+        filter_options: Default::default(),
+        fields: vec![FieldExposure::column("body")],
+        pinned: vec!["tenant_id".into()],
+        filterable: vec![],
+        sortable: vec![],
+        max_page_size: 100,
+        graphql: None,
+        watchable: false,
+        reads_require: vec![],
+        rate_class: None,
+        sub_resources: vec![],
+        actions: vec![],
+        content: None,
+    };
+    let violations = validate(&contract(vec![resource]), &[table]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(matches!(
+        &violations[0],
+        Violation::UnreachableListing { .. }
+    ));
+}
+
+/// A pin the table does not have is an unknown column and nothing
+/// more: the reachability question waits for a name that resolves.
+#[test]
+fn an_unknown_pin_is_reported_once_not_twice() {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    let table = table_schema("note")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([built(string_field("body"))]);
+    let resource = Resource {
+        name: "notes".into(),
+        table: "note".into(),
+        filter_options: Default::default(),
+        fields: vec![FieldExposure::column("body")],
+        pinned: vec!["tenant".into()],
+        filterable: vec![],
+        sortable: vec![],
+        max_page_size: 100,
+        graphql: None,
+        watchable: false,
+        reads_require: vec![],
+        rate_class: None,
+        sub_resources: vec![],
+        actions: vec![],
+        content: None,
+    };
+    let violations = validate(&contract(vec![resource]), &[table]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(matches!(
+        &violations[0],
+        Violation::UnknownColumn { column, .. } if column == "tenant"
     ));
 }
 

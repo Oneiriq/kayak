@@ -24,10 +24,17 @@
 //! scaffold invents costs a major version to withdraw while one it
 //! omits costs a line to add. That asymmetry is why sortable comes out
 //! narrower than the validator would tolerate.
+//!
+//! One thing it will not write at all: a resource over a table whose
+//! pinned columns no index leads with. The pins ride every read that
+//! table serves, so every listing of it would scan, and the validator
+//! refuses exactly that resource. The table is declined and named
+//! instead, because both repairs are the caller's to choose: lead an
+//! index with a pin, or reach the table through a parent.
 
 use surql::schema::TableDefinition;
 
-use crate::indexes::ordering_indexes;
+use crate::indexes::{ordering_indexes, seekable_through};
 use crate::ir::{Contract, FieldExposure, Resource};
 
 /// What a scaffold produced, and what it declined to.
@@ -37,6 +44,14 @@ pub struct Scaffold {
     /// Columns left unexposed because their names suggest a secret,
     /// as `table.column`. Expose any of them deliberately.
     pub withheld: Vec<String>,
+    /// Tables left out because no index leads with any of their pinned
+    /// columns. The server binds the pins on every read, so every
+    /// listing of such a table scans it; the validator refuses the
+    /// resource the scaffold would have written. Both honest repairs
+    /// are edits a scaffold must not make for you: lead an index with
+    /// a pin, or reach the table through a parent as a sub-resource,
+    /// the way a delivery is reached through its endpoint.
+    pub declined: Vec<String>,
 }
 
 /// Column-name fragments that make a field a poor thing to publish by
@@ -89,17 +104,24 @@ fn plural(name: &str) -> String {
     }
 }
 
+/// The pinned columns this table actually has: what the server will
+/// bind on its reads. Computed once and read by both the decline
+/// decision and the resource construction, so the table the scaffold
+/// keeps and the table it turns away are judged on the same set.
+fn surviving_pins(table: &TableDefinition, pinned: &[String]) -> Vec<String> {
+    pinned
+        .iter()
+        .filter(|column| table.fields.iter().any(|f| &f.name == *column))
+        .cloned()
+        .collect()
+}
+
 fn resource_from(
     table: &TableDefinition,
-    pinned: &[String],
+    bound: Vec<String>,
     withheld: &mut Vec<String>,
 ) -> Resource {
     let columns: Vec<&str> = table.fields.iter().map(|f| f.name.as_str()).collect();
-    let bound: Vec<String> = pinned
-        .iter()
-        .filter(|column| columns.contains(&column.as_str()))
-        .cloned()
-        .collect();
 
     let mut fields = Vec::new();
     for column in &columns {
@@ -192,9 +214,26 @@ pub fn scaffold(
     pinned: &[String],
 ) -> Scaffold {
     let mut withheld = Vec::new();
+    let mut declined = Vec::new();
     let resources = schema
         .iter()
-        .map(|table| resource_from(table, pinned, &mut withheld))
+        .filter_map(|table| {
+            let bound = surviving_pins(table, pinned);
+            // A table whose pins reach no index is not exposed at all.
+            // Exposing it without the pins would publish across the
+            // boundary the pins exist to draw, exposing it with them
+            // writes a resource the validator refuses, and inventing
+            // the missing index is a schema change a contract tool
+            // does not get to make. The same asymmetry as the secret
+            // columns: a declined table is noticed the first time
+            // somebody wants it, a scan is noticed under load.
+            let seek: Vec<&str> = bound.iter().map(String::as_str).collect();
+            if !bound.is_empty() && !seekable_through(table, &seek) {
+                declined.push(table.name.clone());
+                return None;
+            }
+            Some(resource_from(table, bound, &mut withheld))
+        })
         .collect();
     Scaffold {
         contract: Contract {
@@ -207,6 +246,7 @@ pub fn scaffold(
             queries: Vec::new(),
         },
         withheld,
+        declined,
     }
 }
 
@@ -346,6 +386,52 @@ mod tests {
                 "the index that misled the author is named: {violation:?}",
             );
         }
+    }
+
+    /// Copal's `webhook_delivery` shape: the pins survive on the
+    /// table, and every index serves someone else.
+    fn delivery_table() -> TableDefinition {
+        table_schema("webhook_delivery")
+            .with_mode(TableMode::Schemafull)
+            .with_fields([
+                built(string_field("tenant_id")),
+                built(string_field("endpoint")),
+                built(string_field("state")),
+                built(datetime_field("created_at")),
+            ])
+            .with_indexes([
+                index("idx_delivery_due", ["state", "created_at"]),
+                index("idx_delivery_endpoint", ["endpoint", "created_at"]),
+            ])
+    }
+
+    /// A table the pins cannot seek is declined and named, and what
+    /// remains still validates: the property in
+    /// [`a_scaffold_validates_against_its_own_schema`] has to survive
+    /// schemas that contain such a table, or the property is only
+    /// about schemas that never needed it.
+    #[test]
+    fn a_table_the_pins_cannot_seek_is_declined() {
+        let schema = vec![file_table(), delivery_table()];
+        let made = scaffold("demo", "0.1.0", &schema, &["tenant_id".to_owned()]);
+        assert_eq!(made.declined, vec!["webhook_delivery".to_owned()]);
+        assert_eq!(made.contract.resources.len(), 1);
+        assert_eq!(made.contract.resources[0].table, "file");
+        assert_eq!(crate::validate(&made.contract, &schema), vec![]);
+    }
+
+    /// No pins survive, nothing is server-bound, and listing
+    /// everything IS the query: a table outside the pin vocabulary is
+    /// kept even with no index at all.
+    #[test]
+    fn a_table_without_the_pin_is_kept_even_unindexed() {
+        let schema = vec![table_schema("blob")
+            .with_mode(TableMode::Schemafull)
+            .with_fields([built(string_field("digest"))])];
+        let made = scaffold("demo", "0.1.0", &schema, &["tenant_id".to_owned()]);
+        assert!(made.declined.is_empty());
+        assert_eq!(made.contract.resources.len(), 1);
+        assert_eq!(crate::validate(&made.contract, &schema), vec![]);
     }
 
     #[test]

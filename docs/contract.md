@@ -45,6 +45,17 @@ client.
 input reaches a query: tenant scoping, soft-delete filters. They are never
 API parameters. They exist so index validation can credit them.
 
+Because the pins ride every read, they carry an index requirement of their
+own, and it belongs to the set rather than to any single pin: some standard
+or unique index must lead with a bound column, or the plain listing, nothing
+filtered and nothing sorted, scans the whole table with the pins as its only
+predicate. One leading bound column is enough; the engine seeks its range
+and checks the remaining pins inside it. A sub-resource counts its
+`parent_key` among the bound columns, which is how a table like a delivery
+log, indexed by endpoint and never by tenant, is fine as a sub-collection
+and refused as a top-level resource: the same rows, reached two ways, cost
+two different things.
+
 `filterable` columns become query parameters and GraphQL arguments. Each must
 appear in at least one index on the table, because an unindexed filter works
 in the demo and becomes a table scan in production.
@@ -235,8 +246,9 @@ layers to reuse. Field renames pass through the same reserved gate.
 means valid. Generation refuses invalid contracts with every violation named.
 The checks: tables and columns exist, renames do not collide, filters are
 indexed by an index that can narrow one, sorts are reachable through such an
-index's prefix, action definitions are well-formed, chosen names are valid
-for every surface they reach.
+index's prefix, the server-bound columns lead some index so the plain
+listing seeks rather than scans, action definitions are well-formed, chosen
+names are valid for every surface they reach.
 
 Run the gate in the owning service's tests against the real schema
 definitions. Schema drift then fails a test naming the offending column before anything

@@ -8,8 +8,10 @@
 //! production.
 //!
 //! Rules:
-//! - pinned column: must exist on the table (it is server-bound, so no
-//!   index requirement of its own).
+//! - pinned column: must exist on the table, and the bound set as a
+//!   whole must reach an index: some ordering index leads with a bound
+//!   column, or the listing that binds them all on every read scans.
+//!   No single pin owes an index of its own; the set does.
 //! - filterable column: must appear in at least one index on the table.
 //! - sortable column: some index must contain it at a position where
 //!   every EARLIER column is pinned or filterable; an index serves an
@@ -25,7 +27,7 @@
 
 use surql::schema::{IndexDefinition, IndexType, TableDefinition};
 
-use crate::indexes::{ordering_indexes, serves_ordering};
+use crate::indexes::{ordering_indexes, seekable_through, serves_ordering};
 use crate::ir::{Contract, FieldExposure, Resource, SubResource};
 
 /// One listing surface's index-relevant claims, so a resource and a
@@ -111,6 +113,22 @@ pub enum Violation {
         claim: String,
         index: String,
         index_type: IndexType,
+    },
+
+    #[error(
+        "resource {resource}: the server binds {} on every read of {table}, \
+         and no index leads with any of them; the plain listing, nothing \
+         filtered and nothing sorted, scans the whole table. Lead an index \
+         with one of these columns, or reach the rows through a parent key \
+         that leads one",
+        .bound.join(", ")
+    )]
+    UnreachableListing {
+        resource: String,
+        table: String,
+        /// The server-bound columns that exist on the table: the pins,
+        /// and for a sub-resource the parent key.
+        bound: Vec<String>,
     },
 }
 
@@ -365,10 +383,31 @@ fn validate_listing(
         });
     }
 
+    // Pins are not claims. Filterable describes what a caller MAY send
+    // and sortable what they may ask for; the bound columns are what
+    // the server DOES, on every read, with nothing optional about it.
+    // So the reachability question is not whether a caller can compose
+    // a bad query but whether the default one is already bad: list,
+    // nothing filtered, nothing sorted. That query seeks only if some
+    // ordering index leads with a bound column, and the whole set
+    // shares one answer, which is why this is one violation naming all
+    // of them rather than one per pin. Columns the table does not have
+    // are reported as unknown and sit the reachability question out;
+    // repairing the name comes first.
+    let mut bound_present: Vec<&str> = Vec::new();
     for column in &listing.bound {
-        if !column_exists(column) {
+        if column_exists(column) {
+            bound_present.push(column);
+        } else {
             push_unknown(column, violations);
         }
+    }
+    if !bound_present.is_empty() && !seekable_through(table, &bound_present) {
+        violations.push(Violation::UnreachableListing {
+            resource: listing.scope.clone(),
+            table: listing.table.to_owned(),
+            bound: bound_present.iter().map(|c| (*c).to_owned()).collect(),
+        });
     }
 
     // A column earlier in an index than the sort column must be

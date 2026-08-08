@@ -124,6 +124,13 @@ fn run_scaffold(arguments: &[String]) -> ExitCode {
     for column in &made.withheld {
         eprintln!("withheld {column}: the name suggests a secret; expose it deliberately");
     }
+    for table in &made.declined {
+        eprintln!(
+            "declined {table}: no index leads with a pinned column, so every \
+             listing would scan; lead an index with one, or reach the table \
+             through a parent"
+        );
+    }
     // A scaffold derives claims it can prove, and a name it cannot fix:
     // a table the wire format will not accept as an identifier is the
     // editing this reports rather than hides.

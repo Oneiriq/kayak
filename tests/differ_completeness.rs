@@ -29,6 +29,7 @@ fn base() -> Contract {
                 FieldExposure::column("path"),
                 FieldExposure::column("state"),
                 FieldExposure::renamed("size_bytes", "size"),
+                FieldExposure::column("digest").with_guard("audit_only"),
             ],
             pinned: vec!["tenant_id".into()],
             filterable: vec!["state".into()],
@@ -59,7 +60,10 @@ fn base() -> Contract {
                 name: "versions".into(),
                 table: "file_version".into(),
                 parent_key: "file".into(),
-                fields: vec![FieldExposure::column("ordinal")],
+                fields: vec![
+                    FieldExposure::column("ordinal"),
+                    FieldExposure::column("created_by").with_guard("owner_or_admin"),
+                ],
                 pinned: vec![],
                 filterable: vec![],
                 sortable: vec!["created_at".into()],
@@ -195,6 +199,41 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "an action's answer changed shape",
             Box::new(|c: &mut Contract| c.resources[0].actions[0].output = ActionOutput::None),
+        ),
+        // Guards move in four ways and every one changes who sees the
+        // field, so every one has to come back breaking: adding takes
+        // values from callers, swapping changes which callers, and
+        // REMOVING takes away the redaction itself — the column shows
+        // to callers the guard refused, on the API faces and in the
+        // derived engine PERMISSIONS alike.
+        (
+            "an open field is now guarded",
+            Box::new(|c: &mut Contract| c.resources[0].fields[0].guard = Some("admin_only".into())),
+        ),
+        (
+            "a field's guard swapped",
+            Box::new(|c: &mut Contract| c.resources[0].fields[3].guard = Some("admin_only".into())),
+        ),
+        (
+            "a field's guard is gone",
+            Box::new(|c: &mut Contract| c.resources[0].fields[3].guard = None),
+        ),
+        (
+            "a sub-collection field's guard is gone",
+            Box::new(|c: &mut Contract| c.resources[0].sub_resources[0].fields[1].guard = None),
+        ),
+        (
+            "a sub-collection field is gone",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].sub_resources[0].fields.pop();
+            }),
+        ),
+        (
+            "a sub-collection field reads a different column",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].sub_resources[0].fields[0] =
+                    FieldExposure::renamed("legacy_ordinal", "ordinal")
+            }),
         ),
     ]
 }

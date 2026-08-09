@@ -89,6 +89,47 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **The engine policy: the eighth face, derived instead of hand-kept.**
+  A SurrealDB deployment can enforce the contract a second time at
+  the engine — table `PERMISSIONS` filtering rows, field
+  `PERMISSIONS` redacting columns — for sessions authenticated as
+  callers rather than as the service. The clauses worth having are
+  exactly what the contract declares, and copal derived them by hand
+  in its server, which is the drift this library exists to prevent:
+  tighten a scope in the contract, forget to re-derive, and the API
+  refuses what the engine still serves, with nothing naming the
+  divergence. `janus::derive_policy` is that derivation moved home.
+  `reads_require` becomes a select conjunct on the resource's table
+  and every sub-resource table, since a sub-collection is read under
+  its parent's requirement; a field guard becomes a column redaction,
+  at both nesting levels.
+
+  The token-claim vocabulary the clauses speak (which claim carries
+  the scope list, what clause a named guard becomes) is deployment
+  convention rather than contract content, so it travels as a
+  `ClaimVocabulary` argument whose defaults are copal's conventions —
+  the reference deployment's switch to this API is proven a
+  behavioral no-op in `tests/policy.rs`, byte-for-byte against what
+  its hand derivation renders, with the matched copal sources cited.
+  A guard the vocabulary cannot render refuses the derivation naming
+  the guard, because rendering nothing would silently drop the engine
+  layer for a column the application layer kept enforcing.
+
+  Two rules stay with the service deliberately. The mechanical
+  tenancy floor derives from the SCHEMA, not the contract: a floor
+  derived from the contract would be dodgeable by omission, and a
+  future table left out of the contract must land under the floor,
+  not above it. And delete conjuncts (retention) are policy the
+  contract cannot declare yet, so they are the service's to state
+  explicitly rather than this module's to invent.
+
+  The CLI gained an opt-in `engine-policy` target rendering
+  `policy.json` beside the other artifacts, so the engine's row
+  security is review-visible in the same commit that moves it. Opt-in
+  rather than default because the CLI holds only the default
+  vocabulary; a contract naming its own guards would fail the whole
+  default run over a face nobody asked for.
+
 - **A reference page: the contract, as the surface it becomes.** A
   service declares its shape once and janus lands it on REST,
   GraphQL, and MCP by rules nobody should have to hold in their head.
@@ -140,6 +181,22 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   was shared. The generated pages go through the same function.
 
 ### Changed
+
+- **Removing a field's guard is breaking now, and a sub-collection's
+  guards answer to the differ at all.** The differ read guards
+  caller-side only: adding or swapping one broke, removing one
+  "showed more and refused nobody" and passed as compatible, and a
+  guard on a sub-resource field was not compared in any direction —
+  which is exactly where copal's one guarded field lives. Who sees a
+  field is contract surface in BOTH directions: removing a guard
+  takes away the redaction itself, showing the column to every caller
+  the guard used to deny, on the API faces and now in the derived
+  engine `PERMISSIONS` too. So every guard movement is named breaking
+  and review decides, at both nesting levels, through one shared
+  field-diff so the rules cannot drift by depth. Sub-resource fields
+  also gained the column-retarget check (same wire name over a
+  different column) and additive field reports the top level already
+  had.
 
 - **The console has a shape.** Navigation moved into a rail down the
   left and the data fills the rest, which is what an operator already

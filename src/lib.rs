@@ -15,6 +15,7 @@ pub mod ir;
 pub mod mcp;
 mod naming;
 pub mod openapi;
+pub mod policy;
 pub mod reserved;
 pub mod scaffold;
 pub mod sdl;
@@ -31,6 +32,7 @@ pub use ir::{
 };
 pub use mcp::generate_mcp_tools;
 pub use openapi::{generate_openapi, GenerateError};
+pub use policy::{derive_policy, ClaimVocabulary, EnginePolicy, PolicyError};
 pub use reserved::is_reserved;
 pub use sdl::generate_sdl;
 pub use validate::{validate, Violation};

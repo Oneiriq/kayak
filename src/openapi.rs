@@ -25,6 +25,9 @@ pub enum GenerateError {
     /// A target name the orchestrator does not recognize.
     #[error("unknown generation target {0:?}")]
     UnknownTarget(String),
+    /// The engine policy could not be rendered.
+    #[error("engine policy: {0}")]
+    Policy(#[from] crate::policy::PolicyError),
 }
 
 fn format_violations(violations: &[Violation]) -> String {

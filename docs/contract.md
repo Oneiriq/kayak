@@ -156,8 +156,14 @@ A caller who cannot see a column cannot narrow by it either:
 filtering or sorting on a hidden column refuses, because narrowing by
 a value is reading it.
 
-Guarding an open field or swapping its policy is breaking; removing a
-guard shows more and refuses nobody.
+A guard moving in ANY direction is breaking. Guarding an open field
+takes values away from deployed callers and swapping guards changes
+which callers those are; removing a guard refuses nobody, but it
+takes away the redaction itself — the column becomes visible to every
+caller the guard used to deny, on the API faces and in the derived
+engine policy alike (see generators.md). Wider disclosure is not
+additive for whoever the guard protected, so the differ names it and
+review decides.
 
 ## Rate classes
 
@@ -200,7 +206,10 @@ caller against a declared scope refuses `unauthorized`; an identified
 caller missing one refuses `forbidden`, naming the scope. OpenAPI
 operations carry their requirements as `x-requires-scopes`, and the
 differ treats a new requirement as breaking and a removed one as
-compatible.
+compatible. `reads_require` also feeds the engine policy face:
+`derive_policy` renders it as a select conjunct on the resource's
+table and its sub-resource tables, so a deployment enforcing at the
+engine tightens both layers with one edit (see generators.md).
 
 ## Watching
 

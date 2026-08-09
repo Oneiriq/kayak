@@ -48,9 +48,10 @@ fn main() -> ExitCode {
                 "usage:\n  janus scaffold --schema <file> [--out <file>] [--name <name>] \
                  [--version <semver>] [--pinned <columns>]\n  \
                  janus generate --contract <file-or-dir> --schema <file> --out <dir> \
-                 [--targets {}]\n  janus diff <old-contract> <new-contract>\n\n  a contract is one \
-                 .json file, or a directory holding contract.json beside \
-                 resources/*.json and queries/*.json",
+                 [--targets {},engine-policy]\n  janus diff <old-contract> <new-contract>\n\n  a \
+                 contract is one .json file, or a directory holding contract.json beside \
+                 resources/*.json and queries/*.json\n  engine-policy is opt-in: it renders with \
+                 the default token-claim vocabulary",
                 TARGETS.join(","),
             );
             ExitCode::from(2)

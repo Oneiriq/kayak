@@ -198,6 +198,18 @@ fn scaffold_without_a_schema_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2));
 }
 
+/// `verify` refuses with a usage exit before touching any database:
+/// missing flags under the feature, and a missing feature in a build
+/// without it, are both a 2 rather than a connection attempt.
+#[test]
+fn verify_without_flags_is_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args(["verify"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
 #[test]
 fn generate_and_diff_through_the_binary() {
     let dir = tempfile::tempdir().unwrap();

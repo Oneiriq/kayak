@@ -24,6 +24,9 @@ pub mod validate;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
+#[cfg(feature = "verify")]
+pub mod verify;
+
 pub use diff::{diff, Change};
 pub use generate::generate_all;
 pub use ir::{

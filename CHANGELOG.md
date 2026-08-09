@@ -89,6 +89,39 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **`janus verify --db`: ask the planner itself.** Static validation
+  proves an index exists for every filter and sort claim; it cannot
+  prove the planner uses it. An index can cover the right columns in
+  an order the composed listing cannot seek, and an engine upgrade
+  can re-cost a plan overnight — every such case ships a listing that
+  answers correctly and walks the table to do it, which is the exact
+  failure the static gate exists to prevent, one layer below where it
+  can see. `verify` composes one representative listing per filter
+  claim and per sort claim (pins as equality binds, the claimed
+  filter bound, the claimed sort ordered, always with a LIMIT), runs
+  each through `EXPLAIN` against a live database, and fails naming
+  the claim whenever the plan iterates the table. Library API
+  (`janus::verify::{probes, verify_contract}`) and CLI, exiting
+  non-zero so it gates in CI beside `diff`.
+
+  The plan vocabulary is probed, not guessed: on SurrealDB 3.x an
+  `EXPLAIN` answers with one plan tree of `operator` nodes, index
+  access spells `IndexScan`, the fallback spells `TableScan`, a sort
+  the index order cannot serve rides a `SortTopKByKey` node over
+  whichever scan feeds it, and a filter the index cannot narrow
+  becomes a residual `Filter` over the pins' seek — so a `TableScan`
+  anywhere in the tree is the conviction. The probe lives on as a
+  vocabulary test against the embedded engine, because this tool's
+  worst failure mode is the vocabulary drifting under it and turning
+  every verification silently green.
+
+  Janus deliberately carries no database client, so the whole module
+  rides a new `verify` cargo feature the way async-graphql rides
+  `graphql`: the client arrives only for consumers that opt in, CI
+  runs `--all-features` so the gated half stays compiled and tested,
+  and the tests drive the in-process `mem://` engine so no server is
+  required anywhere.
+
 - **The engine policy: the eighth face, derived instead of hand-kept.**
   A SurrealDB deployment can enforce the contract a second time at
   the engine — table `PERMISSIONS` filtering rows, field

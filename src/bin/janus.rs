@@ -43,12 +43,15 @@ fn main() -> ExitCode {
         Some("scaffold") => run_scaffold(&arguments[1..]),
         Some("generate") => run_generate(&arguments[1..]),
         Some("diff") => run_diff(&arguments[1..]),
+        Some("verify") => run_verify(&arguments[1..]),
         _ => {
             eprintln!(
                 "usage:\n  janus scaffold --schema <file> [--out <file>] [--name <name>] \
                  [--version <semver>] [--pinned <columns>]\n  \
                  janus generate --contract <file-or-dir> --schema <file> --out <dir> \
-                 [--targets {},engine-policy]\n  janus diff <old-contract> <new-contract>\n\n  a \
+                 [--targets {},engine-policy]\n  janus diff <old-contract> <new-contract>\n  \
+                 janus verify --contract <file-or-dir> --db <url> --namespace <ns> \
+                 --database <db> [--user <name> --pass <secret>]\n\n  a \
                  contract is one .json file, or a directory holding contract.json beside \
                  resources/*.json and queries/*.json\n  engine-policy is opt-in: it renders with \
                  the default token-claim vocabulary",
@@ -207,6 +210,99 @@ fn run_generate(arguments: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Ask the live planner what the static gate cannot: run every filter
+/// and sort claim's representative listing through `EXPLAIN` and fail
+/// naming each claim the planner answers with a table walk.
+#[cfg(feature = "verify")]
+fn run_verify(arguments: &[String]) -> ExitCode {
+    let (Some(contract_path), Some(url), Some(namespace), Some(database)) = (
+        flag_value(arguments, "--contract"),
+        flag_value(arguments, "--db"),
+        flag_value(arguments, "--namespace"),
+        flag_value(arguments, "--database"),
+    ) else {
+        eprintln!("verify requires --contract, --db, --namespace, and --database");
+        return ExitCode::from(2);
+    };
+    let contract = match read_contract(contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            eprintln!("contract {contract_path}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut config = surql::connection::ConnectionConfig::builder()
+        .url(url)
+        .namespace(namespace)
+        .database(database);
+    if let Some(user) = flag_value(arguments, "--user") {
+        config = config.username(user);
+    }
+    if let Some(pass) = flag_value(arguments, "--pass") {
+        config = config.password(pass);
+    }
+    let config = match config.build() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("connection config: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let client = match surql::DatabaseClient::new(config) {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("client: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("runtime: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let verified = runtime.block_on(async {
+        client
+            .connect()
+            .await
+            .map_err(|e| format!("connect {url}: {e}"))?;
+        janus::verify::verify_contract(&client, &contract)
+            .await
+            .map_err(|e| e.to_string())
+    });
+    match verified {
+        Ok(violations) if violations.is_empty() => {
+            println!("every filter and sort claim plans on an index");
+            ExitCode::SUCCESS
+        }
+        Ok(violations) => {
+            for violation in &violations {
+                println!("SCANS      {violation}");
+            }
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Without the feature there is no client to ask, and a usage exit
+/// with the reason beats pretending the subcommand does not exist.
+#[cfg(not(feature = "verify"))]
+fn run_verify(_arguments: &[String]) -> ExitCode {
+    eprintln!(
+        "this janus binary was built without the `verify` feature; \
+         rebuild with --features verify to ask a live planner"
+    );
+    ExitCode::from(2)
 }
 
 fn run_diff(arguments: &[String]) -> ExitCode {

@@ -263,6 +263,29 @@ Run the gate in the owning service's tests against the real schema
 definitions. Schema drift then fails a test naming the offending column before anything
 ships.
 
+### Verifying against a live planner
+
+Static validation proves an index exists; it cannot prove the planner
+uses it. Behind the `verify` cargo feature (janus deliberately
+carries no database client, so the client rides this gate the way
+async-graphql rides `graphql`), `janus::verify::verify_contract`
+composes one representative listing per filter claim and per sort
+claim — pins as equality binds, the claimed filter bound, the claimed
+sort ordered, always with a LIMIT — runs each through `EXPLAIN`
+against a live database, and returns every claim whose plan falls
+back to iterating the table, named the way validation names its
+violations. `janus::verify::probes` exposes the composed queries
+without running them, so what will be asked is inspectable before the
+asker points at production. The same check runs from the CLI:
+
+```
+janus verify --contract contract.json --db ws://localhost:8000 \
+    --namespace app --database app [--user root --pass secret]
+```
+
+Exit is non-zero when any claim scans, with each one printed, so it
+gates in CI beside `diff`.
+
 ## Diffing
 
 `janus::diff(&old, &new)` compares two contracts at the IR level and

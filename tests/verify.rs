@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use janus::verify::{probes, verify_contract};
-use janus::{Contract, FieldExposure, Resource, SubResource};
+use janus::{Contract, FieldExposure, Query, Resource, SearchBacking, SearchKind, SubResource};
 use surql::connection::ConnectionConfig;
 use surql::DatabaseClient;
 
@@ -88,6 +88,59 @@ fn contract(resources: Vec<Resource>) -> Contract {
     }
 }
 
+/// Copal's search tables, both search indexes in place: the analyzer,
+/// BM25 over the passage text, HNSW over its embedding. Dimension 3
+/// because the fixture controls it and three is enough to seek.
+const SEARCH_DDL: &str = "
+DEFINE ANALYZER copal_text TOKENIZERS class FILTERS lowercase, ascii, snowball(english);
+DEFINE TABLE text_chunk SCHEMAFULL;
+DEFINE FIELD tenant_id ON text_chunk TYPE string;
+DEFINE FIELD body ON text_chunk TYPE string;
+DEFINE FIELD embedding ON text_chunk TYPE option<array<float>>;
+DEFINE INDEX idx_chunk_body ON text_chunk FIELDS body FULLTEXT ANALYZER copal_text BM25;
+DEFINE INDEX idx_chunk_embedding ON text_chunk FIELDS embedding HNSW DIMENSION 3 DIST COSINE TYPE F32;
+CREATE text_chunk SET tenant_id = 't1', body = 'the quick brown fox', embedding = [0.1, 0.2, 0.3];
+";
+
+/// The drift scenario: the same table after a schema change dropped
+/// both search indexes, while the contract still promises search.
+const DRIFTED_DDL: &str = "
+DEFINE TABLE text_chunk SCHEMAFULL;
+DEFINE FIELD tenant_id ON text_chunk TYPE string;
+DEFINE FIELD body ON text_chunk TYPE string;
+DEFINE FIELD embedding ON text_chunk TYPE option<array<float>>;
+CREATE text_chunk SET tenant_id = 't1', body = 'the quick brown fox', embedding = [0.1, 0.2, 0.3];
+";
+
+/// A contract whose one query declares copal's two backings.
+fn searching_contract() -> Contract {
+    let mut searching = contract(vec![]);
+    searching.queries = vec![Query {
+        name: "search".into(),
+        path: "/v1/search".into(),
+        input: vec![],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+        backing: vec![
+            SearchBacking {
+                table: "text_chunk".into(),
+                column: "body".into(),
+                index: "idx_chunk_body".into(),
+                kind: SearchKind::Lexical,
+            },
+            SearchBacking {
+                table: "text_chunk".into(),
+                column: "embedding".into(),
+                index: "idx_chunk_embedding".into(),
+                kind: SearchKind::Vector,
+            },
+        ],
+    }];
+    searching
+}
+
 /// The plan vocabulary this crate matches against, pinned to the
 /// engine. `verify`'s worst failure mode is the vocabulary drifting
 /// under it: a renamed operator would turn every verification
@@ -114,6 +167,35 @@ fn contract(resources: Vec<Resource>) -> Contract {
 ///            "table": "note", "direction": "Forward",
 ///            "topk_pushdown": "yes"}}]}]}]}
 /// ```
+///
+/// And the search operators, probed the same way. Served, each names
+/// its index in one leaf; unserved, `@@` degrades to a `TableScan`
+/// carrying the predicate as an attribute and `<|k,EF|>` to a bare
+/// one. The wrong-dimension literal still resolves the index, which
+/// is what lets a probe carry `[0]` without knowing the embedding
+/// width. MTREE is gone from this engine entirely: the `DEFINE` no
+/// longer parses, and `<|k|>` errors with "no longer supported".
+///
+/// ```text
+/// SELECT * FROM text_chunk WHERE body @@ 'quick' EXPLAIN
+/// -> {"operator": "SelectProject", "children": [
+///      {"operator": "FullTextScan", "attributes": {
+///        "index": "idx_chunk_body", "query": "quick"}}]}
+///
+/// SELECT * FROM text_chunk WHERE embedding <|4,40|> [0.1, 0.2, 0.3] EXPLAIN
+/// -> {"operator": "SelectProject", "children": [
+///      {"operator": "KnnScan", "attributes": {
+///        "index": "idx_chunk_embedding", "dimension": "3",
+///        "ef": "40", "k": "4"}}]}
+///
+/// SELECT * FROM text_chunk WHERE embedding <|4,COSINE|> [0.1, 0.2, 0.3] EXPLAIN
+/// -> {"operator": "SelectProject", "children": [
+///      {"operator": "KnnTopK", "attributes": {"dimension": "3",
+///        "distance": "Cosine", "field": "embedding", "k": "4"},
+///       "children": [
+///        {"operator": "TableScan", "attributes": {
+///          "table": "text_chunk", "direction": "Forward"}}]}]}
+/// ```
 #[tokio::test]
 async fn the_probed_plan_vocabulary_still_holds() {
     let client = memory_client().await;
@@ -136,6 +218,38 @@ async fn the_probed_plan_vocabulary_still_holds() {
     assert!(text.contains("\"TableScan\""), "{text}");
     assert!(text.contains("\"operator\""), "{text}");
     assert!(text.contains("\"children\""), "{text}");
+
+    // The search half of the vocabulary, against the search tables.
+    let client = memory_client().await;
+    client.query(SEARCH_DDL).await.expect("schema applies");
+
+    let matching = client
+        .query("SELECT * FROM text_chunk WHERE body @@ 'quick' EXPLAIN")
+        .await
+        .expect("explain answers");
+    let text = matching.to_string();
+    assert!(text.contains("\"FullTextScan\""), "{text}");
+    assert!(text.contains("idx_chunk_body"), "{text}");
+    assert!(!text.contains("\"TableScan\""), "{text}");
+
+    let neighbouring = client
+        .query("SELECT * FROM text_chunk WHERE embedding <|1,64|> [0] EXPLAIN")
+        .await
+        .expect("explain answers");
+    let text = neighbouring.to_string();
+    assert!(text.contains("\"KnnScan\""), "{text}");
+    assert!(text.contains("idx_chunk_embedding"), "{text}");
+    assert!(!text.contains("\"TableScan\""), "{text}");
+
+    // The metric KNN form ignores the index even where one exists,
+    // which is why the probe composes `<|k,EF|>` the way copal does.
+    let brute = client
+        .query("SELECT * FROM text_chunk WHERE embedding <|1,COSINE|> [0] EXPLAIN")
+        .await
+        .expect("explain answers");
+    let text = brute.to_string();
+    assert!(text.contains("\"KnnTopK\""), "{text}");
+    assert!(text.contains("\"TableScan\""), "{text}");
 }
 
 /// Claims the schema really serves come back clean, sub-resources
@@ -204,6 +318,50 @@ async fn an_unserved_claim_names_itself() {
         rendered
             .iter()
             .any(|v| v.starts_with("notes: sort title plans as \"TableScan over note\"")),
+        "{rendered:?}",
+    );
+}
+
+/// Copal's search surface, backed the way its schema really is:
+/// both backings reach their named index, so the contract's promise
+/// and the planner's answer agree.
+#[tokio::test]
+async fn a_backed_search_verifies_clean() {
+    let client = memory_client().await;
+    client.query(SEARCH_DDL).await.expect("schema applies");
+
+    let contract = searching_contract();
+    let violations = verify_contract(&client, &contract).await.unwrap();
+    assert_eq!(violations, vec![], "both backings reach their index");
+    assert_eq!(probes(&contract).len(), 2, "one probe per backing");
+}
+
+/// The motivating drift: a schema change dropped the search indexes
+/// while the contract still promises search. Static validation against
+/// the CHECKED-IN schema would still pass — the live database is where
+/// the divergence lives, so the live planner is what convicts it,
+/// naming each backing.
+#[tokio::test]
+async fn a_dropped_search_index_convicts_the_backing_by_name() {
+    let client = memory_client().await;
+    client.query(DRIFTED_DDL).await.expect("schema applies");
+
+    let violations = verify_contract(&client, &searching_contract())
+        .await
+        .unwrap();
+    let rendered: Vec<String> = violations.iter().map(ToString::to_string).collect();
+    assert_eq!(violations.len(), 2, "{rendered:?}");
+    assert!(
+        rendered.iter().any(|v| v.starts_with(
+            "query search: lexical backing text_chunk.body plans as \"TableScan over text_chunk\""
+        )),
+        "{rendered:?}",
+    );
+    assert!(
+        rendered.iter().any(|v| v.starts_with(
+            "query search: vector backing text_chunk.embedding plans as \
+             \"TableScan over text_chunk\""
+        )),
         "{rendered:?}",
     );
 }

@@ -2,7 +2,10 @@
 //! `file` table (built inline: Janus takes schema definitions as input
 //! and depends on no consumer).
 
-use janus::{generate_openapi, validate, Contract, FieldExposure, Resource, Violation};
+use janus::{
+    generate_openapi, validate, ActionField, Contract, FieldExposure, Query, Resource,
+    SearchBacking, SearchKind, TypeRef, Violation,
+};
 use surql::schema::{
     array_field, bm25_index, datetime_field, hnsw_index, index, int_field, mtree_index,
     string_field, table_schema, unique_index, HnswDistanceType, IndexType, MTreeDistanceType,
@@ -304,6 +307,235 @@ fn an_unbound_prefix_is_reported_as_a_prefix_and_not_as_an_index_type() {
             &violations[0],
             Violation::UnindexedSort { column, .. } if column == "body"
         ),
+        "{violations:?}",
+    );
+}
+
+/// One backing, for the tests that vary a member at a time.
+fn backing(column: &str, index: &str, kind: SearchKind) -> SearchBacking {
+    SearchBacking {
+        table: "text_chunk".into(),
+        column: column.into(),
+        index: index.into(),
+        kind,
+    }
+}
+
+/// A query holding `backing`, on a contract with no resources: the
+/// backing rules do not care what else the contract exposes.
+fn searching(backing: Vec<SearchBacking>) -> Contract {
+    let mut contract = contract(vec![]);
+    contract.queries = vec![Query {
+        name: "search".into(),
+        path: "/v1/search".into(),
+        input: vec![ActionField {
+            name: "q".into(),
+            kind: TypeRef::String,
+            required: true,
+            multiple: false,
+            description: None,
+            options: Vec::new(),
+        }],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+        backing,
+    }];
+    contract
+}
+
+/// Copal's real search surface, declared.
+///
+/// The `search` query in `crates/copal-server/src/contract/search.rs`
+/// is served by machinery the contract never named: BM25 over
+/// `text_chunk.body` through `idx_chunk_body` and HNSW over
+/// `text_chunk.embedding` through `idx_chunk_embedding` (the fused
+/// implementation in `crates/copal-store/src/repo/text.rs`, the
+/// indexes in `crates/copal-store/src/schema/text.rs`), fused in the
+/// resolver — so nothing stopped a schema change from dropping
+/// `idx_chunk_body` while the contract went on promising search.
+/// Declared as two backings, the same surface validates clean against
+/// the copal-shaped table, and `file_text` beside it shows a backing
+/// is optional: plain queries stay legal. This fixture is what makes
+/// the copal adoption a three-line contract edit.
+#[test]
+fn copal_search_declared_with_its_backing_validates_clean() {
+    let mut contract = searching(vec![
+        backing("body", "idx_chunk_body", SearchKind::Lexical),
+        backing("embedding", "idx_chunk_embedding", SearchKind::Vector),
+    ]);
+    contract.queries.push(Query {
+        name: "file_text".into(),
+        path: "/v1/files/{id}/text".into(),
+        input: vec![ActionField {
+            name: "id".into(),
+            kind: TypeRef::String,
+            required: true,
+            multiple: false,
+            description: None,
+            options: Vec::new(),
+        }],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+        backing: vec![],
+    });
+    assert_eq!(validate(&contract, &[text_chunk_table()]), vec![]);
+
+    // MTREE is the other vector machinery the schema layer can spell,
+    // and a vector backing accepts it the way the WrongIndexType rule
+    // groups it with HNSW.
+    let mtree = searching(vec![backing(
+        "locator",
+        "idx_chunk_locator",
+        SearchKind::Vector,
+    )]);
+    assert_eq!(validate(&mtree, &[text_chunk_table()]), vec![]);
+}
+
+/// The mirror image of `a_claim_resting_on_a_search_or_vector_index_is_refused`:
+/// there a filter rested on search machinery that cannot narrow, here
+/// a search rests on machinery that cannot search, and the refusal
+/// teaches the same way — name the index the author was looking at,
+/// say what it turned out to be, say what the claim needs.
+#[test]
+fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
+    for (column, index, kind, expected_type) in [
+        // A b-tree under a lexical backing: the plain listing index.
+        (
+            "tenant_id",
+            "idx_chunk_tenant",
+            SearchKind::Lexical,
+            surql::schema::IndexType::Standard,
+        ),
+        // A unique index under a vector backing.
+        (
+            "file",
+            "uniq_chunk_position",
+            SearchKind::Vector,
+            surql::schema::IndexType::Unique,
+        ),
+        // The two search machineries crossed.
+        (
+            "body",
+            "idx_chunk_body",
+            SearchKind::Vector,
+            surql::schema::IndexType::Search,
+        ),
+        (
+            "embedding",
+            "idx_chunk_embedding",
+            SearchKind::Lexical,
+            surql::schema::IndexType::Hnsw,
+        ),
+    ] {
+        let contract = searching(vec![backing(column, index, kind)]);
+        let violations = validate(&contract, &[text_chunk_table()]);
+        assert_eq!(violations.len(), 1, "{column}/{index}: {violations:?}");
+        assert!(
+            matches!(
+                &violations[0],
+                Violation::WrongBackingIndexType {
+                    column: c, index: i, kind: k, index_type: t, ..
+                } if c == column && i == index && *k == kind && *t == expected_type
+            ),
+            "{column}/{index}: {violations:?}",
+        );
+    }
+
+    // The message does the teaching: the index, what it is, what each
+    // kind needs.
+    let contract = searching(vec![backing(
+        "tenant_id",
+        "idx_chunk_tenant",
+        SearchKind::Lexical,
+    )]);
+    let text = validate(&contract, &[text_chunk_table()])[0].to_string();
+    assert!(text.contains("the plain index idx_chunk_tenant"), "{text}");
+    assert!(
+        text.contains("a lexical backing needs a FULLTEXT index"),
+        "{text}"
+    );
+    assert!(
+        text.contains("a vector backing needs an HNSW or MTREE one"),
+        "{text}"
+    );
+    let crossed = searching(vec![backing("body", "idx_chunk_body", SearchKind::Vector)]);
+    let text = validate(&crossed, &[text_chunk_table()])[0].to_string();
+    assert!(text.contains("the FULLTEXT index idx_chunk_body"), "{text}");
+}
+
+/// One expected refusal, as a predicate over the violation.
+type Refusal = Box<dyn Fn(&Violation) -> bool>;
+
+/// Every name a backing carries resolves or is refused by name, and
+/// an index that resolves but holds a different column is its own
+/// refusal rather than a type complaint about the wrong thing.
+#[test]
+fn a_backing_that_resolves_nothing_is_named() {
+    let cases: Vec<(Contract, Refusal)> = vec![
+        (
+            {
+                let mut wrong =
+                    searching(vec![backing("body", "idx_chunk_body", SearchKind::Lexical)]);
+                wrong.queries[0].backing[0].table = "no_such_table".into();
+                wrong
+            },
+            Box::new(
+                |v| matches!(v, Violation::UnknownBackingTable { table, .. } if table == "no_such_table"),
+            ),
+        ),
+        (
+            searching(vec![backing(
+                "no_such_column",
+                "idx_chunk_body",
+                SearchKind::Lexical,
+            )]),
+            Box::new(
+                |v| matches!(v, Violation::UnknownBackingColumn { column, .. } if column == "no_such_column"),
+            ),
+        ),
+        (
+            searching(vec![backing("body", "no_such_index", SearchKind::Lexical)]),
+            Box::new(
+                |v| matches!(v, Violation::UnknownBackingIndex { index, .. } if index == "no_such_index"),
+            ),
+        ),
+        (
+            // The index exists and is even the right kind, but it
+            // holds `body`, not `ordinal`.
+            searching(vec![backing(
+                "ordinal",
+                "idx_chunk_body",
+                SearchKind::Lexical,
+            )]),
+            Box::new(|v| {
+                matches!(
+                    v,
+                    Violation::BackingIndexElsewhere { column, index, .. }
+                        if column == "ordinal" && index == "idx_chunk_body"
+                )
+            }),
+        ),
+    ];
+    for (contract, matches_case) in cases {
+        let violations = validate(&contract, &[text_chunk_table()]);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(matches_case(&violations[0]), "{violations:?}");
+    }
+
+    // Declaring the same backing twice promises one thing twice and
+    // makes any later diff of it ambiguous.
+    let doubled = searching(vec![
+        backing("body", "idx_chunk_body", SearchKind::Lexical),
+        backing("body", "idx_chunk_body", SearchKind::Lexical),
+    ]);
+    let violations = validate(&doubled, &[text_chunk_table()]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].to_string().contains("same backing twice"),
         "{violations:?}",
     );
 }

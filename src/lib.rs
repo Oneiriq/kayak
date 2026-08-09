@@ -31,7 +31,8 @@ pub use diff::{diff, Change};
 pub use generate::generate_all;
 pub use ir::{
     Action, ActionField, ActionOutput, ContentFaces, Contract, ContractLimits, FieldExposure,
-    GraphqlNames, Query, RateClass, Resource, SubGraphqlNames, SubResource, TypeRef,
+    GraphqlNames, Query, RateClass, Resource, SearchBacking, SearchKind, SubGraphqlNames,
+    SubResource, TypeRef,
 };
 pub use mcp::generate_mcp_tools;
 pub use openapi::{generate_openapi, GenerateError};

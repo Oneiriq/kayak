@@ -136,6 +136,93 @@ may each carry a `versions` collection without colliding. Filters and page
 ceilings belong to the sub-resource. Declaring `sortable` on `files` says
 nothing about what `versions` may sort on.
 
+## Queries
+
+A query is a read that answers a question rather than paging a collection.
+Search is the shape that motivated them: relevance is not a sort column and a
+query string is not a filter, so a listing cannot express one.
+
+```rust
+queries: vec![Query {
+    name: "search".into(),
+    path: "/v1/search".into(),          // absolute under the API root
+    input: vec![ActionField {
+        name: "q".into(),
+        kind: TypeRef::String,
+        required: true,
+        ..
+    }],
+    requires: vec!["read".into()],
+    rate_class: Some("reads".into()),
+    backing: vec![/* see below */],
+    ..
+}],
+```
+
+Queries render as REST `GET`s, GraphQL query fields, client methods, and MCP
+tools, and carry the same scope and rate declarations every other operation
+carries. The answer is JSON, because its shape belongs to the resolver rather
+than to a projected table. The differ treats them like actions: removing one,
+renaming its field, moving its path, tightening its scopes, or gaining a
+required input all read as breaking.
+
+### Search backings
+
+A listing declares its cost exhaustively — every filter and sort claim is
+index-validated — while a query, the one read whose cost is most surprising,
+would otherwise be an opaque box: typed inputs, a path, and nothing about the
+machinery behind it. Nothing would stop a schema change from dropping the
+FULLTEXT index while the contract went on promising search. A backing names
+that machinery:
+
+```rust
+backing: vec![
+    SearchBacking {
+        table: "text_chunk".into(),
+        column: "body".into(),
+        index: "idx_chunk_body".into(),
+        kind: SearchKind::Lexical,       // `@@` through FULLTEXT
+    },
+    SearchBacking {
+        table: "text_chunk".into(),
+        column: "embedding".into(),
+        index: "idx_chunk_embedding".into(),
+        kind: SearchKind::Vector,        // KNN through HNSW or MTREE
+    },
+],
+```
+
+A fused search — BM25 candidates and vector neighbours rescored together —
+is two backings on one query; the fusion itself is resolver behavior, not
+contract. `backing` is optional and empty by default: a query without one
+claims no search machinery, which is what every existing contract declares,
+and old contracts deserialize unchanged.
+
+Validation holds a backing to the mirror image of the listing index rules.
+The named table, column, and index must exist; the index must hold the
+column; and it must be the kind's own machinery — FULLTEXT for a lexical
+backing, HNSW or MTREE for a vector one. A backing resting on a plain b-tree
+is refused the same way a filter resting on a FULLTEXT index is, with the
+violation naming the index and what it turned out to be, because "the plain
+index idx_chunk_tenant cannot answer it" is a diagnosis where a bare refusal
+is a hunt.
+
+The backing is capacity metadata, not wire shape. REST paths, the SDL, and
+client signatures do not change when one is declared; the declaration
+surfaces where metadata already surfaces — the MCP tool's annotations, beside
+scope and rate, and the OpenAPI operation description. The differ reads a
+removed backing, or any member of one re-pointed (table, column, index,
+kind), as breaking, and a backing added to an existing query as compatible:
+it promises more about the same wire surface.
+
+`verify --db` probes each backing through its own operator — `@@` for
+lexical, the `<|k,EF|>` KNN form for vector — and holds the plan to the
+NAMED index, which is stricter than not scanning: a search served by some
+other index than the declared one is drift too. One boundary is the
+engine's: SurrealDB 3.x has removed MTREE, so while validation accepts an
+MTREE-typed definition for a vector backing, a live 3.x database cannot hold
+one and verification composes only the HNSW form.
+
 ## Field guards
 
 A guard is a named visibility policy on one exposed field:
@@ -256,8 +343,9 @@ means valid. Generation refuses invalid contracts with every violation named.
 The checks: tables and columns exist, renames do not collide, filters are
 indexed by an index that can narrow one, sorts are reachable through such an
 index's prefix, the server-bound columns lead some index so the plain
-listing seeks rather than scans, action definitions are well-formed, chosen
-names are valid for every surface they reach.
+listing seeks rather than scans, search backings rest on the kind of index
+that can answer them, action definitions are well-formed, chosen names are
+valid for every surface they reach.
 
 Run the gate in the owning service's tests against the real schema
 definitions. Schema drift then fails a test naming the offending column before anything
@@ -271,10 +359,12 @@ carries no database client, so the client rides this gate the way
 async-graphql rides `graphql`), `janus::verify::verify_contract`
 composes one representative listing per filter claim and per sort
 claim — pins as equality binds, the claimed filter bound, the claimed
-sort ordered, always with a LIMIT — runs each through `EXPLAIN`
-against a live database, and returns every claim whose plan falls
-back to iterating the table, named the way validation names its
-violations. `janus::verify::probes` exposes the composed queries
+sort ordered, always with a LIMIT — and one probe per search backing
+through its own operator, runs each through `EXPLAIN` against a live
+database, and returns every claim the planner does not serve, named
+the way validation names its violations: a listing claim fails when
+its plan iterates the table, a backing when its plan does not reach
+the named index. `janus::verify::probes` exposes the composed queries
 without running them, so what will be asked is inspectable before the
 asker points at production. The same check runs from the CLI:
 
@@ -294,8 +384,10 @@ sort; a field re-pointed to a different column under the same wire name; a
 lowered page ceiling; a moved action; a changed output; an input that became
 required or changed type; any effective GraphQL rename; a resource that
 stopped being watchable; a removed sub-resource, or one that lost a field,
-filter, sort, or page headroom. Compatible: additions, a resource that became
-watchable, a new sub-resource, and removal of an optional input.
+filter, sort, or page headroom; a removed search backing, or any member of
+one re-pointed. Compatible: additions, a resource that became watchable, a
+new sub-resource, a backing added to an existing query, and removal of an
+optional input.
 
 The CLI exits non-zero on breaking changes (`janus diff old.json new.json`),
 which makes the gate one line of CI.

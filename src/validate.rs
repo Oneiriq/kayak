@@ -17,6 +17,12 @@
 //!   every EARLIER column is pinned or filterable; an index serves an
 //!   ORDER BY only from a prefix whose head is equality-bound. A bare
 //!   leading column is the degenerate case.
+//! - search backing: the named index must exist on the named table,
+//!   hold the named column, and be the kind's own machinery — FULLTEXT
+//!   for a lexical backing, HNSW or MTREE for a vector one. The mirror
+//!   image of the index-type rule: there a filter rested on a search
+//!   index that cannot narrow, here a search rests on a b-tree that
+//!   cannot match terms or walk neighbours.
 //!
 //! Both index rules read [`crate::indexes`] rather than the table's
 //! index list, because only a standard or unique index counts toward
@@ -27,8 +33,8 @@
 
 use surql::schema::{IndexDefinition, IndexType, TableDefinition};
 
-use crate::indexes::{ordering_indexes, seekable_through, serves_ordering};
-use crate::ir::{Contract, FieldExposure, Resource, SubResource};
+use crate::indexes::{ordering_indexes, seekable_through, serves_ordering, serves_search};
+use crate::ir::{Contract, FieldExposure, Query, Resource, SearchKind, SubResource};
 
 /// One listing surface's index-relevant claims, so a resource and a
 /// sub-resource are checked by exactly one rulebook.
@@ -115,6 +121,52 @@ pub enum Violation {
         index_type: IndexType,
     },
 
+    #[error("query {query}: backing table {table} does not exist in the schema")]
+    UnknownBackingTable { query: String, table: String },
+
+    #[error("query {query}: backing column {column} does not exist on table {table}")]
+    UnknownBackingColumn {
+        query: String,
+        table: String,
+        column: String,
+    },
+
+    #[error("query {query}: backing index {index} does not exist on table {table}")]
+    UnknownBackingIndex {
+        query: String,
+        table: String,
+        index: String,
+    },
+
+    #[error(
+        "query {query}: the {kind} backing on {table}.{column} names the index \
+         {index}, which does not hold {column}; an index answers a search only \
+         over the columns it covers"
+    )]
+    BackingIndexElsewhere {
+        query: String,
+        table: String,
+        column: String,
+        kind: SearchKind,
+        index: String,
+    },
+
+    #[error(
+        "query {query}: the {kind} backing on {table}.{column} rests on the \
+         {} index {index}, which cannot answer it; a lexical backing needs a \
+         FULLTEXT index over the column and a vector backing needs an HNSW or \
+         MTREE one, so back the query with one of those, or drop the backing",
+        index_kind_word(*.index_type)
+    )]
+    WrongBackingIndexType {
+        query: String,
+        table: String,
+        column: String,
+        kind: SearchKind,
+        index: String,
+        index_type: IndexType,
+    },
+
     #[error(
         "resource {resource}: the server binds {} on every read of {table}, \
          and no index leads with any of them; the plain listing, nothing \
@@ -130,6 +182,17 @@ pub enum Violation {
         /// and for a sub-resource the parent key.
         bound: Vec<String>,
     },
+}
+
+/// How a violation says what an index is. `DEFINE INDEX` has a
+/// keyword for every kind except the plain b-tree, whose keyword IS
+/// `INDEX`, and "the INDEX index" reads like a typo where "the
+/// FULLTEXT index" reads like a diagnosis.
+fn index_kind_word(index_type: IndexType) -> &'static str {
+    match index_type {
+        IndexType::Standard => "plain",
+        other => other.as_str(),
+    }
 }
 
 /// Validate a contract against schema definitions; empty means valid.
@@ -279,9 +342,86 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
                 });
             }
         }
+        validate_backing(query, schema, &mut violations);
     }
 
     violations
+}
+
+/// The backing rulebook: the mirror image of the listing index rules.
+///
+/// A filter claim needs an index that can narrow an equality, and the
+/// WrongIndexType rule refuses one resting on a FULLTEXT index. A
+/// backing claim needs the FULLTEXT (or vector) index, and this rule
+/// refuses one resting on a b-tree — the same mistake with the two
+/// index families swapped, so it gets the same treatment: name the
+/// index the author was looking at, say what it turned out to be, and
+/// say what the claim actually needs. Unknown names are reported and
+/// sit the capability question out, because repairing the name comes
+/// first; a resolved column and a resolved index answer for coverage
+/// and kind independently of one another.
+fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut Vec<Violation>) {
+    let mut seen = std::collections::BTreeSet::new();
+    for backing in &query.backing {
+        // Two identical backings would promise the same thing twice
+        // and make every later diff of them ambiguous.
+        if !seen.insert((
+            backing.table.clone(),
+            backing.column.clone(),
+            backing.index.clone(),
+            backing.kind.as_str(),
+        )) {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: backing.index.clone(),
+                problem: "declares the same backing twice".into(),
+            });
+            continue;
+        }
+        let Some(table) = schema.iter().find(|t| t.name == backing.table) else {
+            violations.push(Violation::UnknownBackingTable {
+                query: query.name.clone(),
+                table: backing.table.clone(),
+            });
+            continue;
+        };
+        if !table.fields.iter().any(|f| f.name == backing.column) {
+            violations.push(Violation::UnknownBackingColumn {
+                query: query.name.clone(),
+                table: backing.table.clone(),
+                column: backing.column.clone(),
+            });
+            continue;
+        }
+        let Some(index) = table.indexes.iter().find(|i| i.name == backing.index) else {
+            violations.push(Violation::UnknownBackingIndex {
+                query: query.name.clone(),
+                table: backing.table.clone(),
+                index: backing.index.clone(),
+            });
+            continue;
+        };
+        if !index.columns.iter().any(|c| c == &backing.column) {
+            violations.push(Violation::BackingIndexElsewhere {
+                query: query.name.clone(),
+                table: backing.table.clone(),
+                column: backing.column.clone(),
+                kind: backing.kind,
+                index: backing.index.clone(),
+            });
+            continue;
+        }
+        if !serves_search(index, backing.kind) {
+            violations.push(Violation::WrongBackingIndexType {
+                query: query.name.clone(),
+                table: backing.table.clone(),
+                column: backing.column.clone(),
+                kind: backing.kind,
+                index: backing.index.clone(),
+                index_type: index.index_type,
+            });
+        }
+    }
 }
 
 /// The index an author most likely mistook for coverage: one that holds

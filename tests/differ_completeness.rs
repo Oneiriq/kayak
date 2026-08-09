@@ -9,7 +9,7 @@
 use janus::diff::diff;
 use janus::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, Query, RateClass, Resource,
-    SubResource, TypeRef,
+    SearchBacking, SearchKind, SubResource, TypeRef,
 };
 
 fn base() -> Contract {
@@ -90,6 +90,12 @@ fn base() -> Contract {
             graphql_field: None,
             requires: vec!["search".into()],
             rate_class: None,
+            backing: vec![SearchBacking {
+                table: "text_chunk".into(),
+                column: "body".into(),
+                index: "idx_chunk_body".into(),
+                kind: SearchKind::Lexical,
+            }],
         }],
     }
 }
@@ -235,6 +241,31 @@ fn taking_something_away() -> Vec<Mutation> {
                     FieldExposure::renamed("legacy_ordinal", "ordinal")
             }),
         ),
+        // A backing has no name of its own: its identity is its four
+        // members, so each member is re-pointed separately here and
+        // every re-point must come back breaking, or a schema change
+        // could move the machinery out from under a promised search
+        // with the gate green.
+        (
+            "a search backing is gone",
+            Box::new(|c: &mut Contract| c.queries[0].backing.clear()),
+        ),
+        (
+            "a backing searches a different table",
+            Box::new(|c: &mut Contract| c.queries[0].backing[0].table = "file_text".into()),
+        ),
+        (
+            "a backing searches a different column",
+            Box::new(|c: &mut Contract| c.queries[0].backing[0].column = "digest".into()),
+        ),
+        (
+            "a backing rests on a different index",
+            Box::new(|c: &mut Contract| c.queries[0].backing[0].index = "idx_other".into()),
+        ),
+        (
+            "a backing changed kind",
+            Box::new(|c: &mut Contract| c.queries[0].backing[0].kind = SearchKind::Vector),
+        ),
     ]
 }
 
@@ -281,6 +312,14 @@ fn additions_are_compatible() {
         multiple: false,
         options: Vec::new(),
         description: None,
+    });
+    // A backing added to an existing query promises MORE about the
+    // same wire surface, which takes nothing from anyone.
+    after.queries[0].backing.push(SearchBacking {
+        table: "text_chunk".into(),
+        column: "embedding".into(),
+        index: "idx_chunk_embedding".into(),
+        kind: SearchKind::Vector,
     });
     let changes = diff(&before, &after);
     let breaking: Vec<_> = changes

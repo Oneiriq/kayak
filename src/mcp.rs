@@ -178,6 +178,14 @@ fn query_tool(query: &Query) -> Value {
             required.push(json!(field.name));
         }
     }
+    // The backing rides the annotations the way scope and rate do:
+    // capacity metadata an agent can read before calling, on the face
+    // where an agent reads, without touching the input schema that
+    // decides what a call looks like.
+    let mut notes = annotations(&query.requires, query.rate_class.as_deref());
+    if !query.backing.is_empty() {
+        notes["backing"] = json!(query.backing);
+    }
     json!({
         "name": query.name,
         "description": query
@@ -190,7 +198,7 @@ fn query_tool(query: &Query) -> Value {
             "required": required,
             "additionalProperties": false,
         },
-        "annotations": annotations(&query.requires, query.rate_class.as_deref()),
+        "annotations": notes,
     })
 }
 
@@ -248,6 +256,12 @@ mod tests {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: Some("reads".into()),
+                backing: vec![crate::ir::SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "body".into(),
+                    index: "idx_chunk_body".into(),
+                    kind: crate::ir::SearchKind::Lexical,
+                }],
             }],
         }
     }
@@ -276,5 +290,22 @@ mod tests {
         let search = tools.iter().find(|t| t["name"] == "search").unwrap();
         assert_eq!(search["inputSchema"]["required"], json!(["q"]));
         assert_eq!(search["annotations"]["requiredScopes"], json!(["read"]));
+        // The backing rides beside scope and rate, and stays off the
+        // input schema: it says what answers the call, not what the
+        // call looks like.
+        assert_eq!(
+            search["annotations"]["backing"],
+            json!([{
+                "table": "text_chunk",
+                "column": "body",
+                "index": "idx_chunk_body",
+                "kind": "lexical",
+            }]),
+        );
+        assert!(search["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|k| k == "q"));
     }
 }

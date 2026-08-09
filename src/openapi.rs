@@ -182,24 +182,35 @@ pub fn generate_openapi(
             })
             .collect();
         path_parameters.extend(parameters);
+        let mut operation = json!({
+            "operationId": query.name,
+            "summary": query.description,
+            "parameters": path_parameters,
+            "responses": {
+                "200": {
+                    "description": "the answer",
+                    "content": { "application/json": { "schema": { "type": "object" } } },
+                },
+            },
+        });
+        // The backing is capacity metadata, not wire shape: the path,
+        // the parameters, and the answer stay exactly what they were,
+        // and the declaration lands in the operation description,
+        // which is where a reader of the document learns what a call
+        // costs.
+        if !query.backing.is_empty() {
+            let described: Vec<String> = query
+                .backing
+                .iter()
+                .map(|b| format!("{} via {} over {}.{}", b.kind, b.index, b.table, b.column))
+                .collect();
+            operation["description"] = json!(format!("Search backing: {}.", described.join("; ")));
+        }
         let entry = paths
             .entry(query.path.clone())
             .or_insert_with(|| Value::Object(Map::new()));
         if let Some(object) = entry.as_object_mut() {
-            object.insert(
-                "get".to_owned(),
-                json!({
-                    "operationId": query.name,
-                    "summary": query.description,
-                    "parameters": path_parameters,
-                    "responses": {
-                        "200": {
-                            "description": "the answer",
-                            "content": { "application/json": { "schema": { "type": "object" } } },
-                        },
-                    },
-                }),
-            );
+            object.insert("get".to_owned(), operation);
         }
     }
 

@@ -17,6 +17,19 @@
 //! iterating the table fails by name, the same way a validation
 //! violation names its claim.
 //!
+//! Search backings get the same treatment through their own
+//! operators: a lexical backing is probed with `@@` and holds only if
+//! the plan reaches the NAMED index, a vector backing with the
+//! `<|k,EF|>` KNN form likewise. Reaching the named index is a
+//! stronger demand than not scanning, deliberately — a search served
+//! by some other index than the declared one is drift the contract
+//! exists to catch. One boundary is the engine's, stated rather than
+//! papered over: SurrealDB 3.x has removed MTREE (`DEFINE INDEX ...
+//! MTREE` no longer parses, and `<|k|>` errors with "no longer
+//! supported"), so while static validation accepts an MTREE-typed
+//! definition for a vector backing, a live 3.x database cannot hold
+//! one and verification composes only the HNSW form.
+//!
 //! The module rides the `verify` cargo feature because it is the one
 //! part of janus that needs a database client, and janus deliberately
 //! carries none: generation and diffing must stay runnable in CI jobs
@@ -29,27 +42,47 @@ use serde_json::Value;
 
 use surql::DatabaseClient;
 
-use crate::ir::{Contract, Resource, SubResource};
+use crate::ir::{Contract, Query, Resource, SearchKind, SubResource};
 
-/// One composed listing probe: which claim it exercises, and the
-/// query whose plan answers for it.
+/// One composed probe: which claim it exercises, the query whose plan
+/// answers for it, and what the plan must show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
-    /// The resource (or `resource.sub-resource`) holding the claim.
+    /// The resource (or `resource.sub-resource`, or query) holding
+    /// the claim.
     pub scope: String,
     /// The claim, named the way validation names it: `filter state`,
-    /// `sort created_at`.
+    /// `sort created_at`, `lexical backing text_chunk.body`.
     pub claim: String,
-    /// The composed listing, `EXPLAIN` included.
+    /// The composed statement, `EXPLAIN` included.
     pub surql: String,
+    /// What the plan must show for the claim to hold.
+    pub expects: Expectation,
 }
 
-/// A claim the planner answered with a table walk.
+/// What convicts a probe's plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expectation {
+    /// A listing claim: the plan must not fall back to iterating the
+    /// table. WHICH index seeks is the planner's choice; any seek is
+    /// a served listing.
+    NoTableWalk,
+    /// A search backing: the plan must reach the named index. Not
+    /// scanning is not enough here, because the backing names its
+    /// machinery — a search answered through some other index is the
+    /// contract promising one thing and the deployment doing another.
+    ReachesIndex(String),
+}
+
+/// A claim the planner answered with something other than what the
+/// claim rests on: a table walk for a listing, anything but the named
+/// index for a search backing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanViolation {
-    /// The resource (or `resource.sub-resource`) holding the claim.
+    /// The resource (or `resource.sub-resource`, or query) holding
+    /// the claim.
     pub scope: String,
-    /// The claim whose representative listing scanned.
+    /// The claim whose representative probe was not served.
     pub claim: String,
     /// The query that was planned.
     pub surql: String,
@@ -61,7 +94,7 @@ impl std::fmt::Display for PlanViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}: {} plans as {:?} (the planner walks the table for: {})",
+            "{}: {} plans as {:?} (probed with: {})",
             self.scope, self.claim, self.operation, self.surql,
         )
     }
@@ -103,6 +136,9 @@ pub fn probes(contract: &Contract) -> Vec<Probe> {
             sub_resource_probes(&resource.name, sub, &mut out);
         }
     }
+    for query in &contract.queries {
+        query_probes(query, &mut out);
+    }
     out
 }
 
@@ -128,7 +164,17 @@ pub async fn verify_contract(
                 surql: probe.surql.clone(),
                 got: answer.to_string(),
             })?;
-        if let Some(operation) = table_walk(plan) {
+        let conviction = match &probe.expects {
+            Expectation::NoTableWalk => table_walk(plan),
+            Expectation::ReachesIndex(index) => {
+                if reaches_index(plan, index) {
+                    None
+                } else {
+                    Some(plan_summary(plan))
+                }
+            }
+        };
+        if let Some(operation) = conviction {
             violations.push(PlanViolation {
                 scope: probe.scope,
                 claim: probe.claim,
@@ -204,6 +250,7 @@ fn push_probes<'a>(
                 "SELECT * FROM {table} WHERE {} LIMIT {limit} EXPLAIN",
                 binds.join(" AND "),
             ),
+            expects: Expectation::NoTableWalk,
         });
     }
     for column in sortable {
@@ -218,6 +265,41 @@ fn push_probes<'a>(
             surql: format!(
                 "SELECT * FROM {table}{where_clause} ORDER BY {column} LIMIT {limit} EXPLAIN",
             ),
+            expects: Expectation::NoTableWalk,
+        });
+    }
+}
+
+/// One probe per search backing, through the backing's own operator.
+///
+/// The probes are minimal on purpose: no pins, no residual filters,
+/// just the operator the backing claims machinery for, because the
+/// question is whether THAT operator reaches THAT index. The vector
+/// literal is `[0]` whatever the index's dimension — probed on
+/// SurrealDB 3.x, the planner resolves the index before it ever looks
+/// at the literal's width (`KnnScan` either way, see the vocabulary
+/// note on [`reaches_index`]) — so a contract needs no knowledge of
+/// the embedding dimension to be verified.
+fn query_probes(query: &Query, out: &mut Vec<Probe>) {
+    for backing in &query.backing {
+        let surql = match backing.kind {
+            SearchKind::Lexical => format!(
+                "SELECT * FROM {} WHERE {} @@ 'janus-probe' EXPLAIN",
+                backing.table, backing.column,
+            ),
+            SearchKind::Vector => format!(
+                "SELECT * FROM {} WHERE {} <|1,64|> [0] EXPLAIN",
+                backing.table, backing.column,
+            ),
+        };
+        out.push(Probe {
+            scope: format!("query {}", query.name),
+            claim: format!(
+                "{} backing {}.{}",
+                backing.kind, backing.table, backing.column,
+            ),
+            surql,
+            expects: Expectation::ReachesIndex(backing.index.clone()),
         });
     }
 }
@@ -267,6 +349,71 @@ fn table_walk(node: &Value) -> Option<String> {
         .as_array()?
         .iter()
         .find_map(table_walk)
+}
+
+/// Whether the plan reaches the named index, anywhere in the tree.
+///
+/// The search vocabulary is PROBED the same way the scan vocabulary
+/// was, against SurrealDB 3.x on `mem://` (and pinned alongside it in
+/// `tests/verify.rs`). A `@@` predicate the FULLTEXT index serves and
+/// a `<|k,EF|>` KNN the HNSW index serves each answer with one leaf
+/// naming the index in its attributes:
+///
+/// ```text
+/// SELECT * FROM text_chunk WHERE body @@ 'quick' EXPLAIN
+/// -> {"operator": "FullTextScan", "attributes":
+///     {"index": "idx_chunk_body", "query": "quick"}}
+///
+/// SELECT * FROM text_chunk WHERE embedding <|4,40|> [0.1, 0.2, 0.3] EXPLAIN
+/// -> {"operator": "KnnScan", "attributes": {"index": "idx_chunk_embedding",
+///     "dimension": "3", "ef": "40", "k": "4"}}
+/// ```
+///
+/// With the index absent, `@@` degrades to a `TableScan` carrying the
+/// predicate as an attribute, and `<|k,EF|>` to a bare `TableScan`;
+/// the metric KNN form `<|k,COSINE|>` plans as `KnnTopK` OVER a
+/// `TableScan` even when an HNSW index exists, which is why copal
+/// renders the `<|k,EF|>` form and why the probe does too. Matching
+/// on the `index` attribute rather than on the operator names keeps
+/// the walker one rule for both kinds, and means a future operator
+/// respelling fails the pinned vocabulary test instead of silently
+/// widening what passes.
+fn reaches_index(node: &Value, index: &str) -> bool {
+    if node.pointer("/attributes/index").and_then(Value::as_str) == Some(index) {
+        return true;
+    }
+    node.get("children")
+        .and_then(Value::as_array)
+        .is_some_and(|children| children.iter().any(|child| reaches_index(child, index)))
+}
+
+/// What a plan that missed its index was doing instead, for the
+/// violation message: the table walk if there is one (the ordinary
+/// degradation), otherwise whichever index-bearing node answered (the
+/// exotic one: served, but not by the declared machinery), otherwise
+/// the root operator.
+fn plan_summary(node: &Value) -> String {
+    if let Some(walk) = table_walk(node) {
+        return walk;
+    }
+    if let Some(found) = other_index(node) {
+        return found;
+    }
+    node.get("operator")
+        .and_then(Value::as_str)
+        .unwrap_or("?")
+        .to_owned()
+}
+
+fn other_index(node: &Value) -> Option<String> {
+    if let Some(index) = node.pointer("/attributes/index").and_then(Value::as_str) {
+        let operator = node.get("operator").and_then(Value::as_str).unwrap_or("?");
+        return Some(format!("{operator} via {index}"));
+    }
+    node.get("children")?
+        .as_array()?
+        .iter()
+        .find_map(other_index)
 }
 
 #[cfg(test)]
@@ -361,6 +508,98 @@ mod tests {
     #[test]
     fn a_quoted_value_cannot_break_out_of_its_literal() {
         assert_eq!(probe_value(Some("it's")), "'it\\'s'");
+    }
+
+    #[test]
+    fn a_backing_is_probed_through_its_own_operator() {
+        let mut contract = contract();
+        contract.queries = vec![crate::ir::Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+            backing: vec![
+                crate::ir::SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "body".into(),
+                    index: "idx_chunk_body".into(),
+                    kind: SearchKind::Lexical,
+                },
+                crate::ir::SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "embedding".into(),
+                    index: "idx_chunk_embedding".into(),
+                    kind: SearchKind::Vector,
+                },
+            ],
+        }];
+        let composed = probes(&contract);
+        let lexical = composed
+            .iter()
+            .find(|p| p.claim == "lexical backing text_chunk.body")
+            .expect("the lexical backing is probed");
+        assert_eq!(
+            lexical.surql,
+            "SELECT * FROM text_chunk WHERE body @@ 'janus-probe' EXPLAIN",
+        );
+        assert_eq!(
+            lexical.expects,
+            Expectation::ReachesIndex("idx_chunk_body".into()),
+        );
+        let vector = composed
+            .iter()
+            .find(|p| p.claim == "vector backing text_chunk.embedding")
+            .expect("the vector backing is probed");
+        // `[0]` whatever the index dimension: the planner resolves
+        // the index before it looks at the literal's width.
+        assert_eq!(
+            vector.surql,
+            "SELECT * FROM text_chunk WHERE embedding <|1,64|> [0] EXPLAIN",
+        );
+        assert_eq!(
+            vector.expects,
+            Expectation::ReachesIndex("idx_chunk_embedding".into()),
+        );
+        assert!(composed
+            .iter()
+            .all(|p| p.scope != "query search" || p.claim.contains("backing")));
+    }
+
+    #[test]
+    fn the_walker_finds_the_named_index_and_names_what_answered_instead() {
+        // The exact FullTextScan shape the probe returned for a served
+        // `@@` (abridged to what the walker reads).
+        let served = serde_json::json!({
+            "operator": "SelectProject",
+            "children": [{
+                "operator": "FullTextScan",
+                "attributes": {"index": "idx_chunk_body", "query": "quick"},
+            }],
+        });
+        assert!(reaches_index(&served, "idx_chunk_body"));
+        // A different index serving is NOT the declared machinery.
+        assert!(!reaches_index(&served, "idx_chunk_embedding"));
+        assert_eq!(plan_summary(&served), "FullTextScan via idx_chunk_body");
+
+        // The metric-form degradation: KnnTopK over TableScan. The
+        // walk is the conviction, and the summary says so.
+        let degraded = serde_json::json!({
+            "operator": "SelectProject",
+            "children": [{
+                "operator": "KnnTopK",
+                "attributes": {"dimension": "3", "distance": "Cosine",
+                               "field": "embedding", "k": "4"},
+                "children": [{
+                    "operator": "TableScan",
+                    "attributes": {"table": "text_chunk", "direction": "Forward"},
+                }],
+            }],
+        });
+        assert!(!reaches_index(&degraded, "idx_chunk_embedding"));
+        assert_eq!(plan_summary(&degraded), "TableScan over text_chunk");
     }
 
     #[test]

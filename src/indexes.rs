@@ -14,12 +14,31 @@
 //! was believed, so a claim resting on a BM25 index passed the gate and
 //! scanned the table in production. One predicate, read by both, is the
 //! only arrangement in which they cannot drift apart again.
+//!
+//! Search backings are the third reader, and the mirror image of the
+//! first two: where a filter claim needs an index with a b-tree and is
+//! misled by a FULLTEXT one, a lexical backing needs the FULLTEXT one
+//! and is misled by the b-tree. Both directions of the mistake are one
+//! question — what can this index actually answer — so both predicates
+//! live here, beside each other, read by every reader.
 
 use surql::schema::{IndexDefinition, IndexType, TableDefinition};
+
+use crate::ir::SearchKind;
 
 /// Whether an index can narrow an equality and supply an order.
 pub(crate) fn serves_ordering(index: &IndexDefinition) -> bool {
     matches!(index.index_type, IndexType::Standard | IndexType::Unique)
+}
+
+/// Whether an index can answer a search backing of `kind`: `@@` wants
+/// an analyzer's term lists, KNN wants a vector structure, and a
+/// b-tree holds neither.
+pub(crate) fn serves_search(index: &IndexDefinition, kind: SearchKind) -> bool {
+    match kind {
+        SearchKind::Lexical => matches!(index.index_type, IndexType::Search),
+        SearchKind::Vector => matches!(index.index_type, IndexType::Hnsw | IndexType::Mtree),
+    }
 }
 
 /// The indexes on `table` that can, in declaration order.

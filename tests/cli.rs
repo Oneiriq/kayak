@@ -98,6 +98,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                backing: vec![],
             },
             Query {
                 name: "file_text".into(),
@@ -114,6 +115,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                backing: vec![],
             },
         ],
     }

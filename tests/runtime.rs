@@ -1595,6 +1595,7 @@ fn searching_contract() -> Contract {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        backing: vec![],
     }];
     contract
 }

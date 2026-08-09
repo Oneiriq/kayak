@@ -13,11 +13,14 @@
 //! follows is about API shape rather than about repairing claims.
 //!
 //! Two things it will not guess. Actions are behavior and live in the
-//! service, so a scaffolded resource has none. Columns whose names
-//! suggest they hold a secret are left out, because a tool that writes
-//! API surface should never be the reason a hash reaches a client; the
-//! caller is told which ones were skipped and can expose them
-//! deliberately.
+//! service, so a scaffolded resource has none — and queries are the
+//! same kind of thing, so it writes none of those either, which is why
+//! a scaffold never writes a search backing: a backing annotates a
+//! query, and both halves are the service's to declare. Columns whose
+//! names suggest they hold a secret are left out, because a tool that
+//! writes API surface should never be the reason a hash reaches a
+//! client; the caller is told which ones were skipped and can expose
+//! them deliberately.
 //!
 //! Where it has a choice it claims less. The differ calls a removed
 //! filter or sort breaking and an added one compatible, so a claim the

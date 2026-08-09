@@ -9,6 +9,72 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Declared search: a query names the machinery that answers it.**
+  A listing declares its cost exhaustively — every filter and sort
+  claim index-validated — while search, the one read whose cost is
+  most surprising, was an opaque `Query`: typed inputs, a path, and
+  nothing about what serves them. Copal's real search is the proof:
+  BM25 over `text_chunk.body` through `idx_chunk_body`, HNSW over
+  `text_chunk.embedding` through `idx_chunk_embedding`, fused in the
+  resolver, and all of it invisible to validation, to the differ, and
+  to `verify --db`, so nothing stopped a schema change from dropping
+  `idx_chunk_body` while the contract went on promising search.
+
+  `Query.backing` is the declaration: each `SearchBacking` names one
+  column of one table reached through one index of a stated kind,
+  `lexical` (`@@` through FULLTEXT) or `vector` (KNN through HNSW or
+  MTREE). A fused search is two backings on one query; the fusion is
+  resolver behavior, not contract. The field is optional and empty by
+  default, so plain queries stay legal and old contracts deserialize
+  unchanged — `ir_revision` stays at 1, because the revision marks
+  changes an older reader would misread and an absent backing means
+  today exactly what its absence meant before.
+
+  Validation holds a backing to the mirror image of the listing index
+  rules, through the same `indexes.rs` predicate module, which now
+  answers the type question in both directions. A backing resting on
+  a plain b-tree is refused the way a filter resting on a FULLTEXT
+  index is: `Violation::WrongBackingIndexType` names the index and
+  what it turned out to be, and says what each kind needs. Unknown
+  table, column, and index each refuse by name, and an index that
+  resolves but holds a different column is its own refusal rather
+  than a type complaint about the wrong thing.
+
+  The differ reads a removed backing, or ANY member of one re-pointed
+  (table, column, index, kind), as breaking — a backing has no name
+  of its own, so its identity is its four members — and a backing
+  added to an existing query as compatible: it promises more about
+  the same wire surface. The completeness prover's fixture carries a
+  backing and mutates every member separately, so the coverage is
+  proven rather than assumed.
+
+  The backing is capacity metadata, not wire shape. The SDL and all
+  four clients are byte-identical with or without one (held by test);
+  the declaration surfaces where metadata already rides — the MCP
+  tool's annotations beside scope and rate, and the OpenAPI operation
+  description. `verify --db` probes each backing through its own
+  operator and holds the plan to the NAMED index, which is stricter
+  than not scanning, because a search served by some other index than
+  the declared one is drift too. The plan vocabulary is probed, not
+  guessed: on SurrealDB 3.x a served `@@` answers `FullTextScan` and
+  a served `<|k,EF|>` answers `KnnScan`, each naming its index in the
+  leaf's attributes; unserved, both degrade to `TableScan`, and the
+  metric KNN form plans `KnnTopK` over a `TableScan` even where an
+  index exists, which is why the probe composes `<|k,EF|>` the way
+  copal does. The probe literal is `[0]` whatever the embedding
+  dimension, because the planner resolves the index before it looks
+  at the literal's width. One boundary is the engine's, stated
+  rather than papered over: SurrealDB 3.x has removed MTREE (the
+  `DEFINE` no longer parses; `<|k|>` errors "no longer supported"),
+  so a vector backing on an MTREE-typed definition validates
+  statically but cannot exist on a live 3.x database, and
+  verification composes only the HNSW form.
+
+  The scaffold is explicitly unchanged: it writes no queries, so it
+  writes no backings.
+
 ### Fixed
 
 - **A pinned column set could reach no index at all, and validation

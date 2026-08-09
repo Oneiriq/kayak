@@ -205,6 +205,29 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
             )));
         }
     }
+    // Backings: a promise about what answers the query, on the same
+    // wire surface either way. Losing one is breaking — a caller (or
+    // an operator's capacity plan) relying on indexed search is handed
+    // whatever the resolver degrades to. A backing has no name of its
+    // own, so its identity IS its four members, and re-pointing any of
+    // them reads as the old promise gone (breaking) and a new one made
+    // (compatible), which is the honest description of what happened.
+    for backing in &old.backing {
+        if !new.backing.contains(backing) {
+            changes.push(Change::Breaking(format!(
+                "query {name} lost the {} backing {}.{} via {}",
+                backing.kind, backing.table, backing.column, backing.index,
+            )));
+        }
+    }
+    for backing in &new.backing {
+        if !old.backing.contains(backing) {
+            changes.push(Change::Compatible(format!(
+                "query {name} gained the {} backing {}.{} via {}",
+                backing.kind, backing.table, backing.column, backing.index,
+            )));
+        }
+    }
 }
 
 /// How a field's closed set moved.

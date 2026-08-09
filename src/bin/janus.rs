@@ -213,8 +213,9 @@ fn run_generate(arguments: &[String]) -> ExitCode {
 }
 
 /// Ask the live planner what the static gate cannot: run every filter
-/// and sort claim's representative listing through `EXPLAIN` and fail
-/// naming each claim the planner answers with a table walk.
+/// and sort claim's representative listing, and every search
+/// backing's own operator, through `EXPLAIN`, and fail naming each
+/// claim the planner does not serve.
 #[cfg(feature = "verify")]
 fn run_verify(arguments: &[String]) -> ExitCode {
     let (Some(contract_path), Some(url), Some(namespace), Some(database)) = (
@@ -278,7 +279,7 @@ fn run_verify(arguments: &[String]) -> ExitCode {
     });
     match verified {
         Ok(violations) if violations.is_empty() => {
-            println!("every filter and sort claim plans on an index");
+            println!("every filter, sort, and backing claim plans on its index");
             ExitCode::SUCCESS
         }
         Ok(violations) => {

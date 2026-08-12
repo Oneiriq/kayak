@@ -37,7 +37,10 @@ pub(crate) fn serves_ordering(index: &IndexDefinition) -> bool {
 pub(crate) fn serves_search(index: &IndexDefinition, kind: SearchKind) -> bool {
     match kind {
         SearchKind::Lexical => matches!(index.index_type, IndexType::Search),
-        SearchKind::Vector => matches!(index.index_type, IndexType::Hnsw | IndexType::Mtree),
+        SearchKind::Vector => matches!(
+            index.index_type,
+            IndexType::Hnsw | IndexType::Mtree | IndexType::Diskann
+        ),
     }
 }
 

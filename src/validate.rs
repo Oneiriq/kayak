@@ -19,7 +19,8 @@
 //!   leading column is the degenerate case.
 //! - search backing: the named index must exist on the named table,
 //!   hold the named column, and be the kind's own machinery — FULLTEXT
-//!   for a lexical backing, HNSW or MTREE for a vector one. The mirror
+//!   for a lexical backing, HNSW, MTREE, or DISKANN for a vector one.
+//!   The mirror
 //!   image of the index-type rule: there a filter rested on a search
 //!   index that cannot narrow, here a search rests on a b-tree that
 //!   cannot match terms or walk neighbours.
@@ -154,8 +155,9 @@ pub enum Violation {
     #[error(
         "query {query}: the {kind} backing on {table}.{column} rests on the \
          {} index {index}, which cannot answer it; a lexical backing needs a \
-         FULLTEXT index over the column and a vector backing needs an HNSW or \
-         MTREE one, so back the query with one of those, or drop the backing",
+         FULLTEXT index over the column and a vector backing needs an HNSW, \
+         MTREE, or DISKANN one, so back the query with one of those, or drop \
+         the backing",
         index_kind_word(*.index_type)
     )]
     WrongBackingIndexType {

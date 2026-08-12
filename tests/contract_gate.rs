@@ -445,6 +445,43 @@ fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
         );
     }
 
+    // A DISKANN index is the third machinery that answers a vector
+    // backing, new with surql 0.33; a Lexical claim on one is still
+    // refused. The table gains the index only inside this test so the
+    // other cases keep exercising the HNSW shape copal actually ships.
+    let mut with_diskann = text_chunk_table();
+    with_diskann.indexes.push(surql::schema::diskann_index(
+        "idx_chunk_diskann",
+        "embedding",
+        768,
+        surql::schema::DiskAnnDistanceType::Cosine,
+        surql::schema::MTreeVectorType::F16,
+    ));
+    let vector = searching(vec![backing(
+        "embedding",
+        "idx_chunk_diskann",
+        SearchKind::Vector,
+    )]);
+    assert_eq!(
+        validate(&vector, &[with_diskann.clone()]),
+        vec![],
+        "a vector backing rests on DISKANN the way it rests on HNSW",
+    );
+    let lexical = searching(vec![backing(
+        "embedding",
+        "idx_chunk_diskann",
+        SearchKind::Lexical,
+    )]);
+    let violations = validate(&lexical, &[with_diskann]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        matches!(
+            &violations[0],
+            Violation::WrongBackingIndexType { index, .. } if index == "idx_chunk_diskann"
+        ),
+        "{violations:?}",
+    );
+
     // The message does the teaching: the index, what it is, what each
     // kind needs.
     let contract = searching(vec![backing(
@@ -459,7 +496,7 @@ fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
         "{text}"
     );
     assert!(
-        text.contains("a vector backing needs an HNSW or MTREE one"),
+        text.contains("a vector backing needs an HNSW, MTREE, or DISKANN one"),
         "{text}"
     );
     let crossed = searching(vec![backing("body", "idx_chunk_body", SearchKind::Vector)]);

@@ -9,6 +9,16 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **A vector backing rests on DISKANN the way it rests on HNSW.**
+  surql 0.33 added the DISKANN index kind, and it answers KNN through
+  the same `<|k,EF|>` operator the verify probe composes, so
+  `serves_search` accepts it for a `SearchKind::Vector` backing and
+  the refusal message names all three machineries. A lexical claim on
+  one is refused as before.
+
+
 ### Added
 
 - **Declared search: a query names the machinery that answers it.**

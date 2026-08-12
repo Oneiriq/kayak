@@ -187,7 +187,7 @@ backing: vec![
         table: "text_chunk".into(),
         column: "embedding".into(),
         index: "idx_chunk_embedding".into(),
-        kind: SearchKind::Vector,        // KNN through HNSW or MTREE
+        kind: SearchKind::Vector,        // KNN through HNSW, MTREE, or DISKANN
     },
 ],
 ```
@@ -201,7 +201,7 @@ and old contracts deserialize unchanged.
 Validation holds a backing to the mirror image of the listing index rules.
 The named table, column, and index must exist; the index must hold the
 column; and it must be the kind's own machinery — FULLTEXT for a lexical
-backing, HNSW or MTREE for a vector one. A backing resting on a plain b-tree
+backing, HNSW, MTREE, or DISKANN for a vector one. A backing resting on a plain b-tree
 is refused the same way a filter resting on a FULLTEXT index is, with the
 violation naming the index and what it turned out to be, because "the plain
 index idx_chunk_tenant cannot answer it" is a diagnosis where a bare refusal

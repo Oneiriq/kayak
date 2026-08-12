@@ -1,7 +1,8 @@
 # Generators and the CLI
 
-One contract and one schema produce seven artifacts. Every generator
-validates first; an invalid contract refuses with each violation named.
+One contract and one schema produce seven artifacts by default, and an
+eighth on request. Every generator validates first; an invalid contract
+refuses with each violation named.
 
 | Target | File | Contents |
 | --- | --- | --- |
@@ -12,6 +13,7 @@ validates first; an invalid contract refuses with each violation named.
 | `client-ts` | `client.ts` | TypeScript client on `fetch`, zero dependencies. |
 | `client-py` | `client.py` | Python client, standard library only. |
 | `client-go` | `client.go` | Go client, `net/http` only. |
+| `engine-policy` (opt-in) | `policy.json` | The derived engine row-security clauses: select conjuncts from `reads_require`, field redactions from guards. See below. |
 
 Each client is one self-contained file: typed resources plus a method for
 every operation, list and get included. Emission is deterministic, and the OpenAPI document serializes
@@ -40,6 +42,45 @@ Contracts and schemas travel as data. The schema file is a serialized
 no Rust evaluation of the schema source. `diff` prints each change labeled
 BREAKING or compatible and exits non-zero when anything breaks, which makes
 contract review one CI line.
+
+## The engine policy face
+
+A SurrealDB deployment can enforce the contract a second time at the
+engine: table `PERMISSIONS` filter rows and field `PERMISSIONS` redact
+columns for sessions authenticated as callers rather than as the
+service. `janus::derive_policy` renders those clauses from the
+contract, so tightening a scope or guarding a field moves both
+enforcement layers in one edit instead of leaving the engine on
+yesterday's contract:
+
+```rust
+let policy = janus::derive_policy(&contract, &janus::ClaimVocabulary::default())?;
+// policy.select_conjuncts: (table, "$token.sc CONTAINS 'read'") for
+//   every resource whose reads require scopes, sub-resource tables
+//   included, since a sub-collection is read under its parent's
+//   requirement.
+// policy.field_guards: (table, column, clause) for every guarded
+//   exposure, resources and sub-resources alike.
+```
+
+Which token claims those clauses read is deployment convention, not
+contract content, so it travels as a `ClaimVocabulary`: the claim
+carrying the scope list, and the engine clause each named guard
+becomes. A guard the contract declares that the vocabulary cannot
+render refuses the derivation naming the guard, because rendering
+nothing would silently drop the engine layer for that column while
+the application layer kept enforcing. That refusal is also why the
+CLI target is opt-in (`--targets engine-policy`): the CLI holds only
+the default vocabulary, and a deployment with its own guard names
+derives through the library API.
+
+Two rules stay with the service on purpose. The mechanical tenancy
+floor (tenant-scoped tables admit only their tenant's rows, tables
+without the column are closed) must derive from the schema rather
+than the contract, or a table left out of the contract would dodge
+it. And delete conjuncts, such as retention, are policy the contract
+cannot declare yet. Janus derives only what the contract declares;
+the floor and the retention rules are the service's to state.
 
 ## The golden workflow
 

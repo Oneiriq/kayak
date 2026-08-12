@@ -79,14 +79,21 @@ column under the same wire name.
 `scaffold` reads a schema and writes a contract that validates against it,
 which is the step that otherwise means copying every column by hand and
 checking every filter and sort against an index by eye. Run against copal's
-own 25 tables it derives 47 filters and 33 sorts and all seven artifacts
-generate from the result without an edit.
+own 25 tables it exposes 22, derives 39 filters and 28 sorts, and all seven
+artifacts generate from the result without an edit.
 
 What it declines to guess is as much of the point. Actions are behavior and
 live in the service, so a scaffolded resource has none. Columns whose names
 suggest a secret (`key_hash`, `secret_sealed`) are left unexposed and named
 on stderr, because a tool that writes API surface should not be how a hash
-reaches a client. And sort claims stay narrower than `validate` would
+reaches a client. Tables whose pinned columns no index leads with are
+declined whole and named the same way: the pins ride every read, so every
+listing of such a table scans it, and both repairs (lead an index with a
+pin, or reach the table through a parent as a sub-collection) are the
+author's to choose. The three copal tables declined that way are exactly
+the ones its hand-written contract never lists at the top level: versions
+reached through their file, deliveries through their endpoint, TUS uploads
+through their own protocol. And sort claims stay narrower than `validate` would
 tolerate: a sort is claimed only where pinned columns cover the whole index
 prefix ahead of it. `filterable` describes what a caller may send, nothing
 obliges them to send it, and an unfiltered sort down a composite index

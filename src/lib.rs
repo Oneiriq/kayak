@@ -10,10 +10,12 @@
 pub mod clients;
 pub mod diff;
 pub mod generate;
+mod indexes;
 pub mod ir;
 pub mod mcp;
 mod naming;
 pub mod openapi;
+pub mod policy;
 pub mod reserved;
 pub mod scaffold;
 pub mod sdl;
@@ -22,14 +24,19 @@ pub mod validate;
 #[cfg(feature = "runtime")]
 pub mod runtime;
 
+#[cfg(feature = "verify")]
+pub mod verify;
+
 pub use diff::{diff, Change};
 pub use generate::generate_all;
 pub use ir::{
     Action, ActionField, ActionOutput, ContentFaces, Contract, ContractLimits, FieldExposure,
-    GraphqlNames, Query, RateClass, Resource, SubGraphqlNames, SubResource, TypeRef,
+    GraphqlNames, Query, RateClass, Resource, SearchBacking, SearchKind, SubGraphqlNames,
+    SubResource, TypeRef,
 };
 pub use mcp::generate_mcp_tools;
 pub use openapi::{generate_openapi, GenerateError};
+pub use policy::{derive_policy, ClaimVocabulary, EnginePolicy, PolicyError};
 pub use reserved::is_reserved;
 pub use sdl::generate_sdl;
 pub use validate::{validate, Violation};

@@ -259,6 +259,7 @@
     },
     "/v1/search": {
       "get": {
+        "description": "Search backing: lexical via idx_chunk_body over text_chunk.body; vector via idx_chunk_embedding over text_chunk.embedding.",
         "operationId": "search",
         "parameters": [
           {

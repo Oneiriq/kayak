@@ -98,6 +98,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                backing: vec![],
             },
             Query {
                 name: "file_text".into(),
@@ -114,6 +115,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                backing: vec![],
             },
         ],
     }
@@ -193,6 +195,18 @@ fn a_scaffolded_contract_generates_without_edits() {
 fn scaffold_without_a_schema_is_a_usage_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_janus"))
         .args(["scaffold"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+/// `verify` refuses with a usage exit before touching any database:
+/// missing flags under the feature, and a missing feature in a build
+/// without it, are both a 2 rather than a connection attempt.
+#[test]
+fn verify_without_flags_is_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        .args(["verify"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));

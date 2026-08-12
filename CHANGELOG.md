@@ -11,6 +11,224 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **Declared search: a query names the machinery that answers it.**
+  A listing declares its cost exhaustively — every filter and sort
+  claim index-validated — while search, the one read whose cost is
+  most surprising, was an opaque `Query`: typed inputs, a path, and
+  nothing about what serves them. Copal's real search is the proof:
+  BM25 over `text_chunk.body` through `idx_chunk_body`, HNSW over
+  `text_chunk.embedding` through `idx_chunk_embedding`, fused in the
+  resolver, and all of it invisible to validation, to the differ, and
+  to `verify --db`, so nothing stopped a schema change from dropping
+  `idx_chunk_body` while the contract went on promising search.
+
+  `Query.backing` is the declaration: each `SearchBacking` names one
+  column of one table reached through one index of a stated kind,
+  `lexical` (`@@` through FULLTEXT) or `vector` (KNN through HNSW or
+  MTREE). A fused search is two backings on one query; the fusion is
+  resolver behavior, not contract. The field is optional and empty by
+  default, so plain queries stay legal and old contracts deserialize
+  unchanged — `ir_revision` stays at 1, because the revision marks
+  changes an older reader would misread and an absent backing means
+  today exactly what its absence meant before.
+
+  Validation holds a backing to the mirror image of the listing index
+  rules, through the same `indexes.rs` predicate module, which now
+  answers the type question in both directions. A backing resting on
+  a plain b-tree is refused the way a filter resting on a FULLTEXT
+  index is: `Violation::WrongBackingIndexType` names the index and
+  what it turned out to be, and says what each kind needs. Unknown
+  table, column, and index each refuse by name, and an index that
+  resolves but holds a different column is its own refusal rather
+  than a type complaint about the wrong thing.
+
+  The differ reads a removed backing, or ANY member of one re-pointed
+  (table, column, index, kind), as breaking — a backing has no name
+  of its own, so its identity is its four members — and a backing
+  added to an existing query as compatible: it promises more about
+  the same wire surface. The completeness prover's fixture carries a
+  backing and mutates every member separately, so the coverage is
+  proven rather than assumed.
+
+  The backing is capacity metadata, not wire shape. The SDL and all
+  four clients are byte-identical with or without one (held by test);
+  the declaration surfaces where metadata already rides — the MCP
+  tool's annotations beside scope and rate, and the OpenAPI operation
+  description. `verify --db` probes each backing through its own
+  operator and holds the plan to the NAMED index, which is stricter
+  than not scanning, because a search served by some other index than
+  the declared one is drift too. The plan vocabulary is probed, not
+  guessed: on SurrealDB 3.x a served `@@` answers `FullTextScan` and
+  a served `<|k,EF|>` answers `KnnScan`, each naming its index in the
+  leaf's attributes; unserved, both degrade to `TableScan`, and the
+  metric KNN form plans `KnnTopK` over a `TableScan` even where an
+  index exists, which is why the probe composes `<|k,EF|>` the way
+  copal does. The probe literal is `[0]` whatever the embedding
+  dimension, because the planner resolves the index before it looks
+  at the literal's width. One boundary is the engine's, stated
+  rather than papered over: SurrealDB 3.x has removed MTREE (the
+  `DEFINE` no longer parses; `<|k|>` errors "no longer supported"),
+  so a vector backing on an MTREE-typed definition validates
+  statically but cannot exist on a live 3.x database, and
+  verification composes only the HNSW form.
+
+  The scaffold is explicitly unchanged: it writes no queries, so it
+  writes no backings.
+
+### Fixed
+
+- **A pinned column set could reach no index at all, and validation
+  said nothing.** Pins are the one predicate with nothing optional
+  about it: filterable describes what a caller MAY send and sortable
+  what they may ask for, but the bound columns ride every read the
+  resource serves. The gate checked that each pin existed and asked
+  no more, so a tenant-scoped resource over a table whose every index
+  serves someone else validated clean, and its plain listing, nothing
+  filtered and nothing sorted, scanned the table with the pins as its
+  only predicate. The same shape as the index-type fix below, through
+  the other door: that one caught claims a caller might exercise,
+  this one catches the query the contract compels.
+
+  The rule belongs to the set, not to any single pin.
+  `Violation::UnreachableListing` fires when no standard or unique
+  index leads with a bound column; one leading bound column is
+  enough, because the engine seeks its range and checks the remaining
+  pins inside it. That is what keeps copal's deliveries sub-collection
+  legal, and it is why the rule credits a sub-resource's `parent_key`:
+  a delivery log indexed by endpoint and never by tenant is cheap
+  reached through the endpoint and a scan reached directly, and the
+  violation distinguishes the two reaches rather than the table.
+
+  The scaffold now declines such a table entirely and names it on
+  stderr beside the withheld secret columns, for the same reason it
+  withholds them: exposing it without the pins would publish across
+  the boundary the pins draw, exposing it with them writes a resource
+  the validator refuses, and the missing index is a schema change a
+  contract tool does not get to make. Against copal's 25 tables the
+  scaffold now exposes 22, and the three it declines (`file_version`,
+  `tus_upload`, `webhook_delivery`) are exactly the tables copal's
+  hand-written contract never lists at the top level. The shared
+  predicate lives in `indexes.rs` with the ordering-index rule, read
+  by both the scaffold and the validator, so the two halves cannot
+  drift on this either.
+
+- **A filter or a sort could rest on an index that cannot serve it.**
+  The gate asked whether a claimed column appeared in any index on the
+  table and stopped there. SurrealDB spells five kinds of index with
+  one `DEFINE INDEX`, and three of them have no b-tree behind them:
+  FULLTEXT answers `@@` against an analyzer's terms, HNSW and MTREE
+  answer nearest-neighbour over a vector, and none of the three
+  narrows an equality or supplies an order. A column covered only by
+  one of them read as covered, so an equality filter on a BM25-indexed
+  body passed validation and scanned the table, and an `ORDER BY` down
+  an HNSW index passed validation and is not a thing the engine will
+  do. That is the exact failure janus exists to prevent, admitted by
+  the thing that prevents it.
+
+  The scaffold had the rule right all along and filtered on index
+  type, which is what made this hard to see. The half that reads a
+  schema and writes claims was careful; the half that reads claims a
+  person wrote was not, and a person is who writes the contracts. The
+  scaffold's own test asserted only that it declined to claim a
+  full-text column, never that a hand-written claim on one was
+  refused, so the strict rule never ran on human input. There is one
+  predicate now and both halves read it, because two copies of a rule
+  is how they came to disagree.
+
+  `Violation::WrongIndexType` is the refusal, and it names the index
+  rather than denying that one exists. An author looking straight at
+  `DEFINE INDEX idx_chunk_body ... FULLTEXT` and told the column was
+  "not covered by any index" goes hunting for the bug in janus; the
+  message now reads "filterable column body is indexed on text_chunk,
+  but only by the FULLTEXT index idx_chunk_body, which serves neither
+  an equality filter nor an ORDER BY". A column a standard index does
+  hold, behind an unbound prefix, keeps the older prefix violation,
+  since naming the index type there would send the author off to
+  define an index they already have. A column carrying both kinds is
+  the ordinary way to make one searchable and filterable at once, and
+  is accepted as it always was.
+
+  Copal's checked-in contract is unaffected. Its only two non-ordering
+  indexes sit on `text_chunk`, and no resource or sub-resource targets
+  that table: it is reached through queries, which declare no filter
+  or sort claims.
+
+### Added
+
+- **`janus verify --db`: ask the planner itself.** Static validation
+  proves an index exists for every filter and sort claim; it cannot
+  prove the planner uses it. An index can cover the right columns in
+  an order the composed listing cannot seek, and an engine upgrade
+  can re-cost a plan overnight — every such case ships a listing that
+  answers correctly and walks the table to do it, which is the exact
+  failure the static gate exists to prevent, one layer below where it
+  can see. `verify` composes one representative listing per filter
+  claim and per sort claim (pins as equality binds, the claimed
+  filter bound, the claimed sort ordered, always with a LIMIT), runs
+  each through `EXPLAIN` against a live database, and fails naming
+  the claim whenever the plan iterates the table. Library API
+  (`janus::verify::{probes, verify_contract}`) and CLI, exiting
+  non-zero so it gates in CI beside `diff`.
+
+  The plan vocabulary is probed, not guessed: on SurrealDB 3.x an
+  `EXPLAIN` answers with one plan tree of `operator` nodes, index
+  access spells `IndexScan`, the fallback spells `TableScan`, a sort
+  the index order cannot serve rides a `SortTopKByKey` node over
+  whichever scan feeds it, and a filter the index cannot narrow
+  becomes a residual `Filter` over the pins' seek — so a `TableScan`
+  anywhere in the tree is the conviction. The probe lives on as a
+  vocabulary test against the embedded engine, because this tool's
+  worst failure mode is the vocabulary drifting under it and turning
+  every verification silently green.
+
+  Janus deliberately carries no database client, so the whole module
+  rides a new `verify` cargo feature the way async-graphql rides
+  `graphql`: the client arrives only for consumers that opt in, CI
+  runs `--all-features` so the gated half stays compiled and tested,
+  and the tests drive the in-process `mem://` engine so no server is
+  required anywhere.
+
+- **The engine policy: the eighth face, derived instead of hand-kept.**
+  A SurrealDB deployment can enforce the contract a second time at
+  the engine — table `PERMISSIONS` filtering rows, field
+  `PERMISSIONS` redacting columns — for sessions authenticated as
+  callers rather than as the service. The clauses worth having are
+  exactly what the contract declares, and copal derived them by hand
+  in its server, which is the drift this library exists to prevent:
+  tighten a scope in the contract, forget to re-derive, and the API
+  refuses what the engine still serves, with nothing naming the
+  divergence. `janus::derive_policy` is that derivation moved home.
+  `reads_require` becomes a select conjunct on the resource's table
+  and every sub-resource table, since a sub-collection is read under
+  its parent's requirement; a field guard becomes a column redaction,
+  at both nesting levels.
+
+  The token-claim vocabulary the clauses speak (which claim carries
+  the scope list, what clause a named guard becomes) is deployment
+  convention rather than contract content, so it travels as a
+  `ClaimVocabulary` argument whose defaults are copal's conventions —
+  the reference deployment's switch to this API is proven a
+  behavioral no-op in `tests/policy.rs`, byte-for-byte against what
+  its hand derivation renders, with the matched copal sources cited.
+  A guard the vocabulary cannot render refuses the derivation naming
+  the guard, because rendering nothing would silently drop the engine
+  layer for a column the application layer kept enforcing.
+
+  Two rules stay with the service deliberately. The mechanical
+  tenancy floor derives from the SCHEMA, not the contract: a floor
+  derived from the contract would be dodgeable by omission, and a
+  future table left out of the contract must land under the floor,
+  not above it. And delete conjuncts (retention) are policy the
+  contract cannot declare yet, so they are the service's to state
+  explicitly rather than this module's to invent.
+
+  The CLI gained an opt-in `engine-policy` target rendering
+  `policy.json` beside the other artifacts, so the engine's row
+  security is review-visible in the same commit that moves it. Opt-in
+  rather than default because the CLI holds only the default
+  vocabulary; a contract naming its own guards would fail the whole
+  default run over a face nobody asked for.
+
 - **A reference page: the contract, as the surface it becomes.** A
   service declares its shape once and janus lands it on REST,
   GraphQL, and MCP by rules nobody should have to hold in their head.
@@ -62,6 +280,22 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   was shared. The generated pages go through the same function.
 
 ### Changed
+
+- **Removing a field's guard is breaking now, and a sub-collection's
+  guards answer to the differ at all.** The differ read guards
+  caller-side only: adding or swapping one broke, removing one
+  "showed more and refused nobody" and passed as compatible, and a
+  guard on a sub-resource field was not compared in any direction —
+  which is exactly where copal's one guarded field lives. Who sees a
+  field is contract surface in BOTH directions: removing a guard
+  takes away the redaction itself, showing the column to every caller
+  the guard used to deny, on the API faces and now in the derived
+  engine `PERMISSIONS` too. So every guard movement is named breaking
+  and review decides, at both nesting levels, through one shared
+  field-diff so the rules cannot drift by depth. Sub-resource fields
+  also gained the column-retarget check (same wire name over a
+  different column) and additive field reports the top level already
+  had.
 
 - **The console has a shape.** Navigation moved into a rail down the
   left and the data fills the rest, which is what an operator already

@@ -1429,7 +1429,12 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
     assert!(artifacts["client.py"].contains("state: str | None = None"));
     assert!(artifacts["client.go"].contains("State *string"));
 
-    // Guarding an open field is breaking; unguarding is compatible.
+    // A guard moving in either direction is breaking: guarding an
+    // open field takes values from deployed callers, and unguarding
+    // shows the column to callers the guard refused — on the API
+    // faces and in the derived engine PERMISSIONS alike. The
+    // sub-collection's guard answers the same rules, because the
+    // engine policy derives from both levels.
     let mut open = contract_with_versions();
     open.resources[0].watchable = true;
     let changes = janus::diff(&open, &guarded);
@@ -1439,8 +1444,25 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
                 .contains("field state now guarded by audit_only")),
         "{changes:?}",
     );
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("files.versions: field digest now guarded by audit_only")),
+        "{changes:?}",
+    );
     let changes = janus::diff(&guarded, &open);
-    assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("field state no longer guarded (was audit_only)")),
+        "{changes:?}",
+    );
+    assert!(
+        changes.iter().any(|c| c.is_breaking()
+            && c.message()
+                .contains("files.versions: field digest no longer guarded (was audit_only)")),
+        "{changes:?}",
+    );
 
     // Swapping the policy behind a field changes who sees it.
     let mut swapped = guarded_contract();
@@ -1573,6 +1595,7 @@ fn searching_contract() -> Contract {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        backing: vec![],
     }];
     contract
 }

@@ -74,6 +74,73 @@ pub struct Query {
     /// The rate class metering this query.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_class: Option<String>,
+    /// What answers the search, when the query is one. A listing
+    /// declares its cost exhaustively — every filter and sort claim is
+    /// index-validated — while a query, the one read whose cost is
+    /// most surprising, was an opaque box: typed inputs, a path, and
+    /// nothing about the machinery behind it. So nothing stopped a
+    /// schema change from dropping the FULLTEXT index while the
+    /// contract went on promising search. Each backing names one
+    /// column of one table reached through one index of a stated
+    /// kind, and validation holds the index to the same standard the
+    /// listing rules hold theirs to. A fused search (copal's: BM25
+    /// candidates and HNSW neighbours, rescored together) is two
+    /// backings on one query; the fusion itself is resolver behavior,
+    /// not contract. Empty means the query claims no search machinery,
+    /// which is what every existing contract declares.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backing: Vec<SearchBacking>,
+}
+
+/// One thing a search query's answer rests on: a column of a table,
+/// reached through a named index of a stated kind.
+///
+/// The members are what the differ governs — re-pointing any of them
+/// changes what the query is promising about the same wire surface —
+/// and what `verify --db` probes: the named index must be the one the
+/// planner reaches for the kind's operator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchBacking {
+    /// The table whose rows the search selects from.
+    pub table: String,
+    /// The column the search reads.
+    pub column: String,
+    /// The index that answers the search operator over that column.
+    pub index: String,
+    /// Which operator the index answers.
+    pub kind: SearchKind,
+}
+
+/// The two kinds of search machinery an index can be.
+///
+/// The vocabulary is deliberately the contract's rather than the
+/// engine's: `lexical` requires a FULLTEXT index (the `@@` operator),
+/// `vector` an HNSW or MTREE one (the KNN operator), and validation
+/// translates between the two vocabularies when it refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchKind {
+    /// Term matching over analyzed text: `@@` through FULLTEXT.
+    Lexical,
+    /// Nearest-neighbour over a stored vector: KNN through HNSW or
+    /// MTREE.
+    Vector,
+}
+
+impl SearchKind {
+    /// The word the contract uses, for violations and diff messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lexical => "lexical",
+            Self::Vector => "vector",
+        }
+    }
+}
+
+impl std::fmt::Display for SearchKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Query {
@@ -570,11 +637,50 @@ mod tests {
                 content: None,
                 filter_options: Default::default(),
             }],
-            queries: vec![],
+            queries: vec![Query {
+                name: "search".into(),
+                path: "/v1/search".into(),
+                input: vec![],
+                description: None,
+                graphql_field: None,
+                requires: vec![],
+                rate_class: None,
+                backing: vec![SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "body".into(),
+                    index: "idx_chunk_body".into(),
+                    kind: SearchKind::Lexical,
+                }],
+            }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();
         let back: Contract = serde_json::from_str(&json).unwrap();
         assert_eq!(back, contract);
         assert_eq!(back.resources[0].fields[1].api_name(), "size");
+        assert_eq!(back.queries[0].backing[0].kind, SearchKind::Lexical);
+    }
+
+    /// Contracts written before backings existed deserialize unchanged,
+    /// and a query that declares none serializes without the key: the
+    /// field is invisible in both directions unless something is
+    /// declared, which is why `ir_revision` stays at 1 — the revision
+    /// marks changes an older reader would MISREAD, and an absent
+    /// `backing` means today exactly what its absence meant before.
+    #[test]
+    fn a_contract_without_backings_is_the_contract_it_always_was() {
+        let old = r#"{
+            "name": "copal",
+            "version": "1.0.0",
+            "resources": [],
+            "queries": [{
+                "name": "search",
+                "path": "/v1/search"
+            }]
+        }"#;
+        let contract: Contract = serde_json::from_str(old).unwrap();
+        assert_eq!(contract.ir_revision, 1);
+        assert_eq!(contract.queries[0].backing, vec![]);
+        let rendered = serde_json::to_string(&contract).unwrap();
+        assert!(!rendered.contains("backing"), "{rendered}");
     }
 }

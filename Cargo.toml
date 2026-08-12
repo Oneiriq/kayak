@@ -24,6 +24,12 @@ runtime = []
 graphql = ["runtime", "dep:async-graphql"]
 # The contract-driven operator console renderer over the runtime.
 console = ["runtime", "dep:maud"]
+# Plan verification against a live database: EXPLAIN every filter and
+# sort claim and refuse the ones the planner answers with a table
+# walk. Janus deliberately carries no database client, so the client
+# rides this gate the way async-graphql rides `graphql`; CI runs
+# --all-features, which keeps the gated half compiled and tested.
+verify = ["oneiriq-surql/client-rustls", "dep:tokio"]
 
 [dependencies]
 async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] }
@@ -31,12 +37,19 @@ async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] 
 # pulling an executor or a combinator library into the runtime.
 futures-core = "0.3"
 maud = { version = "0.27", optional = true }
-oneiriq-surql = { version = "0.31", default-features = false }
+oneiriq-surql = { version = "0.32", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
+# Only the runtime handle the CLI needs to drive the async client from
+# a synchronous main; everything heavier arrives through the client.
+tokio = { version = "1", features = ["rt"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Feature-unifies `kv-mem` into the client's `surrealdb` so the verify
+# tests can run a real embedded engine (`mem://`) without a server.
+# Test-only; the shipped feature set stays ws-only.
+surrealdb = { version = "3.0", default-features = false, features = ["kv-mem"] }
 

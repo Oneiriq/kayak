@@ -14,7 +14,14 @@ use crate::ir::Contract;
 use crate::openapi::{generate_openapi, GenerateError};
 use crate::sdl::generate_sdl;
 
-/// Every generation target the CLI accepts.
+/// The targets one `generate` run produces when none are named.
+///
+/// `engine-policy` is accepted but deliberately not among them: its
+/// clauses render through a token-claim vocabulary the deployment
+/// owns, and the CLI holds only the default conventions. A contract
+/// naming a guard outside them would fail the whole default run over
+/// a face the caller never asked for, so the policy artifact is
+/// opt-in by name.
 pub const TARGETS: &[&str] = &[
     "openapi",
     "sdl",
@@ -52,6 +59,26 @@ pub fn generate_all(
                 ),
             ),
             "sdl" => ("schema.graphql".to_owned(), generate_sdl(contract, schema)?),
+            // Rendered with the default claim vocabulary; a deployment
+            // whose tokens spell claims differently derives through
+            // [`crate::policy::derive_policy`] instead, which is why
+            // this target is opt-in rather than a default. The
+            // artifact exists so the engine's row security is
+            // review-visible beside the surfaces it mirrors: a scope
+            // tightened in the contract shows up here as a changed
+            // clause in the same commit. A guard outside the
+            // vocabulary refuses the run, naming the guard.
+            "engine-policy" => (
+                "policy.json".to_owned(),
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&crate::policy::derive_policy(
+                        contract,
+                        &crate::policy::ClaimVocabulary::default(),
+                    )?)
+                    .expect("engine policy serializes"),
+                ),
+            ),
             "client-rs" => (
                 "client.rs".to_owned(),
                 generate_client_rs(contract, schema)?,

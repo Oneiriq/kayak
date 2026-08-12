@@ -9,12 +9,13 @@ use janus::clients::{
 use janus::diff::{diff, Change};
 use janus::generate::{generate_all, TARGETS};
 use janus::{
-    Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, SubResource,
-    TypeRef,
+    Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, SearchBacking,
+    SearchKind, SubResource, TypeRef,
 };
 use surql::schema::{
-    datetime_field, index, int_field, object_field, string_field, table_schema, unique_index,
-    TableDefinition, TableMode,
+    array_field, bm25_index, datetime_field, hnsw_index, index, int_field, object_field,
+    string_field, table_schema, unique_index, HnswDistanceType, MTreeVectorType, TableDefinition,
+    TableMode,
 };
 
 fn file_table() -> TableDefinition {
@@ -35,6 +36,35 @@ fn file_table() -> TableDefinition {
             unique_index("uniq_live_path", ["tenant_id", "path", "live_marker"]),
             index("idx_listing", ["tenant_id", "state", "created_at"]),
         ])
+}
+
+/// Copal's `text_chunk` shape: the table the fixture's search query
+/// declares its backing against, carrying the two search indexes.
+fn chunk_table() -> TableDefinition {
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    table_schema("text_chunk")
+        .with_mode(TableMode::Schemafull)
+        .with_fields([
+            built(string_field("tenant_id")),
+            built(string_field("body")),
+            built(array_field("embedding").nullable(true)),
+        ])
+        .with_indexes([
+            bm25_index("idx_chunk_body", ["body"], "copal_text"),
+            hnsw_index(
+                "idx_chunk_embedding",
+                "embedding",
+                768,
+                HnswDistanceType::Cosine,
+                MTreeVectorType::F32,
+                None,
+                None,
+            ),
+        ])
+}
+
+fn schema() -> Vec<TableDefinition> {
+    vec![file_table(), chunk_table()]
 }
 
 fn contract() -> Contract {
@@ -138,6 +168,24 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: None,
+                // Copal's fused search, declared: BM25 candidates and
+                // HNSW neighbours over the same passages, so the
+                // goldens carry a backed query and prove the backing
+                // is capacity metadata rather than wire shape.
+                backing: vec![
+                    SearchBacking {
+                        table: "text_chunk".into(),
+                        column: "body".into(),
+                        index: "idx_chunk_body".into(),
+                        kind: SearchKind::Lexical,
+                    },
+                    SearchBacking {
+                        table: "text_chunk".into(),
+                        column: "embedding".into(),
+                        index: "idx_chunk_embedding".into(),
+                        kind: SearchKind::Vector,
+                    },
+                ],
             },
             Query {
                 name: "file_text".into(),
@@ -154,6 +202,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: None,
+                backing: vec![],
             },
         ],
     }
@@ -161,7 +210,7 @@ fn contract() -> Contract {
 
 #[test]
 fn all_targets_generate_and_match_goldens() {
-    let artifacts = generate_all(&contract(), &[file_table()], TARGETS).unwrap();
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
     assert_eq!(artifacts.len(), TARGETS.len());
     for (filename, content) in &artifacts {
         let golden_path = format!(
@@ -184,7 +233,7 @@ fn all_targets_generate_and_match_goldens() {
 
 #[test]
 fn sdl_carries_types_sorts_and_mutations() {
-    let sdl = janus::generate_sdl(&contract(), &[file_table()]).unwrap();
+    let sdl = janus::generate_sdl(&contract(), &schema()).unwrap();
     assert!(sdl.contains("type File {"), "{sdl}");
     assert!(
         sdl.contains("size: Int\n"),
@@ -212,7 +261,7 @@ fn sdl_carries_types_sorts_and_mutations() {
 
 #[test]
 fn openapi_carries_action_paths() {
-    let doc = janus::generate_openapi(&contract(), &[file_table()]).unwrap();
+    let doc = janus::generate_openapi(&contract(), &schema()).unwrap();
     let issue = &doc["paths"]["/v1/files/{id}/url"]["post"];
     assert_eq!(issue["operationId"], "issue_url_files");
     assert_eq!(
@@ -235,7 +284,7 @@ fn openapi_carries_action_paths() {
 
 #[test]
 fn clients_carry_types_and_action_methods() {
-    let artifacts = generate_all(&contract(), &[file_table()], TARGETS).unwrap();
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
     let rust = &artifacts["client.rs"];
     assert!(rust.contains("pub struct File {"), "{rust}");
     assert!(rust.contains("pub size: Option<i64>,"), "{rust}");
@@ -276,7 +325,7 @@ fn clients_carry_types_and_action_methods() {
 
 #[test]
 fn unknown_target_is_refused() {
-    let error = generate_all(&contract(), &[file_table()], &["client-cobol"]).unwrap_err();
+    let error = generate_all(&contract(), &schema(), &["client-cobol"]).unwrap_err();
     assert!(error.to_string().contains("client-cobol"), "{error}");
 }
 
@@ -294,7 +343,7 @@ fn action_validation_fires() {
         requires: vec![],
         rate_class: None,
     });
-    let violations = janus::validate(&bad, &[file_table()]);
+    let violations = janus::validate(&bad, &schema());
     let text = violations
         .iter()
         .map(ToString::to_string)
@@ -428,10 +477,10 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
     });
 
     // The document carries what the served schema will enforce.
-    let doc = janus::generate_openapi(&capped, &[file_table()]).unwrap();
+    let doc = janus::generate_openapi(&capped, &schema()).unwrap();
     assert_eq!(doc["x-limits"]["max_depth"], 10);
     assert_eq!(doc["x-limits"]["max_complexity"], 500);
-    let bare = janus::generate_openapi(&open, &[file_table()]).unwrap();
+    let bare = janus::generate_openapi(&open, &schema()).unwrap();
     assert!(bare.get("x-limits").is_none(), "no ceilings, no extension");
 
     // Introducing a ceiling refuses operations that used to run.
@@ -474,7 +523,7 @@ fn content_faces_are_documented_and_governed() {
         upload: true,
         download: true,
     });
-    let document = janus::generate_openapi(&with_content, &[file_table()]).unwrap();
+    let document = janus::generate_openapi(&with_content, &schema()).unwrap();
     let content = &document["paths"]["/v1/files/{id}/content"];
     assert!(content["put"]["requestBody"]["content"]["application/octet-stream"].is_object());
     assert!(content["get"]["responses"]["200"]["content"]["application/octet-stream"].is_object());
@@ -529,8 +578,11 @@ fn python_client_indentation_survives_sub_resources() {
             built(datetime_field("created_at")),
         ])
         .with_indexes([index("idx_revisions", ["tenant_id", "doc", "created_at"])]);
-    let python = janus::clients::generate_client_py(&contract, &[file_table(), revision_table])
-        .expect("python renders");
+    let python = janus::clients::generate_client_py(
+        &contract,
+        &[file_table(), chunk_table(), revision_table],
+    )
+    .expect("python renders");
     assert!(
         python.contains("def list_revisions_"),
         "the sub-resource method renders",
@@ -589,6 +641,7 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            backing: vec![],
         },
         Query {
             name: "file_text".into(),
@@ -605,9 +658,10 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            backing: vec![],
         },
     ];
-    let schema = vec![file_table()];
+    let schema = schema();
 
     let rust = generate_client_rs(&contract, &schema).unwrap();
     assert!(
@@ -684,8 +738,9 @@ fn required_query_parameters_lead() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        backing: vec![],
     }];
-    let schema = vec![file_table()];
+    let schema = schema();
 
     let ts = generate_client_ts(&contract, &schema).unwrap();
     assert!(
@@ -724,8 +779,9 @@ fn a_closed_set_reaches_the_documents() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        backing: vec![],
     }];
-    let schema = vec![file_table()];
+    let schema = schema();
 
     let openapi =
         serde_json::to_string(&janus::openapi::generate_openapi(&contract, &schema).unwrap())
@@ -765,6 +821,7 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            backing: vec![],
         }];
         contract
     };
@@ -801,6 +858,53 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
     );
 }
 
+/// A backing is capacity metadata, not wire shape.
+///
+/// Stripping the fixture's backings must move exactly two artifacts:
+/// the OpenAPI document, where the operation description states the
+/// machinery, and the MCP manifest, where it rides the annotations
+/// beside scope and rate. The SDL and all four clients are the wire a
+/// caller holds, and they come out byte-identical, which is the whole
+/// design: the contract promises more without the API saying anything
+/// different.
+#[test]
+fn a_backing_changes_no_wire_surface() {
+    let backed = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    let mut stripped_contract = contract();
+    for query in &mut stripped_contract.queries {
+        query.backing.clear();
+    }
+    let stripped = generate_all(&stripped_contract, &schema(), TARGETS).unwrap();
+    for (filename, content) in &backed {
+        let bare = &stripped[filename];
+        if matches!(filename.as_str(), "openapi.json" | "mcp-tools.json") {
+            assert_ne!(content, bare, "{filename} should surface the backing");
+        } else {
+            assert_eq!(content, bare, "{filename} must not move for a backing");
+        }
+    }
+
+    // And what the metadata faces say, exactly.
+    let doc = janus::generate_openapi(&contract(), &schema()).unwrap();
+    assert_eq!(
+        doc["paths"]["/v1/search"]["get"]["description"],
+        "Search backing: lexical via idx_chunk_body over text_chunk.body; \
+         vector via idx_chunk_embedding over text_chunk.embedding.",
+    );
+    let mcp = janus::generate_mcp_tools(&contract());
+    let search = mcp["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "search")
+        .unwrap();
+    assert_eq!(
+        search["annotations"]["backing"][0]["index"],
+        "idx_chunk_body"
+    );
+    assert_eq!(search["annotations"]["backing"][1]["kind"], "vector");
+}
+
 /// Filter options describe a column a caller may narrow by, so naming
 /// one that is not filterable offers a menu beside a refusal.
 #[test]
@@ -809,7 +913,7 @@ fn filter_options_answer_to_the_filterable_list() {
     contract.resources[0]
         .filter_options
         .insert("content_type".into(), vec!["text/plain".into()]);
-    let violations = janus::validate(&contract, &[file_table()]);
+    let violations = janus::validate(&contract, &schema());
     assert!(
         violations
             .iter()
@@ -823,5 +927,5 @@ fn filter_options_answer_to_the_filterable_list() {
     ok.resources[0]
         .filter_options
         .insert("state".into(), vec!["ready".into(), "failed".into()]);
-    assert_eq!(janus::validate(&ok, &[file_table()]), vec![]);
+    assert_eq!(janus::validate(&ok, &schema()), vec![]);
 }

@@ -10,9 +10,9 @@ REST, and an operator console.
 
 | Document | Covers |
 | --- | --- |
-| [contract.md](contract.md) | The IR: resources, exposure, pinned and filterable and sortable columns, actions, GraphQL overrides, validation rules, diffing. |
+| [contract.md](contract.md) | The IR: resources, exposure, pinned and filterable and sortable columns, actions, GraphQL overrides, validation rules, live-planner verification, diffing. |
 | [runtime.md](runtime.md) | Resolvers, middleware, the dispatcher's enforcement, the dynamic GraphQL schema, the plugin seam. |
-| [generators.md](generators.md) | The seven artifacts, library and CLI use, schemas as data, the golden workflow. |
+| [generators.md](generators.md) | The artifact faces, engine policy derivation, library and CLI use, schemas as data, the golden workflow. |
 
 ## The shape of it
 

@@ -4,9 +4,13 @@
 //! hide: a filter removed from an allowlist, a sort claim
 //! dropped, an action's method changed, a required input added. The
 //! rule of thumb: anything a deployed client could be relying on is
-//! breaking; pure additions are compatible.
+//! breaking; pure additions are compatible. Field guards are the one
+//! deliberate exception to reading the rule caller-side only: a guard
+//! moving in ANY direction is breaking, because who sees a field is
+//! surface for whoever the guard protects even when no caller loses
+//! a thing.
 
-use crate::ir::{Action, ActionField, Contract, Resource};
+use crate::ir::{Action, ActionField, Contract, FieldExposure, Resource};
 
 /// One observed change between two contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +205,29 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
             )));
         }
     }
+    // Backings: a promise about what answers the query, on the same
+    // wire surface either way. Losing one is breaking — a caller (or
+    // an operator's capacity plan) relying on indexed search is handed
+    // whatever the resolver degrades to. A backing has no name of its
+    // own, so its identity IS its four members, and re-pointing any of
+    // them reads as the old promise gone (breaking) and a new one made
+    // (compatible), which is the honest description of what happened.
+    for backing in &old.backing {
+        if !new.backing.contains(backing) {
+            changes.push(Change::Breaking(format!(
+                "query {name} lost the {} backing {}.{} via {}",
+                backing.kind, backing.table, backing.column, backing.index,
+            )));
+        }
+    }
+    for backing in &new.backing {
+        if !old.backing.contains(backing) {
+            changes.push(Change::Compatible(format!(
+                "query {name} gained the {} backing {}.{} via {}",
+                backing.kind, backing.table, backing.column, backing.index,
+            )));
+        }
+    }
 }
 
 /// How a field's closed set moved.
@@ -235,60 +262,74 @@ fn diff_options(scope: &str, old: &ActionField, new: &ActionField, changes: &mut
     }
 }
 
-fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
-    let scope = &old.name;
-
-    for exposure in &old.fields {
+/// Field-exposure changes, shared by resources and sub-resources.
+///
+/// The exposure list is the same shape at both levels, and the engine
+/// policy derives guards from both, so the rules cannot be allowed to
+/// differ by nesting depth: a guard the differ watches on a resource
+/// but not on its sub-collection is a silent hole exactly where
+/// copal's one guarded field actually lives.
+fn diff_fields(
+    scope: &str,
+    old: &[FieldExposure],
+    new: &[FieldExposure],
+    changes: &mut Vec<Change>,
+) {
+    for exposure in old {
         let api = exposure.api_name();
-        match new.fields.iter().find(|f| f.api_name() == api) {
+        match new.iter().find(|f| f.api_name() == api) {
             None => changes.push(Change::Breaking(format!("{scope}: field {api} removed",))),
-            Some(current) if current.guard != exposure.guard => {
-                // Guarding a field that was open takes values away from
-                // deployed callers, and swapping guards changes which
-                // callers those are. Removing a guard shows more, which
-                // refuses nobody.
+            Some(current) => {
+                // Who sees a field is contract surface in BOTH
+                // directions. Guarding an open field takes values away
+                // from deployed callers, and swapping guards changes
+                // which callers those are. Removing a guard refuses
+                // nobody, but it takes away the redaction itself: the
+                // column becomes visible to every caller the guard
+                // used to deny, on the API faces and in the derived
+                // engine PERMISSIONS alike. Wider disclosure is not
+                // additive for whoever the guard protected, so every
+                // guard movement is named breaking and review decides.
                 match (&exposure.guard, &current.guard) {
                     (None, Some(guard)) => changes.push(Change::Breaking(format!(
                         "{scope}: field {api} now guarded by {guard}",
                     ))),
-                    (Some(before), Some(after)) => changes.push(Change::Breaking(format!(
-                        "{scope}: field {api} guard changed {before} -> {after}",
-                    ))),
-                    (Some(guard), None) => changes.push(Change::Compatible(format!(
+                    (Some(before), Some(after)) if before != after => {
+                        changes.push(Change::Breaking(format!(
+                            "{scope}: field {api} guard changed {before} -> {after}",
+                        )))
+                    }
+                    (Some(guard), None) => changes.push(Change::Breaking(format!(
                         "{scope}: field {api} no longer guarded (was {guard})",
                     ))),
-                    (None, None) => {}
+                    _ => {}
                 }
                 if current.column != exposure.column {
+                    // Same wire name over a different column: the
+                    // value's meaning (and possibly type) changed
+                    // under the client.
                     changes.push(Change::Breaking(format!(
                         "{scope}: field {api} now reads column {} (was {})",
                         current.column, exposure.column,
                     )));
                 }
             }
-            Some(current) if current.column != exposure.column => {
-                // Same wire name over a different column: the value's
-                // meaning (and possibly type) changed under the client.
-                changes.push(Change::Breaking(format!(
-                    "{scope}: field {api} now reads column {} (was {})",
-                    current.column, exposure.column,
-                )));
-            }
-            Some(_) => {}
         }
     }
-    for exposure in &new.fields {
-        if !old
-            .fields
-            .iter()
-            .any(|f| f.api_name() == exposure.api_name())
-        {
+    for exposure in new {
+        if !old.iter().any(|f| f.api_name() == exposure.api_name()) {
             changes.push(Change::Compatible(format!(
                 "{scope}: field {} added",
                 exposure.api_name(),
             )));
         }
     }
+}
+
+fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
+    let scope = &old.name;
+
+    diff_fields(scope, &old.fields, &new.fields, changes);
 
     for column in &old.filterable {
         if !new.filterable.contains(column) {
@@ -341,15 +382,12 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
                 old_sub.name,
             ))),
             Some(new_sub) => {
-                for exposure in &old_sub.fields {
-                    let api = exposure.api_name();
-                    if !new_sub.fields.iter().any(|f| f.api_name() == api) {
-                        changes.push(Change::Breaking(format!(
-                            "{scope}.{}: field {api} removed",
-                            old_sub.name,
-                        )));
-                    }
-                }
+                diff_fields(
+                    &format!("{scope}.{}", old_sub.name),
+                    &old_sub.fields,
+                    &new_sub.fields,
+                    changes,
+                );
                 for column in &old_sub.filterable {
                     if !new_sub.filterable.contains(column) {
                         changes.push(Change::Breaking(format!(

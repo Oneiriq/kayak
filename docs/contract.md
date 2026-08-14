@@ -154,6 +154,7 @@ queries: vec![Query {
     }],
     requires: vec!["read".into()],
     rate_class: Some("reads".into()),
+    searches: vec![SearchKind::Lexical, SearchKind::Vector],
     backing: vec![/* see below */],
     ..
 }],
@@ -182,12 +183,16 @@ backing: vec![
         column: "body".into(),
         index: "idx_chunk_body".into(),
         kind: SearchKind::Lexical,       // `@@` through FULLTEXT
+        dimension: None,                 // a FULLTEXT index has no width
+        optional: false,
     },
     SearchBacking {
         table: "text_chunk".into(),
         column: "embedding".into(),
         index: "idx_chunk_embedding".into(),
         kind: SearchKind::Vector,        // KNN through HNSW, MTREE, or DISKANN
+        dimension: Some(768),            // held against the index's DIMENSION
+        optional: true,                  // applied at startup where configured
     },
 ],
 ```
@@ -207,13 +212,84 @@ violation naming the index and what it turned out to be, because "the plain
 index idx_chunk_tenant cannot answer it" is a diagnosis where a bare refusal
 is a hunt.
 
+Which of the three vector machineries answers is the schema's business. The
+contract asks for nearest neighbours through an index; moving a column from
+HNSW to DISKANN is a capacity decision, and the contract does not have to be
+rewritten for it.
+
+### The width
+
+`dimension` pins what the search sends, and validation holds it against the
+index's own `DIMENSION`. A vector of the wrong width is not a slower search,
+it is a different one, and the width changes whenever the embedding model
+does — so a model swap that outran its schema becomes a generation failure
+instead of a quiet change in what comes back. Leave it `None` where the
+deployment chooses the width; state it wherever the schema does. A lexical
+backing has no width, and stating one there is refused rather than compared
+against a FULLTEXT index that was never going to have one.
+
+### Machinery a deployment configures
+
+`optional: true` says the deployment is free not to provide this index. Copal
+is the case that needed it: its HNSW index over `text_chunk.embedding` is
+applied at startup, and only where an embedding model is configured, at that
+model's width. Declared outright the claim would be false in every deployment
+without one — so it was declared nowhere, and a search the contract never
+mentions is exactly the silence these rules exist to end.
+
+Optional relaxes one rule and no others: the index may be absent. An index
+that IS there holds the column, is the kind's own machinery, and matches the
+declared width like any other. May be absent, never may be wrong. `verify
+--db` reads it the same way: the probe runs, and a plan that missed the index
+is excused on exactly one fact — that this database does not define it.
+
+### The declared search
+
+A backing says what answers a search. `searches` says the search happens:
+
+```rust
+searches: vec![SearchKind::Lexical, SearchKind::Vector],
+```
+
+Every kind named there must have a backing of that kind behind it, or
+generation fails naming the query and the kind. This is the one rule in the
+toolchain that catches an ABSENCE rather than a mistake, and absence is the
+shape unindexed search actually has: nobody writes down that the neighbour
+query has no index, they write the resolver and move on. Before this field
+there was no way to make the promise, so there was no way to break it — a
+query that declared no backing and a query that needed none were the same
+document.
+
+What it cannot do is make anyone declare. That is the standing limit of a
+declaration language, the same one that lets a listing simply not claim a
+filterable column, and it is why `verify --db` exists beside the static gate.
+What the declaration buys is that once made, it is load-bearing: dropping the
+index becomes a build failure, the differ calls losing the capability
+breaking, and the artifacts say which machinery a caller is relying on.
+
+`searches` is empty by default and old contracts deserialize unchanged. A
+backing whose kind is not declared is permitted — the machinery is validated
+either way — so adopting the field is incremental rather than a flag day.
+
+### What it moves
+
 The backing is capacity metadata, not wire shape. REST paths, the SDL, and
 client signatures do not change when one is declared; the declaration
 surfaces where metadata already surfaces — the MCP tool's annotations, beside
-scope and rate, and the OpenAPI operation description. The differ reads a
-removed backing, or any member of one re-pointed (table, column, index,
-kind), as breaking, and a backing added to an existing query as compatible:
-it promises more about the same wire surface.
+scope and rate, and the OpenAPI operation description, where an optional
+backing reads "where configured" because that is the one part of this a
+caller should expect to feel. `searches` renders nowhere of its own: what a
+query performs is implied by the backings that answer for it, and those
+already render.
+
+The differ reads a removed backing, or any of the four members that say where
+the machinery is re-pointed (table, column, index, kind), as breaking, and a
+backing added to an existing query as compatible: it promises more about the
+same wire surface. The width and the optional flag move under a fixed
+identity, so they read as one change each rather than a loss and a gain — a
+width that changes or disappears and a backing that becomes optional are
+breaking; a width that appears and a backing that becomes required are not.
+Losing a declared search is breaking; gaining one is compatible.
 
 `verify --db` probes each backing through its own operator — `@@` for
 lexical, the `<|k,EF|>` KNN form for vector — and holds the plan to the
@@ -344,7 +420,8 @@ The checks: tables and columns exist, renames do not collide, filters are
 indexed by an index that can narrow one, sorts are reachable through such an
 index's prefix, the server-bound columns lead some index so the plain
 listing seeks rather than scans, search backings rest on the kind of index
-that can answer them, action definitions are well-formed, chosen names are
+that can answer them at the width they claim, every declared search has a
+backing behind it, action definitions are well-formed, chosen names are
 valid for every surface they reach.
 
 Run the gate in the owning service's tests against the real schema
@@ -364,7 +441,10 @@ through its own operator, runs each through `EXPLAIN` against a live
 database, and returns every claim the planner does not serve, named
 the way validation names its violations: a listing claim fails when
 its plan iterates the table, a backing when its plan does not reach
-the named index. `janus::verify::probes` exposes the composed queries
+the named index — unless the backing is optional and this database
+does not define that index, which is the one excuse on offer and it
+costs one extra round trip, spent only on an optional backing that
+already came back unserved. `janus::verify::probes` exposes the composed queries
 without running them, so what will be asked is inspectable before the
 asker points at production. The same check runs from the CLI:
 
@@ -384,10 +464,13 @@ sort; a field re-pointed to a different column under the same wire name; a
 lowered page ceiling; a moved action; a changed output; an input that became
 required or changed type; any effective GraphQL rename; a resource that
 stopped being watchable; a removed sub-resource, or one that lost a field,
-filter, sort, or page headroom; a removed search backing, or any member of
-one re-pointed. Compatible: additions, a resource that became watchable, a
-new sub-resource, a backing added to an existing query, and removal of an
-optional input.
+filter, sort, or page headroom; a removed search backing, or any of the four
+members that place one re-pointed; a backing that stopped pinning its width
+or pinned a different one; a backing that became optional; a search the query
+no longer performs. Compatible: additions, a resource that became watchable,
+a new sub-resource, a backing added to an existing query, a width newly
+pinned, a backing now required of every deployment, a search newly performed,
+and removal of an optional input.
 
 The CLI exits non-zero on breaking changes (`janus diff old.json new.json`),
 which makes the gate one line of CI.

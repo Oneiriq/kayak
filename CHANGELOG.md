@@ -9,7 +9,76 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **The vector-index gate: a declared search with nothing behind it
+  does not generate.** The backing rules could refuse a search resting
+  on the wrong machinery, but not a search resting on none — a query
+  that declared no backing and a query that needed none were the same
+  document, so the contract had no way to say "this performs a
+  semantic search" and therefore no way to be wrong about it. That is
+  the exact shape unindexed search has when it ships: driftnet's chunk
+  search and antumbra's recall paths both ran for months over columns
+  nothing could answer a neighbour query on, and no contract anywhere
+  could have caught either, because nobody writes down the index they
+  do not have.
+
+  `Query.searches` is the declaration — a list of `SearchKind` — and
+  every kind named there must have a backing of that kind behind it,
+  or generation fails with `Violation::UnbackedSearch` naming the
+  query and the kind. Losing a declared search is breaking; gaining
+  one is compatible. The field is empty by default, old contracts
+  deserialize and render unchanged, and a backing whose kind is not
+  declared stays legal, so adoption is a line per query rather than a
+  flag day. What the rule cannot do is make anyone declare, which is
+  the standing limit of a declaration language and why `verify --db`
+  exists beside it; what it buys is that a declaration, once made, is
+  load-bearing.
+
+- **A vector backing pins the width it searches at.**
+  `SearchBacking.dimension` is held against the index's own
+  `DIMENSION` (`Violation::BackingWidthMismatch`). A vector of the
+  wrong width is not a slower search, it is a different one, and the
+  width changes whenever the embedding model does — so a model swap
+  that outran its schema is a generation failure rather than a quiet
+  change in what comes back. `None` leaves the width to the
+  deployment. A lexical backing has no width, and stating one there is
+  refused rather than compared against a FULLTEXT index that was never
+  going to have one.
+
+- **A backing can be machinery the deployment configures.**
+  `SearchBacking.optional` says the index may be absent. Copal is the
+  case that forced it: its HNSW index over `text_chunk.embedding` is
+  applied at startup, and only where an embedding model is configured,
+  at that model's width — so declaring it outright would make the
+  contract false everywhere else, and the answer until now was to
+  declare nothing, which is the silence these rules exist to end.
+  Optional relaxes exactly one check, index presence, and no others: a
+  present index still holds the column, is the kind's own machinery,
+  and matches the declared width. May be absent, never may be wrong.
+  `verify --db` reads it the same way through
+  `Expectation::ReachesIndexIfDefined` — the probe runs, and a plan
+  that missed is excused on one fact, that this database does not
+  define the index, established with one extra `INFO FOR TABLE` spent
+  only when an optional backing already came back unserved.
+
+  The differ matches backings by where the machinery is (table,
+  column, index, kind) rather than member for member, so the width and
+  the optional flag read as one change each: a width changed or
+  dropped and a backing gone optional are breaking, a width newly
+  pinned and a backing now required of every deployment are not. Under
+  the old member-for-member comparison, strengthening a promise read
+  as a loss and a gain, which is the kind of false alarm that teaches
+  people to wave a gate through.
+
 ### Changed
+
+- **`tests/search_gate.rs` carries the search half of the gate.**
+  `contract_gate.rs` crossed a thousand lines. What moved is already
+  one subject asked from two sides — a filter or a sort resting on
+  search machinery, and a search resting on a b-tree — so it went out
+  whole rather than being trimmed, and both directions still read
+  against the same `text_chunk` fixture.
 
 - **A vector backing rests on DISKANN the way it rests on HNSW.**
   surql 0.33 added the DISKANN index kind, and it answers KNN through

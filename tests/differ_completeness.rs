@@ -90,12 +90,28 @@ fn base() -> Contract {
             graphql_field: None,
             requires: vec!["search".into()],
             rate_class: None,
-            backing: vec![SearchBacking {
-                table: "text_chunk".into(),
-                column: "body".into(),
-                index: "idx_chunk_body".into(),
-                kind: SearchKind::Lexical,
-            }],
+            searches: vec![SearchKind::Lexical, SearchKind::Vector],
+            backing: vec![
+                SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "body".into(),
+                    index: "idx_chunk_body".into(),
+                    kind: SearchKind::Lexical,
+                    dimension: None,
+                    optional: false,
+                },
+                // The vector half carries both riders set, so the
+                // mutations below can move each one in the direction
+                // that takes something away.
+                SearchBacking {
+                    table: "text_chunk".into(),
+                    column: "embedding".into(),
+                    index: "idx_chunk_embedding".into(),
+                    kind: SearchKind::Vector,
+                    dimension: Some(768),
+                    optional: false,
+                },
+            ],
         }],
     }
 }
@@ -241,11 +257,19 @@ fn taking_something_away() -> Vec<Mutation> {
                     FieldExposure::renamed("legacy_ordinal", "ordinal")
             }),
         ),
-        // A backing has no name of its own: its identity is its four
-        // members, so each member is re-pointed separately here and
-        // every re-point must come back breaking, or a schema change
-        // could move the machinery out from under a promised search
-        // with the gate green.
+        // A capability the query stops performing is a capability its
+        // callers stop getting, whatever the resolver falls back to.
+        (
+            "a query stopped searching semantically",
+            Box::new(|c: &mut Contract| c.queries[0].searches.retain(|k| *k != SearchKind::Vector)),
+        ),
+        // A backing has no name of its own: WHERE the machinery is —
+        // table, column, index, kind — is its identity, so each of the
+        // four is re-pointed separately here and every re-point must
+        // come back breaking, or a schema change could move the
+        // machinery out from under a promised search with the gate
+        // green. The width and the optional flag move under a fixed
+        // identity and are exercised beside them.
         (
             "a search backing is gone",
             Box::new(|c: &mut Contract| c.queries[0].backing.clear()),
@@ -265,6 +289,18 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "a backing changed kind",
             Box::new(|c: &mut Contract| c.queries[0].backing[0].kind = SearchKind::Vector),
+        ),
+        (
+            "a backing searches at a different width",
+            Box::new(|c: &mut Contract| c.queries[0].backing[1].dimension = Some(1536)),
+        ),
+        (
+            "a backing stopped pinning its width",
+            Box::new(|c: &mut Contract| c.queries[0].backing[1].dimension = None),
+        ),
+        (
+            "a backing the deployment had to have is now optional",
+            Box::new(|c: &mut Contract| c.queries[0].backing[1].optional = true),
         ),
     ]
 }
@@ -317,9 +353,11 @@ fn additions_are_compatible() {
     // same wire surface, which takes nothing from anyone.
     after.queries[0].backing.push(SearchBacking {
         table: "text_chunk".into(),
-        column: "embedding".into(),
-        index: "idx_chunk_embedding".into(),
-        kind: SearchKind::Vector,
+        column: "title".into(),
+        index: "idx_chunk_title".into(),
+        kind: SearchKind::Lexical,
+        dimension: None,
+        optional: false,
     });
     let changes = diff(&before, &after);
     let breaking: Vec<_> = changes
@@ -332,4 +370,40 @@ fn additions_are_compatible() {
         "additions read as breaking: {breaking:?}"
     );
     assert!(!changes.is_empty(), "and they are still reported");
+}
+
+/// A backing that promises MORE about machinery it already pointed at
+/// is not a backing anyone lost.
+///
+/// This is the case matching by identity exists for. Compared member
+/// by member, a width appearing or an optional backing becoming
+/// guaranteed reads as the old backing gone and a new one arrived —
+/// breaking, on a change that took nothing from anybody, which is the
+/// kind of false alarm that teaches people to wave the gate through.
+#[test]
+fn a_strengthened_backing_promise_is_compatible() {
+    let mut before = base();
+    before.queries[0].backing[1].dimension = None;
+    before.queries[0].backing[1].optional = true;
+    let mut after = before.clone();
+    after.queries[0].backing[1].dimension = Some(768);
+    after.queries[0].backing[1].optional = false;
+
+    let changes = diff(&before, &after);
+    let breaking: Vec<_> = changes
+        .iter()
+        .filter(|c| c.is_breaking())
+        .map(janus::diff::Change::message)
+        .collect();
+    assert!(breaking.is_empty(), "read as breaking: {breaking:?}");
+    let said: Vec<_> = changes.iter().map(janus::diff::Change::message).collect();
+    assert!(
+        said.iter().any(|m| m.contains("pins its width at 768")),
+        "{said:?}",
+    );
+    assert!(
+        said.iter()
+            .any(|m| m.contains("required of every deployment")),
+        "{said:?}",
+    );
 }

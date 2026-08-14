@@ -98,6 +98,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                searches: vec![],
                 backing: vec![],
             },
             Query {
@@ -115,6 +116,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
+                searches: vec![],
                 backing: vec![],
             },
         ],

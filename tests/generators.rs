@@ -171,19 +171,26 @@ fn contract() -> Contract {
                 // Copal's fused search, declared: BM25 candidates and
                 // HNSW neighbours over the same passages, so the
                 // goldens carry a backed query and prove the backing
-                // is capacity metadata rather than wire shape.
+                // is capacity metadata rather than wire shape. The
+                // vector half is optional and pinned to a width, so
+                // the goldens carry both riders too.
+                searches: vec![SearchKind::Lexical, SearchKind::Vector],
                 backing: vec![
                     SearchBacking {
                         table: "text_chunk".into(),
                         column: "body".into(),
                         index: "idx_chunk_body".into(),
                         kind: SearchKind::Lexical,
+                        dimension: None,
+                        optional: false,
                     },
                     SearchBacking {
                         table: "text_chunk".into(),
                         column: "embedding".into(),
                         index: "idx_chunk_embedding".into(),
                         kind: SearchKind::Vector,
+                        dimension: Some(768),
+                        optional: true,
                     },
                 ],
             },
@@ -202,6 +209,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: None,
+                searches: vec![],
                 backing: vec![],
             },
         ],
@@ -641,6 +649,7 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         },
         Query {
@@ -658,6 +667,7 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         },
     ];
@@ -738,6 +748,7 @@ fn required_query_parameters_lead() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        searches: vec![],
         backing: vec![],
     }];
     let schema = schema();
@@ -779,6 +790,7 @@ fn a_closed_set_reaches_the_documents() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        searches: vec![],
         backing: vec![],
     }];
     let schema = schema();
@@ -821,6 +833,7 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         }];
         contract
@@ -867,12 +880,18 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
 /// caller holds, and they come out byte-identical, which is the whole
 /// design: the contract promises more without the API saying anything
 /// different.
+///
+/// The declared searches go with them, and for a second reason as
+/// well as the first: leaving a declaration behind with nothing under
+/// it does not generate at all, which is the gate and is asserted
+/// next door.
 #[test]
 fn a_backing_changes_no_wire_surface() {
     let backed = generate_all(&contract(), &schema(), TARGETS).unwrap();
     let mut stripped_contract = contract();
     for query in &mut stripped_contract.queries {
         query.backing.clear();
+        query.searches.clear();
     }
     let stripped = generate_all(&stripped_contract, &schema(), TARGETS).unwrap();
     for (filename, content) in &backed {
@@ -889,7 +908,7 @@ fn a_backing_changes_no_wire_surface() {
     assert_eq!(
         doc["paths"]["/v1/search"]["get"]["description"],
         "Search backing: lexical via idx_chunk_body over text_chunk.body; \
-         vector via idx_chunk_embedding over text_chunk.embedding.",
+         vector via idx_chunk_embedding over text_chunk.embedding where configured.",
     );
     let mcp = janus::generate_mcp_tools(&contract());
     let search = mcp["tools"]
@@ -903,6 +922,38 @@ fn a_backing_changes_no_wire_surface() {
         "idx_chunk_body"
     );
     assert_eq!(search["annotations"]["backing"][1]["kind"], "vector");
+    // The width and the hedge ride along, which is the half an agent
+    // reading before it calls actually needs: what this deployment
+    // may not have.
+    assert_eq!(search["annotations"]["backing"][1]["dimension"], 768);
+    assert_eq!(search["annotations"]["backing"][1]["optional"], true);
+    // And they stay off the backing that has neither.
+    assert!(search["annotations"]["backing"][0]["dimension"].is_null());
+    assert!(search["annotations"]["backing"][0]["optional"].is_null());
+}
+
+/// A declared search with nothing behind it does not generate.
+///
+/// This is the gate, stated where the artifacts are made: a contract
+/// that promises semantic search over a column no vector index covers
+/// produces no OpenAPI, no SDL, no clients — it produces the refusal
+/// naming the query and the kind. Every other rule in the validator
+/// reads something the author wrote and holds it to the schema; this
+/// one reads what the author did NOT write, which is the shape an
+/// unindexed neighbour search actually has when it ships.
+#[test]
+fn a_declared_search_with_no_backing_refuses_to_generate() {
+    let mut promised = contract();
+    promised.queries[0].backing.clear();
+    let error = generate_all(&promised, &schema(), TARGETS)
+        .expect_err("a promise with nothing behind it is not generated");
+    let text = format!("{error}");
+    assert!(text.contains("performs a lexical search"), "{text}");
+    assert!(text.contains("performs a vector search"), "{text}");
+
+    // And the repair is to declare the machinery, not to weaken the
+    // rule: the same contract with its backings back generates.
+    generate_all(&contract(), &schema(), TARGETS).expect("the backed contract generates");
 }
 
 /// Filter options describe a column a caller may narrow by, so naming

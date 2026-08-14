@@ -118,7 +118,9 @@
             "table": "text_chunk",
             "column": "embedding",
             "index": "idx_chunk_embedding",
-            "kind": "vector"
+            "kind": "vector",
+            "dimension": 768,
+            "optional": true
           }
         ]
       }

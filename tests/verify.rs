@@ -123,18 +123,23 @@ fn searching_contract() -> Contract {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        searches: vec![SearchKind::Lexical, SearchKind::Vector],
         backing: vec![
             SearchBacking {
                 table: "text_chunk".into(),
                 column: "body".into(),
                 index: "idx_chunk_body".into(),
                 kind: SearchKind::Lexical,
+                dimension: None,
+                optional: false,
             },
             SearchBacking {
                 table: "text_chunk".into(),
                 column: "embedding".into(),
                 index: "idx_chunk_embedding".into(),
                 kind: SearchKind::Vector,
+                dimension: Some(3),
+                optional: false,
             },
         ],
     }];
@@ -364,6 +369,52 @@ async fn a_dropped_search_index_convicts_the_backing_by_name() {
         )),
         "{rendered:?}",
     );
+}
+
+/// An optional backing is excused on a database that never had the
+/// index, and convicted on one that has it and does not use it.
+///
+/// Both halves matter, and the second is the one that makes the flag
+/// worth having. "This deployment may not have configured it" is a
+/// true statement about copal's embedding index and a tempting cover
+/// for anything at all, so the excuse is granted on exactly one fact:
+/// the index is not defined here. Define it, and the claim answers to
+/// the planner like every other.
+#[tokio::test]
+async fn an_optional_backing_is_excused_only_by_an_absent_index() {
+    let mut optional = searching_contract();
+    optional.queries[0].searches = vec![SearchKind::Vector];
+    optional.queries[0]
+        .backing
+        .retain(|b| b.kind == SearchKind::Vector);
+    optional.queries[0].backing[0].optional = true;
+
+    // No index: nothing to answer for.
+    let bare = memory_client().await;
+    bare.query(DRIFTED_DDL).await.expect("schema applies");
+    assert_eq!(
+        verify_contract(&bare, &optional).await.unwrap(),
+        vec![],
+        "an index the deployment never configured is not a broken promise",
+    );
+
+    // The index exists: the plan has to reach it, and here it does.
+    let configured = memory_client().await;
+    configured.query(SEARCH_DDL).await.expect("schema applies");
+    assert_eq!(
+        verify_contract(&configured, &optional).await.unwrap(),
+        vec![]
+    );
+
+    // The index exists and the query cannot reach it — the metric
+    // form of the KNN operator, which plans as KnnTopK over a
+    // TableScan even with the index in place. Optional does not
+    // excuse it.
+    let mut wrong_column = optional.clone();
+    wrong_column.queries[0].backing[0].column = "tenant_id".into();
+    let violations = verify_contract(&configured, &wrong_column).await.unwrap();
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].claim, "vector backing text_chunk.tenant_id");
 }
 
 /// The planner, not the catalog, is the judge: `state` IS indexed on

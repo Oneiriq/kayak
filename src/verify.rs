@@ -72,6 +72,17 @@ pub enum Expectation {
     /// machinery — a search answered through some other index is the
     /// contract promising one thing and the deployment doing another.
     ReachesIndex(String),
+    /// An optional backing: the plan must reach the named index
+    /// wherever this database holds it. The claim is about machinery
+    /// that is configured, not a claim that it is configured, so a
+    /// database without the index answers by not having it — and a
+    /// database with it answers to the standard above, unrelaxed.
+    ReachesIndexIfDefined {
+        /// The table the index would be defined on.
+        table: String,
+        /// The index the backing rests on where it exists.
+        index: String,
+    },
 }
 
 /// A claim the planner answered with something other than what the
@@ -173,6 +184,20 @@ pub async fn verify_contract(
                     Some(plan_summary(plan))
                 }
             }
+            Expectation::ReachesIndexIfDefined { table, index } => {
+                if reaches_index(plan, index) {
+                    None
+                } else {
+                    // The plan is already summarised before the extra
+                    // round trip is spent, because the answer only
+                    // decides whether to REPORT what was already
+                    // observed.
+                    let summary = plan_summary(plan);
+                    index_defined(client, table, index)
+                        .await?
+                        .then_some(summary)
+                }
+            }
         };
         if let Some(operation) = conviction {
             violations.push(PlanViolation {
@@ -184,6 +209,36 @@ pub async fn verify_contract(
         }
     }
     Ok(violations)
+}
+
+/// Whether this database holds `index` on `table`.
+///
+/// Asked only when an optional backing's probe did not reach its
+/// index, which is the only moment the answer changes anything: an
+/// index the plan reached is serving whether or not anyone meant to
+/// configure it, and a required backing owes the index regardless. So
+/// the extra round trip is spent exactly once per optional backing
+/// that came back unserved, and never on a verified contract.
+async fn index_defined(
+    client: &DatabaseClient,
+    table: &str,
+    index: &str,
+) -> Result<bool, VerifyError> {
+    let surql = format!("INFO FOR TABLE {table}");
+    let answer = client
+        .query(&surql)
+        .await
+        .map_err(|error| VerifyError::Query {
+            surql: surql.clone(),
+            reason: error.to_string(),
+        })?;
+    // `INFO FOR TABLE` answers with the definitions grouped by kind,
+    // each group a map of name to the `DEFINE` statement that made it.
+    Ok(answer
+        .get(0)
+        .and_then(|info| info.get("indexes"))
+        .and_then(Value::as_object)
+        .is_some_and(|indexes| indexes.contains_key(index)))
 }
 
 fn resource_probes(resource: &Resource, out: &mut Vec<Probe>) {
@@ -299,7 +354,14 @@ fn query_probes(query: &Query, out: &mut Vec<Probe>) {
                 backing.kind, backing.table, backing.column,
             ),
             surql,
-            expects: Expectation::ReachesIndex(backing.index.clone()),
+            expects: if backing.optional {
+                Expectation::ReachesIndexIfDefined {
+                    table: backing.table.clone(),
+                    index: backing.index.clone(),
+                }
+            } else {
+                Expectation::ReachesIndex(backing.index.clone())
+            },
         });
     }
 }
@@ -521,18 +583,23 @@ mod tests {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![SearchKind::Lexical, SearchKind::Vector],
             backing: vec![
                 crate::ir::SearchBacking {
                     table: "text_chunk".into(),
                     column: "body".into(),
                     index: "idx_chunk_body".into(),
                     kind: SearchKind::Lexical,
+                    dimension: None,
+                    optional: false,
                 },
                 crate::ir::SearchBacking {
                     table: "text_chunk".into(),
                     column: "embedding".into(),
                     index: "idx_chunk_embedding".into(),
                     kind: SearchKind::Vector,
+                    dimension: Some(768),
+                    optional: false,
                 },
             ],
         }];
@@ -566,6 +633,54 @@ mod tests {
         assert!(composed
             .iter()
             .all(|p| p.scope != "query search" || p.claim.contains("backing")));
+    }
+
+    /// An optional backing is probed the same way and judged
+    /// differently.
+    ///
+    /// The statement is identical — the question is still whether that
+    /// operator reaches that index — but the expectation carries the
+    /// table as well as the index, because a plan that missed has two
+    /// explanations for an optional backing and only one for a
+    /// required one, and telling them apart means asking the database
+    /// whether the index is there at all.
+    #[test]
+    fn an_optional_backing_is_probed_but_excused_when_absent() {
+        let mut contract = contract();
+        contract.queries = vec![crate::ir::Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+            searches: vec![SearchKind::Vector],
+            backing: vec![crate::ir::SearchBacking {
+                table: "text_chunk".into(),
+                column: "embedding".into(),
+                index: "idx_chunk_embedding".into(),
+                kind: SearchKind::Vector,
+                dimension: None,
+                optional: true,
+            }],
+        }];
+        let composed = probes(&contract);
+        let probe = composed
+            .iter()
+            .find(|p| p.claim == "vector backing text_chunk.embedding")
+            .expect("an optional backing is still probed");
+        assert_eq!(
+            probe.surql,
+            "SELECT * FROM text_chunk WHERE embedding <|1,64|> [0] EXPLAIN",
+        );
+        assert_eq!(
+            probe.expects,
+            Expectation::ReachesIndexIfDefined {
+                table: "text_chunk".into(),
+                index: "idx_chunk_embedding".into(),
+            },
+        );
     }
 
     #[test]

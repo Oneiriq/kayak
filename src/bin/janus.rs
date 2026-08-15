@@ -49,12 +49,14 @@ fn main() -> ExitCode {
                 "usage:\n  janus scaffold --schema <file> [--out <file>] [--name <name>] \
                  [--version <semver>] [--pinned <columns>]\n  \
                  janus generate --contract <file-or-dir> --schema <file> --out <dir> \
-                 [--targets {},engine-policy]\n  janus diff <old-contract> <new-contract>\n  \
+                 [--targets {},client-rs-blocking,engine-policy]\n  janus diff <old-contract> \
+                 <new-contract>\n  \
                  janus verify --contract <file-or-dir> --db <url> --namespace <ns> \
                  --database <db> [--user <name> --pass <secret>]\n\n  a \
                  contract is one .json file, or a directory holding contract.json beside \
                  resources/*.json and queries/*.json\n  engine-policy is opt-in: it renders with \
-                 the default token-claim vocabulary",
+                 the default token-claim vocabulary\n  client-rs-blocking is opt-in: the same \
+                 contract for callers with no runtime to await on",
                 TARGETS.join(","),
             );
             ExitCode::from(2)

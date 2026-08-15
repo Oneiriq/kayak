@@ -1,7 +1,7 @@
 # Generators and the CLI
 
-One contract and one schema produce seven artifacts by default, and an
-eighth on request. Every generator validates first; an invalid contract
+One contract and one schema produce seven artifacts by default, and two
+more on request. Every generator validates first; an invalid contract
 refuses with each violation named.
 
 | Target | File | Contents |
@@ -10,6 +10,7 @@ refuses with each violation named.
 | `sdl` | `schema.graphql` | Object types, sort enums, page types, Query and Mutation. Scalars `DateTime` and `JSON` appear only when used. |
 | `mcp` | `mcp-tools.json` | The `tools/list` manifest: one tool per declared operation, with input schemas, and scopes and rate classes as annotations. |
 | `client-rs` | `client.rs` | Rust client on `reqwest` and `serde`. |
+| `client-rs-blocking` (opt-in) | `client_blocking.rs` | The same client on `reqwest::blocking`, for callers with no runtime to await on. Opt-in because it is a second flavour of a language the default set already covers. |
 | `client-ts` | `client.ts` | TypeScript client on `fetch`, zero dependencies. |
 | `client-py` | `client.py` | Python client, standard library only. |
 | `client-go` | `client.go` | Go client, `net/http` only. |

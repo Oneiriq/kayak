@@ -84,6 +84,7 @@ fn copal_shaped() -> janus::Contract {
         ir_revision: 1,
         rate_classes: vec![],
         limits: None,
+        auth: Default::default(),
         resources: vec![files, webhooks, events, runs],
         queries: vec![],
     }

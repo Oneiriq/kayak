@@ -9,7 +9,131 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **A contract says how its callers authenticate.** Copal's
+  `x-copal-tenant` header was hardcoded in four client generators, so a
+  service authenticating any other way had four files to edit and no
+  way to say so in the contract. `Contract::auth` now declares the
+  scheme — `none`, `bearer`, or a named header — and every face reads
+  the declaration: the four clients, the OpenAPI `securitySchemes` and
+  document-level `security`, and the differ, which treats any change of
+  scheme as breaking in both directions. The credential's *name* is
+  part of the declaration and reaches the generated constructors, so a
+  bearer contract gets `Client::new(url, token)` and copal's gets
+  `Client::new(url, tenant)`. Declaring copal's existing scheme
+  reproduces all four client goldens byte for byte, which is what
+  establishes the mechanism is faithful to the behaviour it replaced.
+
+- **A blocking Rust client, on request.** `--targets
+  client-rs-blocking` emits `client_blocking.rs`: the same types,
+  renames, nullability, auth scheme, URLs and query shaping as
+  `client-rs`, reached through `reqwest::blocking`. A caller with no
+  runtime no longer has to stand up an executor to make one call or
+  hand-maintain a synchronous port that drifts from the contract.
+
+  One generator parameterised by how a call suspends, not two to keep
+  in step. The four fragments that differ — asyncness, await, the
+  reqwest module, the feature list — are the whole of it, and a test
+  asserts exactly that by converting the async output into the blocking
+  one and demanding byte equality. Opt-in rather than default, like
+  `engine-policy`: it is a second flavour of a language the default set
+  already covers, and defaulting it would hand every consumer a second
+  Rust client to review.
+
+- **The vector-index gate: a declared search with nothing behind it
+  does not generate.** The backing rules could refuse a search resting
+  on the wrong machinery, but not a search resting on none — a query
+  that declared no backing and a query that needed none were the same
+  document, so the contract had no way to say "this performs a
+  semantic search" and therefore no way to be wrong about it. That is
+  the exact shape unindexed search has when it ships: driftnet's chunk
+  search and antumbra's recall paths both ran for months over columns
+  nothing could answer a neighbour query on, and no contract anywhere
+  could have caught either, because nobody writes down the index they
+  do not have.
+
+  `Query.searches` is the declaration — a list of `SearchKind` — and
+  every kind named there must have a backing of that kind behind it,
+  or generation fails with `Violation::UnbackedSearch` naming the
+  query and the kind. Losing a declared search is breaking; gaining
+  one is compatible. The field is empty by default, old contracts
+  deserialize and render unchanged, and a backing whose kind is not
+  declared stays legal, so adoption is a line per query rather than a
+  flag day. What the rule cannot do is make anyone declare, which is
+  the standing limit of a declaration language and why `verify --db`
+  exists beside it; what it buys is that a declaration, once made, is
+  load-bearing.
+
+- **A vector backing pins the width it searches at.**
+  `SearchBacking.dimension` is held against the index's own
+  `DIMENSION` (`Violation::BackingWidthMismatch`). A vector of the
+  wrong width is not a slower search, it is a different one, and the
+  width changes whenever the embedding model does — so a model swap
+  that outran its schema is a generation failure rather than a quiet
+  change in what comes back. `None` leaves the width to the
+  deployment. A lexical backing has no width, and stating one there is
+  refused rather than compared against a FULLTEXT index that was never
+  going to have one.
+
+- **A backing can be machinery the deployment configures.**
+  `SearchBacking.optional` says the index may be absent. Copal is the
+  case that forced it: its HNSW index over `text_chunk.embedding` is
+  applied at startup, and only where an embedding model is configured,
+  at that model's width — so declaring it outright would make the
+  contract false everywhere else, and the answer until now was to
+  declare nothing, which is the silence these rules exist to end.
+  Optional relaxes exactly one check, index presence, and no others: a
+  present index still holds the column, is the kind's own machinery,
+  and matches the declared width. May be absent, never may be wrong.
+  `verify --db` reads it the same way through
+  `Expectation::ReachesIndexIfDefined` — the probe runs, and a plan
+  that missed is excused on one fact, that this database does not
+  define the index, established with one extra `INFO FOR TABLE` spent
+  only when an optional backing already came back unserved.
+
+  The differ matches backings by where the machinery is (table,
+  column, index, kind) rather than member for member, so the width and
+  the optional flag read as one change each: a width changed or
+  dropped and a backing gone optional are breaking, a width newly
+  pinned and a backing now required of every deployment are not. Under
+  the old member-for-member comparison, strengthening a promise read
+  as a loss and a gain, which is the kind of false alarm that teaches
+  people to wave a gate through.
+
 ### Changed
+
+- **Re-blessing a golden names the golden.** `JANUS_BLESS` took any
+  value and re-blessed all eight goldens at once, so reaching for it to
+  read one generator's diff silently rewrote the other seven. It now
+  takes the artifacts to bless — `JANUS_BLESS=client-go`, a comma
+  separated list, or `1`/`all` for the blanket form a change touching
+  every face still wants. An unrecognised name fails rather than
+  blessing nothing quietly: `golang` is a plausible thing to type when
+  Go is `client-go` internally, and a bless that matched nothing would
+  read as a clean run. A test asserts every `TARGETS` entry has a bless
+  name, so a new target cannot arrive with no way to re-bless it alone.
+
+- **One client generator per module.** `clients.rs` reached 1,245 lines
+  and a second Rust flavour was about to make that worse. Split to
+  `clients/{rust,typescript,python,go}.rs`, with only what more than
+  one language needs left in `clients/mod.rs`. A pure move: the
+  goldens do not shift.
+
+- **Generated Rust is checked.** The CLI test compiled the generated
+  Python and parsed the generated Go, but nothing looked at the
+  generated Rust at all. It now runs `rustfmt` over both flavours,
+  which parses before it formats. That catches syntax only — a stray
+  `.await` in the blocking client parses fine and fails to build — so
+  the generators suite separately asserts the blocking flavour never
+  suspends.
+
+- **`tests/search_gate.rs` carries the search half of the gate.**
+  `contract_gate.rs` crossed a thousand lines. What moved is already
+  one subject asked from two sides — a filter or a sort resting on
+  search machinery, and a search resting on a b-tree — so it went out
+  whole rather than being trimmed, and both directions still read
+  against the same `text_chunk` fixture.
 
 - **A vector backing rests on DISKANN the way it rests on HNSW.**
   surql 0.33 added the DISKANN index kind, and it answers KNN through

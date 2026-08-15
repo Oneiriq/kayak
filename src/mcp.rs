@@ -214,6 +214,7 @@ mod tests {
             ir_revision: 1,
             limits: None,
             rate_classes: vec![],
+            auth: Default::default(),
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
@@ -256,11 +257,14 @@ mod tests {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: Some("reads".into()),
+                searches: vec![crate::ir::SearchKind::Lexical],
                 backing: vec![crate::ir::SearchBacking {
                     table: "text_chunk".into(),
                     column: "body".into(),
                     index: "idx_chunk_body".into(),
                     kind: crate::ir::SearchKind::Lexical,
+                    dimension: None,
+                    optional: false,
                 }],
             }],
         }

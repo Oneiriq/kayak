@@ -10,7 +10,7 @@
 //! surface for whoever the guard protects even when no caller loses
 //! a thing.
 
-use crate::ir::{Action, ActionField, Contract, FieldExposure, Resource};
+use crate::ir::{Action, ActionField, Contract, FieldExposure, Resource, SearchBacking};
 
 /// One observed change between two contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,9 +33,34 @@ impl Change {
     }
 }
 
+/// How a diff message names an authentication scheme: the header, when
+/// there is one, because that is the part a caller has to change.
+fn auth_word(auth: &crate::ir::AuthScheme) -> String {
+    match auth {
+        crate::ir::AuthScheme::None => "none".to_owned(),
+        crate::ir::AuthScheme::Bearer => "bearer token".to_owned(),
+        crate::ir::AuthScheme::Header { name, .. } => format!("the {name} header"),
+    }
+}
+
 /// Compare `old` to `new`, returning every observed change.
 pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
     let mut changes = Vec::new();
+
+    // How a caller authenticates, and every direction of moving it is
+    // breaking. Changing the scheme leaves every deployed client sending
+    // a credential the service no longer reads; ADDING one to an open API
+    // locks out callers that sent nothing; and REMOVING one is breaking in
+    // the sense field guards are — the API stops refusing what it used to
+    // refuse, which is surface for whoever the credential kept out, even
+    // though no caller loses a call.
+    if old.auth != new.auth {
+        changes.push(Change::Breaking(format!(
+            "authentication changed: {} -> {}",
+            auth_word(&old.auth),
+            auth_word(&new.auth),
+        )));
+    }
 
     // Rate classes: shrinking a budget refuses callers that used to
     // pass; growing one refuses nothing. A class appearing or leaving
@@ -205,28 +230,102 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
             )));
         }
     }
+    // What the query says it does. A declared search that goes away
+    // takes a capability from everyone who was calling for it, and the
+    // resolver behind it degrades to whatever it degrades to; one that
+    // appears promises more over the same wire surface.
+    for kind in &old.searches {
+        if !new.searches.contains(kind) {
+            changes.push(Change::Breaking(format!(
+                "query {name} no longer performs a {kind} search",
+            )));
+        }
+    }
+    for kind in &new.searches {
+        if !old.searches.contains(kind) {
+            changes.push(Change::Compatible(format!(
+                "query {name} now performs a {kind} search",
+            )));
+        }
+    }
     // Backings: a promise about what answers the query, on the same
     // wire surface either way. Losing one is breaking — a caller (or
     // an operator's capacity plan) relying on indexed search is handed
     // whatever the resolver degrades to. A backing has no name of its
-    // own, so its identity IS its four members, and re-pointing any of
-    // them reads as the old promise gone (breaking) and a new one made
-    // (compatible), which is the honest description of what happened.
+    // own, so WHERE the machinery is (table, column, index, kind) is
+    // its identity, and re-pointing any of the four reads as the old
+    // promise gone (breaking) and a new one made (compatible), which
+    // is the honest description of what happened. What it promises
+    // ABOUT that machinery — the width, and whether the deployment is
+    // required to have it — moves under a fixed identity, so those
+    // read as one change each rather than a loss and a gain; a
+    // backing that merely became guaranteed is not a backing anyone
+    // lost.
     for backing in &old.backing {
-        if !new.backing.contains(backing) {
+        let Some(now) = new
+            .backing
+            .iter()
+            .find(|b| b.machinery() == backing.machinery())
+        else {
             changes.push(Change::Breaking(format!(
                 "query {name} lost the {} backing {}.{} via {}",
                 backing.kind, backing.table, backing.column, backing.index,
             )));
-        }
+            continue;
+        };
+        diff_backing_promise(name, backing, now, changes);
     }
     for backing in &new.backing {
-        if !old.backing.contains(backing) {
+        if !old
+            .backing
+            .iter()
+            .any(|b| b.machinery() == backing.machinery())
+        {
             changes.push(Change::Compatible(format!(
                 "query {name} gained the {} backing {}.{} via {}",
                 backing.kind, backing.table, backing.column, backing.index,
             )));
         }
+    }
+}
+
+/// How one backing's promise moved while pointing at the same
+/// machinery.
+///
+/// A width that changes is the embedding model changing underneath,
+/// which is not a slower search but a different one; a width that
+/// appears tightens a claim the contract was not making; a width that
+/// disappears gives up a guarantee. Optional runs the same way: a
+/// backing the deployment may now skip is a backing callers can no
+/// longer count on, and one that stopped being skippable is a promise
+/// strengthened.
+fn diff_backing_promise(
+    name: &str,
+    old: &SearchBacking,
+    new: &SearchBacking,
+    changes: &mut Vec<Change>,
+) {
+    let what = format!("{} backing {}.{}", old.kind, old.table, old.column);
+    match (old.dimension, new.dimension) {
+        (Some(before), Some(after)) if before != after => changes.push(Change::Breaking(format!(
+            "query {name}: the {what} now searches at {after} dimensions (was {before})",
+        ))),
+        (Some(before), None) => changes.push(Change::Breaking(format!(
+            "query {name}: the {what} no longer pins its width (was {before})",
+        ))),
+        (None, Some(after)) => changes.push(Change::Compatible(format!(
+            "query {name}: the {what} now pins its width at {after}",
+        ))),
+        _ => {}
+    }
+    match (old.optional, new.optional) {
+        (false, true) => changes.push(Change::Breaking(format!(
+            "query {name}: the {what} is now optional, and a deployment may not have it",
+        ))),
+        (true, false) => changes.push(Change::Compatible(format!(
+            "query {name}: the {what} is now required of every deployment",
+        ))),
+        _ => {}
     }
 }
 

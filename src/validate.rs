@@ -18,12 +18,20 @@
 //!   ORDER BY only from a prefix whose head is equality-bound. A bare
 //!   leading column is the degenerate case.
 //! - search backing: the named index must exist on the named table,
-//!   hold the named column, and be the kind's own machinery — FULLTEXT
-//!   for a lexical backing, HNSW, MTREE, or DISKANN for a vector one.
+//!   hold the named column, be the kind's own machinery — FULLTEXT
+//!   for a lexical backing, HNSW, MTREE, or DISKANN for a vector one —
+//!   and, where the backing pins a width, be defined over that width.
 //!   The mirror
 //!   image of the index-type rule: there a filter rested on a search
 //!   index that cannot narrow, here a search rests on a b-tree that
 //!   cannot match terms or walk neighbours.
+//! - declared search: a kind the query says it performs must have a
+//!   backing of that kind behind it. This is the one rule that catches
+//!   an ABSENCE rather than a mistake, and absence is how unindexed
+//!   search ships: every other rule here reads something the author
+//!   wrote and holds it to the schema, while a semantic search over a
+//!   column with no vector index writes nothing at all. Declaring the
+//!   capability is what gives the gate something to refuse.
 //!
 //! Both index rules read [`crate::indexes`] rather than the table's
 //! index list, because only a standard or unique index counts toward
@@ -170,6 +178,33 @@ pub enum Violation {
     },
 
     #[error(
+        "query {query}: performs a {kind} search and names no {kind} backing; a \
+         declared search with nothing behind it is the table scan this gate exists \
+         to refuse — name the table, column, and index that answer it, or stop \
+         declaring the search"
+    )]
+    UnbackedSearch { query: String, kind: SearchKind },
+
+    #[error(
+        "query {query}: the vector backing on {table}.{column} searches at \
+         {declared} dimensions and {index} is defined over {}; a vector of the \
+         wrong width is not a slower search, it is a different one, so pin the \
+         backing to the index's width or redefine the index at the width the \
+         search sends",
+        width_word(*.actual)
+    )]
+    BackingWidthMismatch {
+        query: String,
+        table: String,
+        column: String,
+        index: String,
+        declared: u32,
+        /// The index's own `DIMENSION`, absent on a definition that
+        /// states none.
+        actual: Option<u32>,
+    },
+
+    #[error(
         "resource {resource}: the server binds {} on every read of {table}, \
          and no index leads with any of them; the plain listing, nothing \
          filtered and nothing sorted, scans the whole table. Lead an index \
@@ -195,6 +230,13 @@ fn index_kind_word(index_type: IndexType) -> &'static str {
         IndexType::Standard => "plain",
         other => other.as_str(),
     }
+}
+
+/// How a violation says what width an index was defined over. A
+/// vector index always states one; a definition that does not is a
+/// hand-built oddity, and saying so beats printing `None`.
+fn width_word(dimension: Option<u32>) -> String {
+    dimension.map_or_else(|| "no stated width".to_owned(), |width| width.to_string())
 }
 
 /// Validate a contract against schema definitions; empty means valid.
@@ -344,10 +386,44 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
                 });
             }
         }
+        validate_searches(query, &mut violations);
         validate_backing(query, schema, &mut violations);
     }
 
     violations
+}
+
+/// The declared-search rule: what the query says it does has to have
+/// something behind it.
+///
+/// Every other rule in this file starts from something the author
+/// wrote — a filterable column, a sort, a backing — and holds it to
+/// the schema. This one starts from an absence, because an absence is
+/// how unindexed search reaches production: nobody writes down that
+/// the neighbour search has no index, they simply write the resolver.
+/// So the contract is given a way to state the capability, and the
+/// statement is what the gate can then refuse. It costs a line to
+/// declare and turns a whole class of silent table scan into a build
+/// failure; what it cannot do is make an author declare, which is the
+/// same limit every claim in a declaration language has.
+fn validate_searches(query: &Query, violations: &mut Vec<Violation>) {
+    let mut declared = std::collections::BTreeSet::new();
+    for kind in &query.searches {
+        if !declared.insert(*kind) {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: kind.as_str().to_owned(),
+                problem: "declares the same search twice".into(),
+            });
+            continue;
+        }
+        if !query.backing.iter().any(|backing| backing.kind == *kind) {
+            violations.push(Violation::UnbackedSearch {
+                query: query.name.clone(),
+                kind: *kind,
+            });
+        }
+    }
 }
 
 /// The backing rulebook: the mirror image of the listing index rules.
@@ -362,6 +438,12 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// sit the capability question out, because repairing the name comes
 /// first; a resolved column and a resolved index answer for coverage
 /// and kind independently of one another.
+///
+/// An optional backing relaxes exactly one of these rules — the index
+/// may be absent — and no others. A deployment that configured the
+/// machinery is not a deployment that gets to configure it wrong, so
+/// an index that IS there answers for its column, its kind, and its
+/// width the way any other does.
 fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut Vec<Violation>) {
     let mut seen = std::collections::BTreeSet::new();
     for backing in &query.backing {
@@ -380,6 +462,17 @@ fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut 
             });
             continue;
         }
+        // A width is a vector's business. On a lexical backing it is
+        // not a wrong number, it is a number about nothing, and left
+        // to the width rule below it would be reported as a mismatch
+        // against a FULLTEXT index that was never going to state one.
+        if backing.kind == SearchKind::Lexical && backing.dimension.is_some() {
+            violations.push(Violation::InvalidName {
+                scope: format!("query {}", query.name),
+                name: backing.index.clone(),
+                problem: "a lexical backing has no vector width".into(),
+            });
+        }
         let Some(table) = schema.iter().find(|t| t.name == backing.table) else {
             violations.push(Violation::UnknownBackingTable {
                 query: query.name.clone(),
@@ -396,6 +489,11 @@ fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut 
             continue;
         }
         let Some(index) = table.indexes.iter().find(|i| i.name == backing.index) else {
+            // The one rule optional relaxes: a deployment that never
+            // configured the machinery is not a contract that lied.
+            if backing.optional {
+                continue;
+            }
             violations.push(Violation::UnknownBackingIndex {
                 query: query.name.clone(),
                 table: backing.table.clone(),
@@ -422,6 +520,27 @@ fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut 
                 index: backing.index.clone(),
                 index_type: index.index_type,
             });
+            continue;
+        }
+        // Width, last, and only once the index is known to be vector
+        // machinery over the right column: a width mismatch reported
+        // against an index that was the wrong kind to begin with
+        // sends the author to fix the smaller of two problems. The
+        // definition's own `DIMENSION` is read here rather than
+        // through `crate::indexes`, because it is a field, not an
+        // interpretation of one — nothing about it can drift between
+        // readers the way index-type reasoning did.
+        if let (SearchKind::Vector, Some(declared)) = (backing.kind, backing.dimension) {
+            if index.dimension != Some(declared) {
+                violations.push(Violation::BackingWidthMismatch {
+                    query: query.name.clone(),
+                    table: backing.table.clone(),
+                    column: backing.column.clone(),
+                    index: backing.index.clone(),
+                    declared,
+                    actual: index.dimension,
+                });
+            }
         }
     }
 }

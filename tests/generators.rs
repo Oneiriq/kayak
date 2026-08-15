@@ -1,10 +1,15 @@
 //! Every generator over one action-bearing contract, golden-tested.
 //!
-//! `JANUS_BLESS=1 cargo test` re-blesses all goldens deliberately;
-//! anything else that changes an artifact is drift and fails.
+//! `JANUS_BLESS=client-go cargo test` re-blesses one golden, a comma
+//! separated list re-blesses several, and `JANUS_BLESS=1` re-blesses
+//! all of them. Anything else that changes an artifact is drift and
+//! fails. See `tests/common` for why a bless names its target.
+
+mod common;
 
 use janus::clients::{
-    generate_client_go, generate_client_py, generate_client_rs, generate_client_ts,
+    generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
+    generate_client_ts,
 };
 use janus::diff::{diff, Change};
 use janus::generate::{generate_all, TARGETS};
@@ -74,6 +79,14 @@ fn contract() -> Contract {
         ir_revision: 1,
         limits: None,
         rate_classes: vec![],
+        // Copal's convention, now declared rather than hardcoded in four
+        // generators. Stating it here must reproduce the goldens byte for
+        // byte -- that equality is the proof the mechanism is faithful to
+        // the behaviour it replaced.
+        auth: janus::AuthScheme::Header {
+            name: "x-copal-tenant".into(),
+            credential: "tenant".into(),
+        },
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -171,19 +184,26 @@ fn contract() -> Contract {
                 // Copal's fused search, declared: BM25 candidates and
                 // HNSW neighbours over the same passages, so the
                 // goldens carry a backed query and prove the backing
-                // is capacity metadata rather than wire shape.
+                // is capacity metadata rather than wire shape. The
+                // vector half is optional and pinned to a width, so
+                // the goldens carry both riders too.
+                searches: vec![SearchKind::Lexical, SearchKind::Vector],
                 backing: vec![
                     SearchBacking {
                         table: "text_chunk".into(),
                         column: "body".into(),
                         index: "idx_chunk_body".into(),
                         kind: SearchKind::Lexical,
+                        dimension: None,
+                        optional: false,
                     },
                     SearchBacking {
                         table: "text_chunk".into(),
                         column: "embedding".into(),
                         index: "idx_chunk_embedding".into(),
                         kind: SearchKind::Vector,
+                        dimension: Some(768),
+                        optional: true,
                     },
                 ],
             },
@@ -202,6 +222,7 @@ fn contract() -> Contract {
                 graphql_field: None,
                 requires: vec!["read".into()],
                 rate_class: None,
+                searches: vec![],
                 backing: vec![],
             },
         ],
@@ -213,22 +234,16 @@ fn all_targets_generate_and_match_goldens() {
     let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
     assert_eq!(artifacts.len(), TARGETS.len());
     for (filename, content) in &artifacts {
-        let golden_path = format!(
-            "{}/tests/golden/full_{}",
-            env!("CARGO_MANIFEST_DIR"),
-            filename,
-        );
-        if std::env::var("JANUS_BLESS").is_ok() {
-            std::fs::write(&golden_path, content).unwrap();
-        }
-        let golden = std::fs::read_to_string(&golden_path)
-            .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS=1 to create"));
-        assert_eq!(
-            content.trim(),
-            golden.trim(),
-            "{filename} drifted from its golden; JANUS_BLESS=1 to re-bless deliberately",
-        );
+        common::check_golden(filename, content);
     }
+}
+
+#[test]
+fn the_blocking_client_matches_its_golden() {
+    // Opt-in, so it is not in TARGETS and the loop above never sees it.
+    let artifacts = generate_all(&contract(), &schema(), &["client-rs-blocking"]).unwrap();
+    let content = &artifacts["client_blocking.rs"];
+    common::check_golden("client_blocking.rs", content);
 }
 
 #[test]
@@ -641,6 +656,7 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         },
         Query {
@@ -658,6 +674,7 @@ fn clients_carry_query_methods() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         },
     ];
@@ -738,6 +755,7 @@ fn required_query_parameters_lead() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        searches: vec![],
         backing: vec![],
     }];
     let schema = schema();
@@ -779,6 +797,7 @@ fn a_closed_set_reaches_the_documents() {
         graphql_field: None,
         requires: vec![],
         rate_class: None,
+        searches: vec![],
         backing: vec![],
     }];
     let schema = schema();
@@ -821,6 +840,7 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
             graphql_field: None,
             requires: vec![],
             rate_class: None,
+            searches: vec![],
             backing: vec![],
         }];
         contract
@@ -867,12 +887,18 @@ fn the_differ_reads_a_narrowing_set_as_breaking() {
 /// caller holds, and they come out byte-identical, which is the whole
 /// design: the contract promises more without the API saying anything
 /// different.
+///
+/// The declared searches go with them, and for a second reason as
+/// well as the first: leaving a declaration behind with nothing under
+/// it does not generate at all, which is the gate and is asserted
+/// next door.
 #[test]
 fn a_backing_changes_no_wire_surface() {
     let backed = generate_all(&contract(), &schema(), TARGETS).unwrap();
     let mut stripped_contract = contract();
     for query in &mut stripped_contract.queries {
         query.backing.clear();
+        query.searches.clear();
     }
     let stripped = generate_all(&stripped_contract, &schema(), TARGETS).unwrap();
     for (filename, content) in &backed {
@@ -889,7 +915,7 @@ fn a_backing_changes_no_wire_surface() {
     assert_eq!(
         doc["paths"]["/v1/search"]["get"]["description"],
         "Search backing: lexical via idx_chunk_body over text_chunk.body; \
-         vector via idx_chunk_embedding over text_chunk.embedding.",
+         vector via idx_chunk_embedding over text_chunk.embedding where configured.",
     );
     let mcp = janus::generate_mcp_tools(&contract());
     let search = mcp["tools"]
@@ -903,6 +929,38 @@ fn a_backing_changes_no_wire_surface() {
         "idx_chunk_body"
     );
     assert_eq!(search["annotations"]["backing"][1]["kind"], "vector");
+    // The width and the hedge ride along, which is the half an agent
+    // reading before it calls actually needs: what this deployment
+    // may not have.
+    assert_eq!(search["annotations"]["backing"][1]["dimension"], 768);
+    assert_eq!(search["annotations"]["backing"][1]["optional"], true);
+    // And they stay off the backing that has neither.
+    assert!(search["annotations"]["backing"][0]["dimension"].is_null());
+    assert!(search["annotations"]["backing"][0]["optional"].is_null());
+}
+
+/// A declared search with nothing behind it does not generate.
+///
+/// This is the gate, stated where the artifacts are made: a contract
+/// that promises semantic search over a column no vector index covers
+/// produces no OpenAPI, no SDL, no clients — it produces the refusal
+/// naming the query and the kind. Every other rule in the validator
+/// reads something the author wrote and holds it to the schema; this
+/// one reads what the author did NOT write, which is the shape an
+/// unindexed neighbour search actually has when it ships.
+#[test]
+fn a_declared_search_with_no_backing_refuses_to_generate() {
+    let mut promised = contract();
+    promised.queries[0].backing.clear();
+    let error = generate_all(&promised, &schema(), TARGETS)
+        .expect_err("a promise with nothing behind it is not generated");
+    let text = format!("{error}");
+    assert!(text.contains("performs a lexical search"), "{text}");
+    assert!(text.contains("performs a vector search"), "{text}");
+
+    // And the repair is to declare the machinery, not to weaken the
+    // rule: the same contract with its backings back generates.
+    generate_all(&contract(), &schema(), TARGETS).expect("the backed contract generates");
 }
 
 /// Filter options describe a column a caller may narrow by, so naming
@@ -928,4 +986,300 @@ fn filter_options_answer_to_the_filterable_list() {
         .filter_options
         .insert("state".into(), vec!["ready".into(), "failed".into()]);
     assert_eq!(janus::validate(&ok, &schema()), vec![]);
+}
+
+/// The credential a client sends is the one the contract declared.
+///
+/// Until `Contract.auth` existed, `x-copal-tenant` was hardcoded in
+/// eight places across the four generators, so janus produced clients for
+/// copal rather than for contracts: a service authenticating with a bearer
+/// token got one that sent somebody else's header and no credential at all.
+/// The fixture declares copal's header explicitly now, and the goldens did
+/// not move by a byte -- so this checks the other two schemes instead.
+#[test]
+fn the_client_sends_the_credential_the_contract_declares() {
+    let rust = |auth: janus::AuthScheme| {
+        let mut c = contract();
+        c.auth = auth;
+        generate_client_rs(&c, &schema()).expect("generates")
+    };
+
+    // Bearer: the constructor takes a token and every request carries it
+    // in the standard header, with the scheme prefix.
+    let bearer = rust(janus::AuthScheme::Bearer);
+    assert!(
+        bearer.contains("pub fn new(base_url: impl Into<String>, token: impl Into<String>)"),
+        "{bearer}"
+    );
+    assert!(
+        bearer.contains(r#".header("authorization", format!("Bearer {}", self.token))"#),
+        "{bearer}"
+    );
+    assert!(!bearer.contains("x-copal-tenant"), "no stale header");
+    assert!(!bearer.contains("tenant"), "no stale credential name");
+
+    // None: no credential to carry, so no field, no parameter, no header.
+    let open = rust(janus::AuthScheme::None);
+    assert!(
+        open.contains("pub fn new(base_url: impl Into<String>) -> Self"),
+        "{open}"
+    );
+    assert!(
+        !open.contains(".header("),
+        "an open API sets no auth header"
+    );
+    assert!(!open.contains("token"), "{open}");
+
+    // A header scheme names the credential after the service's own word
+    // for it, not after the header.
+    let keyed = rust(janus::AuthScheme::Header {
+        name: "x-api-key".into(),
+        credential: "api_key".into(),
+    });
+    assert!(
+        keyed.contains("pub fn new(base_url: impl Into<String>, api_key: impl Into<String>)"),
+        "{keyed}"
+    );
+    assert!(
+        keyed.contains(r#".header("x-api-key", &self.api_key)"#),
+        "{keyed}"
+    );
+
+    // Every request in the file is authenticated, not just the first --
+    // the whole reason the expression is built once and spliced.
+    let requests = bearer.matches("self.http.").count();
+    let headers = bearer.matches(r#".header("authorization""#).count();
+    assert_eq!(requests, headers, "every request carries the credential");
+    // The other three languages carry the same declaration, each in its
+    // own idiom. Checked together because the bug being prevented was one
+    // generator drifting from the rest.
+    let bearer_of =
+        |gen: fn(&Contract, &[TableDefinition]) -> Result<String, janus::GenerateError>| {
+            let mut c = contract();
+            c.auth = janus::AuthScheme::Bearer;
+            gen(&c, &schema()).expect("generates")
+        };
+    let ts = bearer_of(generate_client_ts);
+    assert!(
+        ts.contains("constructor(private baseUrl: string, private token: string)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("'authorization': `Bearer ${this.token}`"),
+        "{ts}"
+    );
+    assert!(!ts.contains("x-copal-tenant"), "{ts}");
+
+    let py = bearer_of(generate_client_py);
+    assert!(
+        py.contains("def __init__(self, base_url: str, token: str)"),
+        "{py}"
+    );
+    assert!(
+        py.contains("headers = {'authorization': f'Bearer {self.token}'}"),
+        "{py}"
+    );
+    assert!(!py.contains("x-copal-tenant"), "{py}");
+
+    let go = bearer_of(generate_client_go);
+    assert!(
+        go.contains("func NewClient(baseURL, token string) *Client"),
+        "{go}"
+    );
+    assert!(
+        go.contains(r#"request.Header.Set("authorization", "Bearer "+c.Token)"#),
+        "{go}"
+    );
+    assert!(!go.contains("x-copal-tenant"), "{go}");
+
+    // Go aligns its struct types to the widest field name, and the
+    // credential can now BE the widest.
+    let wide = {
+        let mut c = contract();
+        c.auth = janus::AuthScheme::Header {
+            name: "x-api-key".into(),
+            credential: "authorization_key".into(),
+        };
+        generate_client_go(&c, &schema()).expect("generates")
+    };
+    // Assert the property rather than a hand-counted string: every type
+    // in the struct starts at the same column, which is what gofmt would
+    // produce and what a hardcoded pad width would get wrong the moment a
+    // credential name outgrew `BaseURL`.
+    let struct_body = wide
+        .split("type Client struct {\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}").next())
+        .expect("the client struct");
+    let type_starts: Vec<usize> = struct_body
+        .lines()
+        .map(|line| {
+            let field = line.trim_start_matches('\t');
+            let name = field.split_whitespace().next().expect("a field name");
+            field[name.len()..].len() - field[name.len()..].trim_start().len() + name.len()
+        })
+        .collect();
+    assert!(
+        type_starts.windows(2).all(|w| w[0] == w[1]),
+        "gofmt aligns the type column: {struct_body:?} -> {type_starts:?}",
+    );
+    assert!(struct_body.contains("AuthorizationKey"), "{struct_body}");
+}
+
+/// The OpenAPI document says how to authenticate.
+///
+/// It described every path and never mentioned a credential, so a reader
+/// had to infer one from an example — and the four generated clients each
+/// hardcoded their own answer. Both now read the same declaration, which
+/// is what keeps the document and the SDKs from disagreeing.
+#[test]
+fn the_openapi_document_declares_the_security_scheme() {
+    let doc = |auth: janus::AuthScheme| {
+        let mut c = contract();
+        c.auth = auth;
+        janus::generate_openapi(&c, &schema()).expect("generates")
+    };
+
+    let bearer = doc(janus::AuthScheme::Bearer);
+    assert_eq!(
+        bearer["components"]["securitySchemes"]["bearer"],
+        serde_json::json!({ "type": "http", "scheme": "bearer" }),
+    );
+    assert_eq!(
+        bearer["security"],
+        serde_json::json!([{ "bearer": [] }]),
+        "and it is required of the whole API, not merely defined",
+    );
+
+    let keyed = doc(janus::AuthScheme::Header {
+        name: "x-api-key".into(),
+        credential: "api_key".into(),
+    });
+    assert_eq!(
+        keyed["components"]["securitySchemes"]["header"],
+        serde_json::json!({ "type": "apiKey", "in": "header", "name": "x-api-key" }),
+    );
+
+    // An open API says nothing rather than declaring an empty scheme,
+    // which a reader would have to interpret.
+    let open = doc(janus::AuthScheme::None);
+    assert!(open["components"]["securitySchemes"].is_null(), "{open}");
+    assert!(open["security"].is_null(), "{open}");
+}
+
+#[test]
+fn a_bless_names_the_artifact_it_means_to_rewrite() {
+    use common::wants;
+
+    assert!(
+        !wants(None, "client-go"),
+        "an unset variable blesses nothing"
+    );
+    assert!(wants(Some("client-go"), "client-go"));
+    assert!(
+        !wants(Some("client-go"), "client-py"),
+        "and only that artifact -- this is the whole point",
+    );
+
+    assert!(wants(Some("client-go,openapi"), "openapi"), "a list");
+    assert!(
+        wants(Some(" client-go , openapi "), "client-go"),
+        "loosely spaced"
+    );
+
+    for artifact in common::BLESSABLE {
+        assert!(wants(Some("1"), artifact), "1 still blesses everything");
+        assert!(wants(Some("all"), artifact), "and so does the spelled form");
+    }
+}
+
+#[test]
+#[should_panic(expected = "no such artifact")]
+fn a_bless_that_names_nothing_real_fails_loudly() {
+    // Go is `client-go` here and "golang" appears nowhere, so this is a
+    // plausible thing to type. Blessing nothing quietly would read as a
+    // clean run and leave you believing a golden had moved.
+    let _ = common::wants(Some("golang"), "client-go");
+}
+
+#[test]
+#[should_panic(expected = "no such artifact")]
+fn a_typo_beside_a_real_name_still_fails() {
+    let _ = common::wants(Some("client-go,typpo"), "client-go");
+}
+
+#[test]
+fn every_target_can_be_blessed_by_name() {
+    // Two readers that would otherwise drift: adding a target without
+    // teaching the bless gate its name leaves an artifact that can only
+    // be re-blessed by blessing all of them.
+    for target in TARGETS {
+        assert!(
+            common::BLESSABLE.contains(target),
+            "target {target} has no bless name; add it to tests/common",
+        );
+    }
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    for filename in artifacts.keys() {
+        // Panics if a generated filename has no artifact name.
+        let name = common::artifact_of(filename);
+        assert!(common::BLESSABLE.contains(&name));
+    }
+}
+
+#[test]
+fn the_blocking_client_never_suspends() {
+    let client = generate_client_rs_blocking(&contract(), &schema()).unwrap();
+    assert!(
+        !client.contains(".await"),
+        "a blocking client that awaits does not compile without a runtime",
+    );
+    assert!(!client.contains("async fn"), "nor does an async fn");
+    assert!(
+        client.contains("reqwest::blocking::Client"),
+        "and it reaches for the blocking module",
+    );
+    assert!(
+        client.contains("features = [\"json\", \"blocking\"]"),
+        "which the header tells the caller to enable: {}",
+        client.lines().take(4).collect::<Vec<_>>().join("\n"),
+    );
+}
+
+#[test]
+fn the_two_rust_flavours_describe_the_same_contract() {
+    let asynchronous = generate_client_rs(&contract(), &schema()).unwrap();
+    let blocking = generate_client_rs_blocking(&contract(), &schema()).unwrap();
+
+    // Everything the client says ABOUT the contract has to survive the
+    // flavour change: the types, the renames, the nullability, the auth
+    // header, the URLs, the query shaping. Rather than spot-check those
+    // one at a time, undo the four differences and demand the rest be
+    // identical -- which also asserts there are only four.
+    let converted = asynchronous
+        .replace(
+            "features = [\"json\"]",
+            "features = [\"json\", \"blocking\"]",
+        )
+        .replace("reqwest::Client", "reqwest::blocking::Client")
+        .replace("pub async fn", "pub fn")
+        .replace(".await", "");
+    assert_eq!(
+        converted, blocking,
+        "the flavours differ somewhere other than how a call suspends",
+    );
+}
+
+#[test]
+fn the_blocking_client_is_not_in_a_default_run() {
+    assert!(
+        !TARGETS.contains(&"client-rs-blocking"),
+        "a second Rust client in the default set churns every consumer",
+    );
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    assert!(!artifacts.contains_key("client_blocking.rs"));
+
+    // Both at once land in different files rather than racing for one.
+    let both = generate_all(&contract(), &schema(), &["client-rs", "client-rs-blocking"]).unwrap();
+    assert_eq!(both.len(), 2, "{:?}", both.keys().collect::<Vec<_>>());
 }

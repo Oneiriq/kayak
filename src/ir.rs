@@ -33,6 +33,24 @@ pub struct Contract {
     /// invisible in review, silent when it tightens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<ContractLimits>,
+    /// How a caller proves who it is.
+    ///
+    /// Every generated client has to put a credential on the wire, and
+    /// until this existed each of them hardcoded one consumer's
+    /// convention: `x-copal-tenant`, in eight places across four
+    /// languages. That made janus a generator of clients for copal
+    /// rather than for contracts — a service authenticating with a
+    /// bearer token got a client that sent somebody else's header and
+    /// no credential at all.
+    ///
+    /// It belongs in the contract for the same reason scopes and rate
+    /// classes do: it is part of what the API promises its callers,
+    /// the differ should notice when it changes, and the OpenAPI
+    /// document should say it out loud rather than leaving a reader to
+    /// infer it from an example. [`AuthScheme::None`] by default, so a
+    /// contract that says nothing sends nothing.
+    #[serde(default, skip_serializing_if = "AuthScheme::is_none")]
+    pub auth: AuthScheme,
     /// Exposed resources.
     pub resources: Vec<Resource>,
     /// Reads that are not listings: a question with typed inputs and
@@ -42,6 +60,79 @@ pub struct Contract {
     /// a filter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queries: Vec<Query>,
+}
+
+/// How a caller proves who it is, and therefore what every generated
+/// client puts on the wire.
+///
+/// Deliberately three narrow cases rather than a general
+/// security-scheme vocabulary. Each one is something a generated
+/// client can actually DO without asking the caller to write transport
+/// code: put a fixed header on, or send nothing. OAuth flows, signed
+/// requests and mTLS are all real, and none of them is a header a
+/// generator can fill in from a constructor argument, so they belong
+/// to the service rather than here. Widen this when a consumer needs
+/// it, not in anticipation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AuthScheme {
+    /// No credential. The client sends nothing and its constructor
+    /// takes only a base URL.
+    #[default]
+    None,
+    /// `Authorization: Bearer <token>`. The constructor takes a token.
+    Bearer,
+    /// An opaque value in a named header — copal's `x-copal-tenant` is
+    /// the case this generalises. The constructor takes a value named
+    /// after the credential rather than after the header.
+    Header {
+        /// The header name, sent verbatim.
+        name: String,
+        /// What the credential is called in the generated constructor
+        /// and field (`tenant`, `api_key`). Purely cosmetic, and worth
+        /// having: `Client::new(url, tenant)` reads like the service it
+        /// talks to, where `Client::new(url, credential)` reads like a
+        /// generator.
+        #[serde(default = "AuthScheme::default_credential_name")]
+        credential: String,
+    },
+}
+
+impl AuthScheme {
+    /// Whether the contract declares no credential. Used to keep the
+    /// field out of a rendered contract that never set it, so existing
+    /// documents stay byte-identical.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// What the credential is called when a header scheme does not say.
+    fn default_credential_name() -> String {
+        "credential".to_owned()
+    }
+
+    /// The credential's name in generated code, or `None` when there is
+    /// no credential to name.
+    #[must_use]
+    pub fn credential_name(&self) -> Option<&str> {
+        match self {
+            Self::None => Option::None,
+            Self::Bearer => Some("token"),
+            Self::Header { credential, .. } => Some(credential),
+        }
+    }
+
+    /// The header a client sets, and the value expression's prefix.
+    /// `None` when the scheme sends no header.
+    #[must_use]
+    pub fn header(&self) -> Option<(&str, &'static str)> {
+        match self {
+            Self::None => Option::None,
+            Self::Bearer => Some(("authorization", "Bearer ")),
+            Self::Header { name, .. } => Some((name, "")),
+        }
+    }
 }
 
 /// One named read that answers a question rather than paging a
@@ -74,6 +165,21 @@ pub struct Query {
     /// The rate class metering this query.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_class: Option<String>,
+    /// The search machinery this query performs.
+    ///
+    /// A backing says what answers a search; this says the search
+    /// happens at all, and validation joins the two: a kind declared
+    /// here with no backing of that kind behind it is a promise of
+    /// indexed search over nothing indexed, and is refused. Without
+    /// this field that promise had no way to be made, so it had no way
+    /// to be broken — a query that declared no backing was
+    /// indistinguishable from a query that needed none, which is
+    /// exactly how a semantic search over an unindexed column ships
+    /// and goes unnoticed. Empty means the query searches nothing,
+    /// which is what every query written before this field said and
+    /// goes on saying.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub searches: Vec<SearchKind>,
     /// What answers the search, when the query is one. A listing
     /// declares its cost exhaustively — every filter and sort claim is
     /// index-validated — while a query, the one read whose cost is
@@ -95,10 +201,14 @@ pub struct Query {
 /// One thing a search query's answer rests on: a column of a table,
 /// reached through a named index of a stated kind.
 ///
-/// The members are what the differ governs — re-pointing any of them
-/// changes what the query is promising about the same wire surface —
-/// and what `verify --db` probes: the named index must be the one the
-/// planner reaches for the kind's operator.
+/// A backing has no name, so where the machinery is — table, column,
+/// index, kind — is its identity, and re-pointing any of the four
+/// changes what the query promises about the same wire surface. The
+/// width and the optional flag are not identity but what the backing
+/// promises about that machinery, and the differ reads the two halves
+/// differently for exactly that reason. `verify --db` probes the
+/// whole thing: the named index must be the one the planner reaches
+/// for the kind's operator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchBacking {
     /// The table whose rows the search selects from.
@@ -109,21 +219,69 @@ pub struct SearchBacking {
     pub index: String,
     /// Which operator the index answers.
     pub kind: SearchKind,
+    /// The width a vector search sends, held against the index's own
+    /// `DIMENSION`.
+    ///
+    /// A vector of the wrong width is not a slower search, it is a
+    /// different one, and the width changes whenever the embedding
+    /// model does — so pinning it here turns a model swap that outran
+    /// its schema into a generation failure instead of a quiet change
+    /// in what comes back. `None` leaves the width to the deployment,
+    /// which is the honest declaration when the index is applied at
+    /// startup at a configured width rather than written into the
+    /// static schema. A lexical backing has no width, and stating one
+    /// there is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<u32>,
+    /// Machinery the deployment is free not to provide.
+    ///
+    /// A static contract cannot claim an index that exists only where
+    /// an operator configured one: copal's HNSW index over
+    /// `text_chunk.embedding` is applied at startup, and only when an
+    /// embedding model is configured, so declaring it outright would
+    /// make the contract false in every deployment without one. The
+    /// answer to that was to declare nothing, which is the silence
+    /// this whole rulebook exists to end. Declared optional, absence
+    /// stops being a lie — the index may be missing, and a present one
+    /// still has to hold the column, be the kind's own machinery, and
+    /// match the declared width. Optional means may be absent, never
+    /// may be wrong.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub optional: bool,
+}
+
+impl SearchBacking {
+    /// Where the machinery is: what makes two backings the same
+    /// backing, as against what they each promise about it.
+    pub fn machinery(&self) -> (&str, &str, &str, SearchKind) {
+        (&self.table, &self.column, &self.index, self.kind)
+    }
+}
+
+/// A flag stays out of the rendered contract until it is set, so
+/// adding one leaves every existing document byte for byte itself.
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// The two kinds of search machinery an index can be.
 ///
 /// The vocabulary is deliberately the contract's rather than the
 /// engine's: `lexical` requires a FULLTEXT index (the `@@` operator),
-/// `vector` an HNSW or MTREE one (the KNN operator), and validation
-/// translates between the two vocabularies when it refuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// `vector` an HNSW, MTREE, or DISKANN one (the KNN operator), and
+/// validation translates between the two vocabularies when it
+/// refuses. Which of the three vector machineries answers is the
+/// schema's business, not the contract's — the contract asks for
+/// nearest neighbours through an index and the engine chooses how, so
+/// moving a column from HNSW to DISKANN is a capacity decision the
+/// contract does not have to be rewritten for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchKind {
     /// Term matching over analyzed text: `@@` through FULLTEXT.
     Lexical,
-    /// Nearest-neighbour over a stored vector: KNN through HNSW or
-    /// MTREE.
+    /// Nearest-neighbour over a stored vector: KNN through HNSW,
+    /// MTREE, or DISKANN.
     Vector,
 }
 
@@ -600,6 +758,7 @@ mod tests {
             ir_revision: 1,
             limits: None,
             rate_classes: vec![],
+            auth: Default::default(),
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
@@ -645,12 +804,25 @@ mod tests {
                 graphql_field: None,
                 requires: vec![],
                 rate_class: None,
-                backing: vec![SearchBacking {
-                    table: "text_chunk".into(),
-                    column: "body".into(),
-                    index: "idx_chunk_body".into(),
-                    kind: SearchKind::Lexical,
-                }],
+                searches: vec![SearchKind::Lexical, SearchKind::Vector],
+                backing: vec![
+                    SearchBacking {
+                        table: "text_chunk".into(),
+                        column: "body".into(),
+                        index: "idx_chunk_body".into(),
+                        kind: SearchKind::Lexical,
+                        dimension: None,
+                        optional: false,
+                    },
+                    SearchBacking {
+                        table: "text_chunk".into(),
+                        column: "embedding".into(),
+                        index: "idx_chunk_embedding".into(),
+                        kind: SearchKind::Vector,
+                        dimension: Some(768),
+                        optional: true,
+                    },
+                ],
             }],
         };
         let json = serde_json::to_string_pretty(&contract).unwrap();
@@ -658,6 +830,8 @@ mod tests {
         assert_eq!(back, contract);
         assert_eq!(back.resources[0].fields[1].api_name(), "size");
         assert_eq!(back.queries[0].backing[0].kind, SearchKind::Lexical);
+        assert_eq!(back.queries[0].backing[1].dimension, Some(768));
+        assert!(back.queries[0].backing[1].optional);
     }
 
     /// Contracts written before backings existed deserialize unchanged,
@@ -666,6 +840,12 @@ mod tests {
     /// declared, which is why `ir_revision` stays at 1 — the revision
     /// marks changes an older reader would MISREAD, and an absent
     /// `backing` means today exactly what its absence meant before.
+    ///
+    /// The same holds for everything the gate has added since: a
+    /// declared search, a pinned width, an optional backing. Each is
+    /// absent by default and skipped when absent, so a contract that
+    /// says nothing about search renders identically to the day it was
+    /// written.
     #[test]
     fn a_contract_without_backings_is_the_contract_it_always_was() {
         let old = r#"{
@@ -680,7 +860,40 @@ mod tests {
         let contract: Contract = serde_json::from_str(old).unwrap();
         assert_eq!(contract.ir_revision, 1);
         assert_eq!(contract.queries[0].backing, vec![]);
+        assert_eq!(contract.queries[0].searches, vec![]);
         let rendered = serde_json::to_string(&contract).unwrap();
-        assert!(!rendered.contains("backing"), "{rendered}");
+        for key in ["backing", "searches", "dimension", "optional"] {
+            assert!(!rendered.contains(key), "{key} in {rendered}");
+        }
+    }
+
+    /// A backing written before the width and the optional flag
+    /// existed still reads, and reads as what it always meant: a width
+    /// the contract does not pin, and machinery the deployment is
+    /// required to have.
+    #[test]
+    fn a_backing_without_a_width_is_the_backing_it_always_was() {
+        let old = r#"{
+            "name": "copal",
+            "version": "1.0.0",
+            "resources": [],
+            "queries": [{
+                "name": "search",
+                "path": "/v1/search",
+                "backing": [{
+                    "table": "text_chunk",
+                    "column": "body",
+                    "index": "idx_chunk_body",
+                    "kind": "lexical"
+                }]
+            }]
+        }"#;
+        let contract: Contract = serde_json::from_str(old).unwrap();
+        let backing = &contract.queries[0].backing[0];
+        assert_eq!(backing.dimension, None);
+        assert!(!backing.optional);
+        let rendered = serde_json::to_string(&contract).unwrap();
+        assert!(!rendered.contains("dimension"), "{rendered}");
+        assert!(!rendered.contains("optional"), "{rendered}");
     }
 }

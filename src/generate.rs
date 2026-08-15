@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use surql::schema::TableDefinition;
 
 use crate::clients::{
-    generate_client_go, generate_client_py, generate_client_rs, generate_client_ts,
+    generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
+    generate_client_ts,
 };
 use crate::ir::Contract;
 use crate::openapi::{generate_openapi, GenerateError};
@@ -22,6 +23,12 @@ use crate::sdl::generate_sdl;
 /// naming a guard outside them would fail the whole default run over
 /// a face the caller never asked for, so the policy artifact is
 /// opt-in by name.
+///
+/// `client-rs-blocking` is opt-in for a different reason: it is not a
+/// language the default set is missing, it is a second flavour of one
+/// it already has. Defaulting it would hand every consumer a second
+/// Rust client to review and regenerate when almost all of them want
+/// exactly one. A caller with no runtime to await on asks for it.
 pub const TARGETS: &[&str] = &[
     "openapi",
     "sdl",
@@ -82,6 +89,12 @@ pub fn generate_all(
             "client-rs" => (
                 "client.rs".to_owned(),
                 generate_client_rs(contract, schema)?,
+            ),
+            // A separate filename, so a caller wanting both flavours
+            // gets both rather than whichever target ran last.
+            "client-rs-blocking" => (
+                "client_blocking.rs".to_owned(),
+                generate_client_rs_blocking(contract, schema)?,
             ),
             "client-ts" => (
                 "client.ts".to_owned(),

@@ -31,6 +31,7 @@ fn contract() -> Contract {
         ir_revision: 1,
         limits: None,
         rate_classes: vec![],
+        auth: Default::default(),
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),

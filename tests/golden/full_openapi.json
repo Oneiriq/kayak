@@ -67,6 +67,13 @@
         ],
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "header": {
+        "in": "header",
+        "name": "x-copal-tenant",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -296,5 +303,10 @@
         "summary": "Retrieval across the tenant's text."
       }
     }
-  }
+  },
+  "security": [
+    {
+      "header": []
+    }
+  ]
 }

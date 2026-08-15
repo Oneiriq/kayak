@@ -33,6 +33,24 @@ pub struct Contract {
     /// invisible in review, silent when it tightens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<ContractLimits>,
+    /// How a caller proves who it is.
+    ///
+    /// Every generated client has to put a credential on the wire, and
+    /// until this existed each of them hardcoded one consumer's
+    /// convention: `x-copal-tenant`, in eight places across four
+    /// languages. That made janus a generator of clients for copal
+    /// rather than for contracts — a service authenticating with a
+    /// bearer token got a client that sent somebody else's header and
+    /// no credential at all.
+    ///
+    /// It belongs in the contract for the same reason scopes and rate
+    /// classes do: it is part of what the API promises its callers,
+    /// the differ should notice when it changes, and the OpenAPI
+    /// document should say it out loud rather than leaving a reader to
+    /// infer it from an example. [`AuthScheme::None`] by default, so a
+    /// contract that says nothing sends nothing.
+    #[serde(default, skip_serializing_if = "AuthScheme::is_none")]
+    pub auth: AuthScheme,
     /// Exposed resources.
     pub resources: Vec<Resource>,
     /// Reads that are not listings: a question with typed inputs and
@@ -42,6 +60,79 @@ pub struct Contract {
     /// a filter.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queries: Vec<Query>,
+}
+
+/// How a caller proves who it is, and therefore what every generated
+/// client puts on the wire.
+///
+/// Deliberately three narrow cases rather than a general
+/// security-scheme vocabulary. Each one is something a generated
+/// client can actually DO without asking the caller to write transport
+/// code: put a fixed header on, or send nothing. OAuth flows, signed
+/// requests and mTLS are all real, and none of them is a header a
+/// generator can fill in from a constructor argument, so they belong
+/// to the service rather than here. Widen this when a consumer needs
+/// it, not in anticipation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AuthScheme {
+    /// No credential. The client sends nothing and its constructor
+    /// takes only a base URL.
+    #[default]
+    None,
+    /// `Authorization: Bearer <token>`. The constructor takes a token.
+    Bearer,
+    /// An opaque value in a named header — copal's `x-copal-tenant` is
+    /// the case this generalises. The constructor takes a value named
+    /// after the credential rather than after the header.
+    Header {
+        /// The header name, sent verbatim.
+        name: String,
+        /// What the credential is called in the generated constructor
+        /// and field (`tenant`, `api_key`). Purely cosmetic, and worth
+        /// having: `Client::new(url, tenant)` reads like the service it
+        /// talks to, where `Client::new(url, credential)` reads like a
+        /// generator.
+        #[serde(default = "AuthScheme::default_credential_name")]
+        credential: String,
+    },
+}
+
+impl AuthScheme {
+    /// Whether the contract declares no credential. Used to keep the
+    /// field out of a rendered contract that never set it, so existing
+    /// documents stay byte-identical.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// What the credential is called when a header scheme does not say.
+    fn default_credential_name() -> String {
+        "credential".to_owned()
+    }
+
+    /// The credential's name in generated code, or `None` when there is
+    /// no credential to name.
+    #[must_use]
+    pub fn credential_name(&self) -> Option<&str> {
+        match self {
+            Self::None => Option::None,
+            Self::Bearer => Some("token"),
+            Self::Header { credential, .. } => Some(credential),
+        }
+    }
+
+    /// The header a client sets, and the value expression's prefix.
+    /// `None` when the scheme sends no header.
+    #[must_use]
+    pub fn header(&self) -> Option<(&str, &'static str)> {
+        match self {
+            Self::None => Option::None,
+            Self::Bearer => Some(("authorization", "Bearer ")),
+            Self::Header { name, .. } => Some((name, "")),
+        }
+    }
 }
 
 /// One named read that answers a question rather than paging a
@@ -667,6 +758,7 @@ mod tests {
             ir_revision: 1,
             limits: None,
             rate_classes: vec![],
+            auth: Default::default(),
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),

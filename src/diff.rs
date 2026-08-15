@@ -33,9 +33,34 @@ impl Change {
     }
 }
 
+/// How a diff message names an authentication scheme: the header, when
+/// there is one, because that is the part a caller has to change.
+fn auth_word(auth: &crate::ir::AuthScheme) -> String {
+    match auth {
+        crate::ir::AuthScheme::None => "none".to_owned(),
+        crate::ir::AuthScheme::Bearer => "bearer token".to_owned(),
+        crate::ir::AuthScheme::Header { name, .. } => format!("the {name} header"),
+    }
+}
+
 /// Compare `old` to `new`, returning every observed change.
 pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
     let mut changes = Vec::new();
+
+    // How a caller authenticates, and every direction of moving it is
+    // breaking. Changing the scheme leaves every deployed client sending
+    // a credential the service no longer reads; ADDING one to an open API
+    // locks out callers that sent nothing; and REMOVING one is breaking in
+    // the sense field guards are — the API stops refusing what it used to
+    // refuse, which is surface for whoever the credential kept out, even
+    // though no caller loses a call.
+    if old.auth != new.auth {
+        changes.push(Change::Breaking(format!(
+            "authentication changed: {} -> {}",
+            auth_word(&old.auth),
+            auth_word(&new.auth),
+        )));
+    }
 
     // Rate classes: shrinking a budget refuses callers that used to
     // pass; growing one refuses nothing. A class appearing or leaving

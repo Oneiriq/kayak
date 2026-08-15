@@ -74,6 +74,14 @@ fn contract() -> Contract {
         ir_revision: 1,
         limits: None,
         rate_classes: vec![],
+        // Copal's convention, now declared rather than hardcoded in four
+        // generators. Stating it here must reproduce the goldens byte for
+        // byte -- that equality is the proof the mechanism is faithful to
+        // the behaviour it replaced.
+        auth: janus::AuthScheme::Header {
+            name: "x-copal-tenant".into(),
+            credential: "tenant".into(),
+        },
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -979,4 +987,183 @@ fn filter_options_answer_to_the_filterable_list() {
         .filter_options
         .insert("state".into(), vec!["ready".into(), "failed".into()]);
     assert_eq!(janus::validate(&ok, &schema()), vec![]);
+}
+
+/// The credential a client sends is the one the contract declared.
+///
+/// Until `Contract.auth` existed, `x-copal-tenant` was hardcoded in
+/// eight places across the four generators, so janus produced clients for
+/// copal rather than for contracts: a service authenticating with a bearer
+/// token got one that sent somebody else's header and no credential at all.
+/// The fixture declares copal's header explicitly now, and the goldens did
+/// not move by a byte -- so this checks the other two schemes instead.
+#[test]
+fn the_client_sends_the_credential_the_contract_declares() {
+    let rust = |auth: janus::AuthScheme| {
+        let mut c = contract();
+        c.auth = auth;
+        generate_client_rs(&c, &schema()).expect("generates")
+    };
+
+    // Bearer: the constructor takes a token and every request carries it
+    // in the standard header, with the scheme prefix.
+    let bearer = rust(janus::AuthScheme::Bearer);
+    assert!(
+        bearer.contains("pub fn new(base_url: impl Into<String>, token: impl Into<String>)"),
+        "{bearer}"
+    );
+    assert!(
+        bearer.contains(r#".header("authorization", format!("Bearer {}", self.token))"#),
+        "{bearer}"
+    );
+    assert!(!bearer.contains("x-copal-tenant"), "no stale header");
+    assert!(!bearer.contains("tenant"), "no stale credential name");
+
+    // None: no credential to carry, so no field, no parameter, no header.
+    let open = rust(janus::AuthScheme::None);
+    assert!(
+        open.contains("pub fn new(base_url: impl Into<String>) -> Self"),
+        "{open}"
+    );
+    assert!(
+        !open.contains(".header("),
+        "an open API sets no auth header"
+    );
+    assert!(!open.contains("token"), "{open}");
+
+    // A header scheme names the credential after the service's own word
+    // for it, not after the header.
+    let keyed = rust(janus::AuthScheme::Header {
+        name: "x-api-key".into(),
+        credential: "api_key".into(),
+    });
+    assert!(
+        keyed.contains("pub fn new(base_url: impl Into<String>, api_key: impl Into<String>)"),
+        "{keyed}"
+    );
+    assert!(
+        keyed.contains(r#".header("x-api-key", &self.api_key)"#),
+        "{keyed}"
+    );
+
+    // Every request in the file is authenticated, not just the first --
+    // the whole reason the expression is built once and spliced.
+    let requests = bearer.matches("self.http.").count();
+    let headers = bearer.matches(r#".header("authorization""#).count();
+    assert_eq!(requests, headers, "every request carries the credential");
+    // The other three languages carry the same declaration, each in its
+    // own idiom. Checked together because the bug being prevented was one
+    // generator drifting from the rest.
+    let bearer_of =
+        |gen: fn(&Contract, &[TableDefinition]) -> Result<String, janus::GenerateError>| {
+            let mut c = contract();
+            c.auth = janus::AuthScheme::Bearer;
+            gen(&c, &schema()).expect("generates")
+        };
+    let ts = bearer_of(generate_client_ts);
+    assert!(
+        ts.contains("constructor(private baseUrl: string, private token: string)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("'authorization': `Bearer ${this.token}`"),
+        "{ts}"
+    );
+    assert!(!ts.contains("x-copal-tenant"), "{ts}");
+
+    let py = bearer_of(generate_client_py);
+    assert!(
+        py.contains("def __init__(self, base_url: str, token: str)"),
+        "{py}"
+    );
+    assert!(
+        py.contains("headers = {'authorization': f'Bearer {self.token}'}"),
+        "{py}"
+    );
+    assert!(!py.contains("x-copal-tenant"), "{py}");
+
+    let go = bearer_of(generate_client_go);
+    assert!(
+        go.contains("func NewClient(baseURL, token string) *Client"),
+        "{go}"
+    );
+    assert!(
+        go.contains(r#"request.Header.Set("authorization", "Bearer "+c.Token)"#),
+        "{go}"
+    );
+    assert!(!go.contains("x-copal-tenant"), "{go}");
+
+    // Go aligns its struct types to the widest field name, and the
+    // credential can now BE the widest.
+    let wide = {
+        let mut c = contract();
+        c.auth = janus::AuthScheme::Header {
+            name: "x-api-key".into(),
+            credential: "authorization_key".into(),
+        };
+        generate_client_go(&c, &schema()).expect("generates")
+    };
+    // Assert the property rather than a hand-counted string: every type
+    // in the struct starts at the same column, which is what gofmt would
+    // produce and what a hardcoded pad width would get wrong the moment a
+    // credential name outgrew `BaseURL`.
+    let struct_body = wide
+        .split("type Client struct {\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}").next())
+        .expect("the client struct");
+    let type_starts: Vec<usize> = struct_body
+        .lines()
+        .map(|line| {
+            let field = line.trim_start_matches('\t');
+            let name = field.split_whitespace().next().expect("a field name");
+            field[name.len()..].len() - field[name.len()..].trim_start().len() + name.len()
+        })
+        .collect();
+    assert!(
+        type_starts.windows(2).all(|w| w[0] == w[1]),
+        "gofmt aligns the type column: {struct_body:?} -> {type_starts:?}",
+    );
+    assert!(struct_body.contains("AuthorizationKey"), "{struct_body}");
+}
+
+/// The OpenAPI document says how to authenticate.
+///
+/// It described every path and never mentioned a credential, so a reader
+/// had to infer one from an example — and the four generated clients each
+/// hardcoded their own answer. Both now read the same declaration, which
+/// is what keeps the document and the SDKs from disagreeing.
+#[test]
+fn the_openapi_document_declares_the_security_scheme() {
+    let doc = |auth: janus::AuthScheme| {
+        let mut c = contract();
+        c.auth = auth;
+        janus::generate_openapi(&c, &schema()).expect("generates")
+    };
+
+    let bearer = doc(janus::AuthScheme::Bearer);
+    assert_eq!(
+        bearer["components"]["securitySchemes"]["bearer"],
+        serde_json::json!({ "type": "http", "scheme": "bearer" }),
+    );
+    assert_eq!(
+        bearer["security"],
+        serde_json::json!([{ "bearer": [] }]),
+        "and it is required of the whole API, not merely defined",
+    );
+
+    let keyed = doc(janus::AuthScheme::Header {
+        name: "x-api-key".into(),
+        credential: "api_key".into(),
+    });
+    assert_eq!(
+        keyed["components"]["securitySchemes"]["header"],
+        serde_json::json!({ "type": "apiKey", "in": "header", "name": "x-api-key" }),
+    );
+
+    // An open API says nothing rather than declaring an empty scheme,
+    // which a reader would have to interpret.
+    let open = doc(janus::AuthScheme::None);
+    assert!(open["components"]["securitySchemes"].is_null(), "{open}");
+    assert!(open["security"].is_null(), "{open}");
 }

@@ -53,16 +53,65 @@ pub fn generate_client_go(
         }
     }
 
+    let credential = contract.auth.credential_name();
+    // Go exports struct fields by capitalising them, and takes its
+    // constructor parameter in the lower-camel form of the same word.
+    let go_field = credential.map(pascal);
+    // gofmt aligns a struct's types to one column, so the padding depends
+    // on the longest field name -- which the credential can now be.
+    let width = ["BaseURL", "HTTP"]
+        .into_iter()
+        .chain(go_field.as_deref())
+        .map(str::len)
+        .max()
+        .unwrap_or(7);
+    let pad = |name: &str| " ".repeat(width - name.len() + 1);
+    let struct_field = go_field
+        .as_ref()
+        .map_or_else(String::new, |name| format!("\t{name}{}string\n", pad(name)));
+    // Go's shared-type parameter form: `(baseURL, tenant string)`, not
+    // `(baseURL string, tenant string)`.
+    let ctor_param = credential.map_or_else(
+        || "baseURL string".to_owned(),
+        |name| format!("baseURL, {name} string"),
+    );
+    let ctor_init = go_field.as_ref().map_or_else(String::new, |name| {
+        let arg = credential.expect("named above");
+        format!(", {name}: {arg}")
+    });
+    let set_header = match contract.auth.header() {
+        Some((header, prefix)) => {
+            let name = go_field
+                .as_ref()
+                .expect("a header scheme names its credential");
+            if prefix.is_empty() {
+                format!("\trequest.Header.Set(\"{header}\", c.{name})\n")
+            } else {
+                format!("\trequest.Header.Set(\"{header}\", \"{prefix}\"+c.{name})\n")
+            }
+        }
+        None => String::new(),
+    };
+    let base_pad = pad("BaseURL");
+    let http_pad = pad("HTTP");
+    write!(
+        out,
+        "type Client struct {{\n\
+         \tBaseURL{base_pad}string\n\
+         {struct_field}\
+         \tHTTP{http_pad}*http.Client\n\
+         }}\n\n\
+         func NewClient({ctor_param}) *Client {{\n\
+         \treturn &Client{{BaseURL: baseURL{ctor_init}, HTTP: http.DefaultClient}}\n\
+         }}\n\n",
+    )
+    .unwrap();
+    // The request helper is fixed text apart from the one header line, and
+    // it is dense with Go braces a format macro would try to read as its
+    // own. Two plain writes around the spliced line is plainer than
+    // escaping every one of them.
     out.push_str(
-        "type Client struct {\n\
-         \tBaseURL string\n\
-         \tTenant  string\n\
-         \tHTTP    *http.Client\n\
-         }\n\n\
-         func NewClient(baseURL, tenant string) *Client {\n\
-         \treturn &Client{BaseURL: baseURL, Tenant: tenant, HTTP: http.DefaultClient}\n\
-         }\n\n\
-         func (c *Client) request(method, path string, body any, out any) error {\n\
+        "func (c *Client) request(method, path string, body any, out any) error {\n\
          \tvar payload *bytes.Buffer\n\
          \tif body != nil {\n\
          \t\tencoded, err := json.Marshal(body)\n\
@@ -76,9 +125,11 @@ pub fn generate_client_go(
          \trequest, err := http.NewRequest(method, c.BaseURL+path, payload)\n\
          \tif err != nil {\n\
          \t\treturn err\n\
-         \t}\n\
-         \trequest.Header.Set(\"x-copal-tenant\", c.Tenant)\n\
-         \tif body != nil {\n\
+         \t}\n",
+    );
+    out.push_str(&set_header);
+    out.push_str(
+        "\tif body != nil {\n\
          \t\trequest.Header.Set(\"content-type\", \"application/json\")\n\
          \t}\n\
          \tresponse, err := c.HTTP.Do(request)\n\

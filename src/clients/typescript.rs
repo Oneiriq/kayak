@@ -43,23 +43,42 @@ pub fn generate_client_ts(
         }
     }
 
-    out.push_str(
-        "export class Client {\n\
-         \x20 constructor(private baseUrl: string, private tenant: string) {}\n\n\
-         \x20 private async request<T>(method: string, path: string, body?: unknown): Promise<T> {\n\
-         \x20   const response = await fetch(`${this.baseUrl}${path}`, {\n\
+    // The credential the contract declared, in the one place every
+    // request funnels through.
+    let credential = contract.auth.credential_name();
+    let param = credential.map_or_else(String::new, |name| format!(", private {name}: string"));
+    let header = match contract.auth.header() {
+        Some((name, prefix)) => {
+            let value = credential.expect("a header scheme names its credential");
+            // A template literal only where there is a prefix to join;
+            // `\u{60}${this.tenant}\u{60}` for a bare value is noise.
+            if prefix.is_empty() {
+                format!("        '{name}': this.{value},\n")
+            } else {
+                format!("        '{name}': `{prefix}${{this.{value}}}`,\n")
+            }
+        }
+        None => String::new(),
+    };
+    writeln!(
+        out,
+        "export class Client {{\n\
+         \x20 constructor(private baseUrl: string{param}) {{}}\n\n\
+         \x20 private async request<T>(method: string, path: string, body?: unknown): Promise<T> {{\n\
+         \x20   const response = await fetch(`${{this.baseUrl}}${{path}}`, {{\n\
          \x20     method,\n\
-         \x20     headers: {\n\
-         \x20       'x-copal-tenant': this.tenant,\n\
-         \x20       ...(body === undefined ? {} : { 'content-type': 'application/json' }),\n\
-         \x20     },\n\
+         \x20     headers: {{\n\
+         {header}\
+         \x20       ...(body === undefined ? {{}} : {{ 'content-type': 'application/json' }}),\n\
+         \x20     }},\n\
          \x20     body: body === undefined ? undefined : JSON.stringify(body),\n\
-         \x20   })\n\
-         \x20   if (!response.ok) throw new Error(`${method} ${path}: ${response.status}`)\n\
+         \x20   }})\n\
+         \x20   if (!response.ok) throw new Error(`${{method}} ${{path}}: ${{response.status}}`)\n\
          \x20   if (response.status === 204) return undefined as T\n\
          \x20   return (await response.json()) as T\n\
-         \x20 }\n\n",
-    );
+         \x20 }}\n",
+    )
+    .unwrap();
 
     for (resource, _) in &resources {
         let name = type_name(&resource.name);

@@ -51,16 +51,37 @@ pub fn generate_client_py(
         }
     }
 
-    out.push_str(
+    let credential = contract.auth.credential_name();
+    let param = credential.map_or_else(String::new, |name| format!(", {name}: str"));
+    let assign = credential.map_or_else(String::new, |name| format!("   self.{name} = {name}\n"));
+    let headers = match contract.auth.header() {
+        Some((name, prefix)) => {
+            let value = credential.expect("a header scheme names its credential");
+            // An f-string only where there is a prefix to join.
+            if prefix.is_empty() {
+                format!("   headers = {{'{name}': self.{value}}}\n")
+            } else {
+                format!("   headers = {{'{name}': f'{prefix}{{self.{value}}}'}}\n")
+            }
+        }
+        None => "   headers: dict[str, str] = {}\n".to_owned(),
+    };
+    write!(
+        out,
         "class Client:\n\
-         \x20 def __init__(self, base_url: str, tenant: str) -> None:\n\
+         \x20 def __init__(self, base_url: str{param}) -> None:\n\
          \x20   self.base_url = base_url.rstrip('/')\n\
-         \x20   self.tenant = tenant\n\n\
+         \x20{assign}\n\
          \x20 def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:\n\
          \x20   data = None if body is None else json.dumps(body).encode()\n\
-         \x20   headers = {'x-copal-tenant': self.tenant}\n\
-         \x20   if data is not None:\n\
-         \x20     headers['content-type'] = 'application/json'\n\
+         \x20{headers}\
+         \x20   if data is not None:\n",
+    )
+    .unwrap();
+    // The tail is fixed text, and it carries Python f-string braces that a
+    // format macro would try to read as its own.
+    out.push_str(
+        "\x20     headers['content-type'] = 'application/json'\n\
          \x20   request = urllib.request.Request(\n\
          \x20     f'{self.base_url}{path}', data=data, headers=headers, method=method,\n\
          \x20   )\n\

@@ -48,23 +48,50 @@ pub fn generate_client_rs(
         }
     }
 
-    out.push_str(
+    // The credential is whatever the contract declared, down to what it
+    // is called: a service authenticating with a bearer token gets
+    // `Client::new(url, token)`, one with a tenant header gets
+    // `Client::new(url, tenant)`, and one with neither gets
+    // `Client::new(url)` and no field to carry.
+    let credential = contract.auth.credential_name();
+    // Built once and spliced into every request below, so a scheme
+    // change cannot reach some call sites and miss others.
+    let auth_header = match contract.auth.header() {
+        Some((name, prefix)) => {
+            let value = credential.expect("a header scheme names its credential");
+            if prefix.is_empty() {
+                format!(".header(\"{name}\", &self.{value})")
+            } else {
+                format!(".header(\"{name}\", format!(\"{prefix}{{}}\", self.{value}))")
+            }
+        }
+        None => String::new(),
+    };
+
+    let field = credential.map_or_else(String::new, |name| format!("    {name}: String,\n"));
+    let param = credential.map_or_else(String::new, |name| format!(", {name}: impl Into<String>"));
+    let init = credential.map_or_else(String::new, |name| {
+        format!("            {name}: {name}.into(),\n")
+    });
+    writeln!(
+        out,
         "#[derive(Debug, Clone)]\n\
-         pub struct Client {\n\
+         pub struct Client {{\n\
          \x20   base_url: String,\n\
-         \x20   tenant: String,\n\
+         {field}\
          \x20   http: reqwest::Client,\n\
-         }\n\n\
+         }}\n\n\
          pub type Error = Box<dyn std::error::Error + Send + Sync>;\n\n\
-         impl Client {\n\
-         \x20   pub fn new(base_url: impl Into<String>, tenant: impl Into<String>) -> Self {\n\
-         \x20       Self {\n\
+         impl Client {{\n\
+         \x20   pub fn new(base_url: impl Into<String>{param}) -> Self {{\n\
+         \x20       Self {{\n\
          \x20           base_url: base_url.into(),\n\
-         \x20           tenant: tenant.into(),\n\
+         {init}\
          \x20           http: reqwest::Client::new(),\n\
-         \x20       }\n\
-         \x20   }\n\n",
-    );
+         \x20       }}\n\
+         \x20   }}\n",
+    )
+    .unwrap();
 
     for (resource, _) in &resources {
         let name = type_name(&resource.name);
@@ -93,7 +120,7 @@ pub fn generate_client_rs(
         );
         writeln!(
             out,
-            "        Ok(self.http.get(url).header(\"x-copal-tenant\", &self.tenant)\
+            "        Ok(self.http.get(url){auth_header}\
              .send().await?.error_for_status()?.json().await?)"
         )
         .unwrap();
@@ -111,7 +138,7 @@ pub fn generate_client_rs(
         .unwrap();
         writeln!(
             out,
-            "        Ok(self.http.get(url).header(\"x-copal-tenant\", &self.tenant)\
+            "        Ok(self.http.get(url){auth_header}\
              .send().await?.error_for_status()?.json().await?)"
         )
         .unwrap();
@@ -141,11 +168,15 @@ pub fn generate_client_rs(
                              let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();
                              url = format!(\"{url}?{}\", joined.join(\"&\"));
                          }
-                         Ok(self.http.get(url).header(\"x-copal-tenant\", &self.tenant)                 .send().await?.error_for_status()?.json().await?)
-    }
-
 ",
             );
+            // A separate write, because the line above is a plain
+            // push_str and would emit `{auth_header}` verbatim.
+            writeln!(
+                out,
+                "                         Ok(self.http.get(url){auth_header}                 .send().await?.error_for_status()?.json().await?)\n    }}\n",
+            )
+            .unwrap();
         }
         for action in &resource.actions {
             let method_fn = format!(
@@ -180,8 +211,7 @@ pub fn generate_client_rs(
             )
             .unwrap();
             let verb = action.method.to_ascii_lowercase();
-            let mut call =
-                format!("self.http.{verb}(url).header(\"x-copal-tenant\", &self.tenant)");
+            let mut call = format!("self.http.{verb}(url){auth_header}");
             if !action.input.is_empty() {
                 call.push_str(".json(&input)");
             }
@@ -240,12 +270,15 @@ pub fn generate_client_rs(
         } else {
             "let mut request"
         };
-        writeln!(
-            out,
-            "        {binding} = self.http.get(url)\n\
-             \x20           .header(\"x-copal-tenant\", &self.tenant);",
-        )
-        .unwrap();
+        // The header goes on its own line here, where the builder is bound
+        // rather than chained into a return, so the generated line stays
+        // inside a sane width. With no scheme there is nothing to wrap.
+        let wrapped = if auth_header.is_empty() {
+            String::new()
+        } else {
+            format!("\n            {auth_header}")
+        };
+        writeln!(out, "        {binding} = self.http.get(url){wrapped};",).unwrap();
         for field in query_params(query) {
             let name = &field.name;
             let binding = snake(name);

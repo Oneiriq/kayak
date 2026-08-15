@@ -36,6 +36,7 @@ fn base() -> Contract {
             pinned: vec!["tenant_id".into()],
             filterable: vec!["state".into()],
             filter_options: Default::default(),
+            faces: Default::default(),
             sortable: vec!["created_at".into()],
             max_page_size: 100,
             watchable: true,

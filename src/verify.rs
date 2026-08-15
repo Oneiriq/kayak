@@ -516,6 +516,7 @@ mod tests {
             reads_require: vec![],
             watchable: false,
             graphql: None,
+            faces: Default::default(),
         }
     }
 

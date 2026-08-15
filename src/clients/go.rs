@@ -150,45 +150,49 @@ pub fn generate_client_go(
 
     for (resource, _) in &resources {
         let name = type_name(&resource.name);
-        writeln!(
-            out,
-            "func (c *Client) List{plural}(limit int, cursor string) (*{name}Page, error) {{",
-            plural = pascal(&snake(&resource.name)),
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "\tquery := url.Values{{}}\n\
-             \tif limit > 0 {{\n\
-             \t\tquery.Set(\"limit\", fmt.Sprint(limit))\n\
-             \t}}\n\
-             \tif cursor != \"\" {{\n\
-             \t\tquery.Set(\"cursor\", cursor)\n\
-             \t}}\n\
-             \tpath := \"{prefix}/{plural}\"\n\
-             \tif encoded := query.Encode(); encoded != \"\" {{\n\
-             \t\tpath += \"?\" + encoded\n\
-             \t}}\n\
-             \tvar page {name}Page\n\
-             \tif err := c.request(\"GET\", path, nil, &page); err != nil {{\n\
-             \t\treturn nil, err\n\
-             \t}}\n\
-             \treturn &page, nil\n}}\n",
-            plural = resource.name,
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "func (c *Client) Get{single}(id string) (*{name}, error) {{\n\
-             \tvar out {name}\n\
-             \tif err := c.request(\"GET\", \"{prefix}/{plural}/\"+id, nil, &out); err != nil {{\n\
-             \t\treturn nil, err\n\
-             \t}}\n\
-             \treturn &out, nil\n}}\n",
-            single = pascal(&singular(&resource.name)),
-            plural = resource.name,
-        )
-        .unwrap();
+        if resource.faces.list {
+            writeln!(
+                out,
+                "func (c *Client) List{plural}(limit int, cursor string) (*{name}Page, error) {{",
+                plural = pascal(&snake(&resource.name)),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "\tquery := url.Values{{}}\n\
+                 \tif limit > 0 {{\n\
+                 \t\tquery.Set(\"limit\", fmt.Sprint(limit))\n\
+                 \t}}\n\
+                 \tif cursor != \"\" {{\n\
+                 \t\tquery.Set(\"cursor\", cursor)\n\
+                 \t}}\n\
+                 \tpath := \"{prefix}/{plural}\"\n\
+                 \tif encoded := query.Encode(); encoded != \"\" {{\n\
+                 \t\tpath += \"?\" + encoded\n\
+                 \t}}\n\
+                 \tvar page {name}Page\n\
+                 \tif err := c.request(\"GET\", path, nil, &page); err != nil {{\n\
+                 \t\treturn nil, err\n\
+                 \t}}\n\
+                 \treturn &page, nil\n}}\n",
+                plural = resource.name,
+            )
+            .unwrap();
+        }
+        if resource.faces.get {
+            writeln!(
+                out,
+                "func (c *Client) Get{single}(id string) (*{name}, error) {{\n\
+                 \tvar out {name}\n\
+                 \tif err := c.request(\"GET\", \"{prefix}/{plural}/\"+id, nil, &out); err != nil {{\n\
+                 \t\treturn nil, err\n\
+                 \t}}\n\
+                 \treturn &out, nil\n}}\n",
+                single = pascal(&singular(&resource.name)),
+                plural = resource.name,
+            )
+            .unwrap();
+        }
 
         for sub in &resource.sub_resources {
             let sub_name = sub_type_name(resource, sub);

@@ -273,6 +273,7 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
             });
         }
         validate_names(resource, &mut violations);
+        validate_faces(resource, &mut violations);
         validate_filter_options(resource, &mut violations);
         match schema.iter().find(|t| t.name == resource.table) {
             Some(table) => validate_resource(resource, table, &mut violations),
@@ -424,6 +425,49 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// declare and turns a whole class of silent table scan into a build
 /// failure; what it cannot do is make an author declare, which is the
 /// same limit every claim in a declaration language has.
+/// A resource that exposes no listing cannot honour the declarations
+/// that only a listing has: what may be filtered, what may be sorted,
+/// and how large a page may be are claims about an endpoint that does
+/// not exist. Refusing them is the same rule as refusing a filter no
+/// index serves -- a claim that cannot be true should not survive to
+/// the artifacts, where a reader would take it for a promise.
+///
+/// A resource with no face at all and nothing hanging off it is also
+/// refused: it produces no output, so it is a declaration that does
+/// nothing, which is more likely a mistake than an intent.
+fn validate_faces(resource: &Resource, violations: &mut Vec<Violation>) {
+    if !resource.faces.list {
+        for (what, empty) in [
+            ("filterable", resource.filterable.is_empty()),
+            ("sortable", resource.sortable.is_empty()),
+            ("filter_options", resource.filter_options.is_empty()),
+        ] {
+            if !empty {
+                violations.push(Violation::InvalidName {
+                    scope: format!("resource {}", resource.name),
+                    name: what.to_owned(),
+                    problem: "declared on a resource with no listing".into(),
+                });
+            }
+        }
+        if resource.watchable {
+            violations.push(Violation::InvalidName {
+                scope: format!("resource {}", resource.name),
+                name: "watchable".into(),
+                problem: "a watch streams the listing, which this resource does not expose".into(),
+            });
+        }
+    }
+    if resource.faces.is_none() && resource.actions.is_empty() && resource.sub_resources.is_empty()
+    {
+        violations.push(Violation::InvalidName {
+            scope: format!("resource {}", resource.name),
+            name: resource.name.clone(),
+            problem: "exposes no listing, no getter, no action and no sub-resource".into(),
+        });
+    }
+}
+
 /// The prefix is pasted straight in front of every resource route, so
 /// a malformed one produces paths that are wrong in every artifact at
 /// once and wrong in the same way -- which is exactly the kind of

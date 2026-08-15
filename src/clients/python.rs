@@ -97,33 +97,37 @@ pub fn generate_client_py(
         let fields_from = format!(
             "{name}(**{{k: v for k, v in item.items() if k in {name}.__dataclass_fields__}})"
         );
-        writeln!(
-            out,
-            "  def list_{plural}(self, limit: int | None = None, cursor: str | None = None) -> {name}Page:",
-            plural = snake(&resource.name),
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    query = {{k: v for k, v in {{'limit': limit, 'cursor': cursor}}.items() if v is not None}}\n\
-             \x20   suffix = f'?{{urllib.parse.urlencode(query)}}' if query else ''\n\
-             \x20   payload = self._request('GET', f'{prefix}/{plural}{{suffix}}')\n\
-             \x20   return {name}Page(\n\
-             \x20     items=[{fields_from} for item in payload.get('items', [])],\n\
-             \x20     next_cursor=payload.get('next_cursor'),\n\
-             \x20   )\n",
-            plural = resource.name,
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "  def get_{single}(self, id: str) -> {name}:\n\
-             \x20   item = self._request('GET', f'{prefix}/{plural}/{{id}}')\n\
-             \x20   return {fields_from}\n",
-            single = snake(&singular(&resource.name)),
-            plural = resource.name,
-        )
-        .unwrap();
+        if resource.faces.list {
+            writeln!(
+                out,
+                "  def list_{plural}(self, limit: int | None = None, cursor: str | None = None) -> {name}Page:",
+                plural = snake(&resource.name),
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    query = {{k: v for k, v in {{'limit': limit, 'cursor': cursor}}.items() if v is not None}}\n\
+                 \x20   suffix = f'?{{urllib.parse.urlencode(query)}}' if query else ''\n\
+                 \x20   payload = self._request('GET', f'{prefix}/{plural}{{suffix}}')\n\
+                 \x20   return {name}Page(\n\
+                 \x20     items=[{fields_from} for item in payload.get('items', [])],\n\
+                 \x20     next_cursor=payload.get('next_cursor'),\n\
+                 \x20   )\n",
+                plural = resource.name,
+            )
+            .unwrap();
+        }
+        if resource.faces.get {
+            writeln!(
+                out,
+                "  def get_{single}(self, id: str) -> {name}:\n\
+                 \x20   item = self._request('GET', f'{prefix}/{plural}/{{id}}')\n\
+                 \x20   return {fields_from}\n",
+                single = snake(&singular(&resource.name)),
+                plural = resource.name,
+            )
+            .unwrap();
+        }
 
         for sub in &resource.sub_resources {
             let sub_name = sub_type_name(resource, sub);

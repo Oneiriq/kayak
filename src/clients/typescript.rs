@@ -85,30 +85,34 @@ pub fn generate_client_ts(
         let name = type_name(&resource.name);
         let list_fn = camel(&format!("list_{}", snake(&resource.name)));
         let get_fn = camel(&format!("get_{}", snake(&singular(&resource.name))));
-        writeln!(
-            out,
-            "  {list_fn}(limit?: number, cursor?: string): Promise<{name}Page> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "    const query = new URLSearchParams()\n\
-             \x20   if (limit !== undefined) query.set('limit', String(limit))\n\
-             \x20   if (cursor !== undefined) query.set('cursor', cursor)\n\
-             \x20   const suffix = query.size > 0 ? `?${{query}}` : ''\n\
-             \x20   return this.request('GET', `{prefix}/{}${{suffix}}`)",
-            resource.name,
-        )
-        .unwrap();
-        out.push_str("  }\n\n");
-        writeln!(out, "  {get_fn}(id: string): Promise<{name}> {{").unwrap();
-        writeln!(
-            out,
-            "    return this.request('GET', `{prefix}/{}/${{id}}`)",
-            resource.name,
-        )
-        .unwrap();
-        out.push_str("  }\n\n");
+        if resource.faces.list {
+            writeln!(
+                out,
+                "  {list_fn}(limit?: number, cursor?: string): Promise<{name}Page> {{"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    const query = new URLSearchParams()\n\
+                 \x20   if (limit !== undefined) query.set('limit', String(limit))\n\
+                 \x20   if (cursor !== undefined) query.set('cursor', cursor)\n\
+                 \x20   const suffix = query.size > 0 ? `?${{query}}` : ''\n\
+                 \x20   return this.request('GET', `{prefix}/{}${{suffix}}`)",
+                resource.name,
+            )
+            .unwrap();
+            out.push_str("  }\n\n");
+        }
+        if resource.faces.get {
+            writeln!(out, "  {get_fn}(id: string): Promise<{name}> {{").unwrap();
+            writeln!(
+                out,
+                "    return this.request('GET', `{prefix}/{}/${{id}}`)",
+                resource.name,
+            )
+            .unwrap();
+            out.push_str("  }\n\n");
+        }
 
         for sub in &resource.sub_resources {
             let sub_name = sub_type_name(resource, sub);

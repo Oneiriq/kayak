@@ -49,6 +49,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
             reads_require: vec![],
             rate_class: None,
             sub_resources: vec![],
+            faces: Default::default(),
             actions: vec![],
             content: None,
             filter_options: Default::default(),

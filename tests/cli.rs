@@ -72,6 +72,7 @@ fn contract() -> Contract {
             }],
             content: None,
             filter_options: Default::default(),
+            faces: Default::default(),
         }],
         // Both query shapes, so the real Python and Go toolchains
         // below parse what the generators emit for them.

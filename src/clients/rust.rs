@@ -260,52 +260,56 @@ fn generate(
         let name = type_name(&resource.name);
         let list_fn = format!("list_{}", snake(&resource.name));
         let get_fn = format!("get_{}", snake(&singular(&resource.name)));
-        writeln!(
-            out,
-            "    pub {asyncness}fn {list_fn}(&self, limit: Option<u32>, cursor: Option<&str>) \
-             -> Result<{name}Page, Error> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "        let mut url = format!(\"{{}}{prefix}/{}\", self.base_url);",
-            resource.name,
-        )
-        .unwrap();
-        out.push_str(
-            "        let mut query: Vec<(String, String)> = Vec::new();\n\
-             \x20       if let Some(limit) = limit { query.push((\"limit\".into(), limit.to_string())); }\n\
-             \x20       if let Some(cursor) = cursor { query.push((\"cursor\".into(), cursor.to_string())); }\n\
-             \x20       if !query.is_empty() {\n\
-             \x20           let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();\n\
-             \x20           url = format!(\"{url}?{}\", joined.join(\"&\"));\n\
-             \x20       }\n",
-        );
-        writeln!(
-            out,
-            "        Ok(self.http.get(url){auth_header}\
-             .send(){sent}{received})"
-        )
-        .unwrap();
-        out.push_str("    }\n\n");
-        writeln!(
-            out,
-            "    pub {asyncness}fn {get_fn}(&self, id: &str) -> Result<{name}, Error> {{"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "        let url = format!(\"{{}}{prefix}/{}/{{id}}\", self.base_url);",
-            resource.name,
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "        Ok(self.http.get(url){auth_header}\
-             .send(){sent}{received})"
-        )
-        .unwrap();
-        out.push_str("    }\n\n");
+        if resource.faces.list {
+            writeln!(
+                out,
+                "    pub {asyncness}fn {list_fn}(&self, limit: Option<u32>, cursor: Option<&str>) \
+                 -> Result<{name}Page, Error> {{"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        let mut url = format!(\"{{}}{prefix}/{}\", self.base_url);",
+                resource.name,
+            )
+            .unwrap();
+            out.push_str(
+                "        let mut query: Vec<(String, String)> = Vec::new();\n\
+                 \x20       if let Some(limit) = limit { query.push((\"limit\".into(), limit.to_string())); }\n\
+                 \x20       if let Some(cursor) = cursor { query.push((\"cursor\".into(), cursor.to_string())); }\n\
+                 \x20       if !query.is_empty() {\n\
+                 \x20           let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();\n\
+                 \x20           url = format!(\"{url}?{}\", joined.join(\"&\"));\n\
+                 \x20       }\n",
+            );
+            writeln!(
+                out,
+                "        Ok(self.http.get(url){auth_header}\
+                 .send(){sent}{received})"
+            )
+            .unwrap();
+            out.push_str("    }\n\n");
+        }
+        if resource.faces.get {
+            writeln!(
+                out,
+                "    pub {asyncness}fn {get_fn}(&self, id: &str) -> Result<{name}, Error> {{"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        let url = format!(\"{{}}{prefix}/{}/{{id}}\", self.base_url);",
+                resource.name,
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        Ok(self.http.get(url){auth_header}\
+                 .send(){sent}{received})"
+            )
+            .unwrap();
+            out.push_str("    }\n\n");
+        }
 
         // One list method per sub-collection, reached through the
         // parent id.

@@ -39,6 +39,34 @@ Nothing is exposed by default. A column absent from `fields` does not exist
 on any surface. Renames apply everywhere at once, from the wire name to every generated
 client.
 
+## Which faces a resource exposes
+
+A resource exposes a listing and a getter by default. `faces` narrows
+that:
+
+```rust
+faces: ResourceFaces::ALL,       // GET /accounts and GET /accounts/{id}
+faces: ResourceFaces::GET_ONLY,  // reachable by id, never enumerable
+faces: ResourceFaces::LIST_ONLY, // enumerable, no by-id face
+faces: ResourceFaces::NONE,      // a place for actions to live
+```
+
+`GET_ONLY` is the shape a social service needs: `GET /accounts/{id}` is
+served and `GET /accounts` must never be, because enumerating every user
+is the thing it is careful not to do. `NONE` is a domain that is all
+verbs — an RPC-shaped resource whose table has no browsable collection.
+
+Actions and sub-resources are independent of both flags, which is what
+makes `NONE` useful rather than empty.
+
+Turning the listing off refuses `filterable`, `sortable`,
+`filter_options` and `watchable`, because each is a claim about an
+endpoint that no longer exists. A resource with no face, no action and
+no sub-resource is refused outright: it generates nothing.
+
+Withdrawing a face is breaking — an endpoint, a GraphQL field and a
+client method all disappear. Adding one back is compatible.
+
 ## Where the routes live
 
 Resource faces hang under `api_prefix`, `/v1` by default:

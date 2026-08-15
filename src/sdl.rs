@@ -135,13 +135,17 @@ pub fn generate_sdl(
         if !resource.sortable.is_empty() {
             arguments.push(format!("sort: {type_name}Sort"));
         }
-        writeln!(
-            body,
-            "  {field}({args}): {type_name}Page!",
-            args = arguments.join(", "),
-        )
-        .unwrap();
-        writeln!(body, "  {singular}(id: ID!): {type_name}").unwrap();
+        if resource.faces.list {
+            writeln!(
+                body,
+                "  {field}({args}): {type_name}Page!",
+                args = arguments.join(", "),
+            )
+            .unwrap();
+        }
+        if resource.faces.get {
+            writeln!(body, "  {singular}(id: ID!): {type_name}").unwrap();
+        }
     }
     // Contract queries join the same root: a question with typed
     // arguments answers as JSON, because the answer's shape is the

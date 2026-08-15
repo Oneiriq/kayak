@@ -56,6 +56,7 @@ fn contract(prefix: &str) -> Contract {
             }],
             content: None,
             filter_options: Default::default(),
+            faces: Default::default(),
         }],
         // A query declares an absolute path, so it should be untouched
         // by the prefix in every case below.

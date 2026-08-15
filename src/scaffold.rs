@@ -192,6 +192,7 @@ fn resource_from(
         // arbitrary SurrealQL rather than a list, so the scaffold
         // declares none and leaves them to be written by hand.
         filter_options: Default::default(),
+        faces: Default::default(),
         sortable,
         max_page_size: 100,
         actions: Vec::new(),

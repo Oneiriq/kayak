@@ -24,8 +24,12 @@ use crate::naming::singular;
 pub fn generate_mcp_tools(contract: &Contract) -> Value {
     let mut tools = Vec::new();
     for resource in &contract.resources {
-        tools.push(list_tool(resource));
-        tools.push(get_tool(resource));
+        if resource.faces.list {
+            tools.push(list_tool(resource));
+        }
+        if resource.faces.get {
+            tools.push(get_tool(resource));
+        }
         for action in &resource.actions {
             tools.push(action_tool(resource, action));
         }
@@ -242,6 +246,7 @@ mod tests {
                 }],
                 content: None,
                 filter_options: Default::default(),
+                faces: Default::default(),
             }],
             queries: vec![Query {
                 name: "search".into(),

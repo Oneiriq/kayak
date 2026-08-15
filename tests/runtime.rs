@@ -131,6 +131,7 @@ fn contract() -> Contract {
             ],
             content: None,
             filter_options: Default::default(),
+            faces: Default::default(),
         }],
         queries: vec![],
     }

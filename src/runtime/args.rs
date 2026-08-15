@@ -340,6 +340,7 @@ mod tests {
             reads_require: vec![],
             rate_class: None,
             sub_resources: vec![],
+            faces: Default::default(),
             content: None,
             filter_options: Default::default(),
         }

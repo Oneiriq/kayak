@@ -39,6 +39,36 @@ Nothing is exposed by default. A column absent from `fields` does not exist
 on any surface. Renames apply everywhere at once, from the wire name to every generated
 client.
 
+## Authentication
+
+A contract declares how its callers authenticate, and every face reads
+the declaration: the four clients, the OpenAPI security scheme, and the
+differ. The field defaults to `None` and is omitted from serialized
+contracts when it is.
+
+```rust
+auth: AuthScheme::None,        // an open API: no credential, no field
+auth: AuthScheme::Bearer,      // Authorization: Bearer <token>
+auth: AuthScheme::Header {     // a named header, sent verbatim
+    name: "x-copal-tenant".into(),
+    credential: "tenant".into(),
+},
+```
+
+`credential` names the thing, and the name reaches the generated
+constructors: a bearer contract gets `Client::new(url, token)`, the
+header above gets `Client::new(url, tenant)`, and an open one gets
+`Client::new(url)` with no field to carry. Bearer always calls it
+`token`; a header scheme deserialized without a `credential` gets
+`credential`.
+
+Changing the scheme is breaking in every direction, including relaxing
+it — a client generated against a contract that sends a credential does
+not stop compiling when the server stops requiring one, but every caller
+holding the old client is now sending a header the contract no longer
+describes, and the differ says so rather than letting that pass as a
+compatible loosening.
+
 ## Pinned, filterable, sortable
 
 `pinned` names columns the server always equality-binds before any caller

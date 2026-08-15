@@ -11,6 +11,16 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **The dispatcher reports rather than panics, and janus has no
+  production `unwrap` left.** Eight sites relied on the build-time
+  completeness gate having registered a resolver, and asserted it at
+  request time. A panic there takes down every other in-flight request
+  on the same task and tells an operator a line number, where a 500
+  tells them which operation is unserved. Both now answer
+  `JanusError::Internal` naming the operation, and say plainly that
+  reaching it means the gate and the dispatcher disagree -- a janus
+  bug, not the caller's.
+
 - **A resource with no face needs no fields.** Requiring an exposure
   on a resource that never renders its row type was requiring a
   projection nobody builds. Found writing polyconsole-social's

@@ -71,6 +71,30 @@ pub struct Dispatcher {
     watch_counts: Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
 }
 
+/// A resolver the completeness gate proved was registered at build.
+///
+/// Reaching the `None` arm means the gate and the dispatcher disagree
+/// about what this contract exposes, which is a janus bug rather than
+/// anything the caller did. It answers 500 rather than panicking
+/// because this runs inside a request: a panic here takes down every
+/// other in-flight request on the same task, and tells the operator a
+/// line number where the error tells them which operation is
+/// unserved.
+fn registered<T: Clone>(slot: Option<&T>, kind: &str, name: &str) -> Result<T, JanusError> {
+    slot.cloned().ok_or_else(|| {
+        JanusError::Internal(format!(
+            "no {kind} resolver registered for {name}:              the completeness gate and the dispatcher disagree"
+        ))
+    })
+}
+
+/// The name an operation carries for the thing it addresses.
+fn named(slot: Option<&String>, what: &str) -> Result<String, JanusError> {
+    slot.cloned().ok_or_else(|| {
+        JanusError::Internal(format!("an operation of this kind carries no {what} name"))
+    })
+}
+
 impl Dispatcher {
     /// Assemble a dispatcher, refusing if any declared operation lacks
     /// a resolver.
@@ -316,59 +340,53 @@ impl Dispatcher {
                 let projection_ctx = ctx.clone();
                 let outcome = match (payload, operation.kind) {
                     (Payload::List(args), OperationKind::List) => {
-                        let resolver = resolvers
-                            .list
-                            .get(&operation.resource)
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let resolver = registered(
+                            resolvers.list.get(&operation.resource),
+                            "list",
+                            &operation.resource,
+                        )?;
                         resolver(ctx, args).await.map(Outcome::List)
                     }
                     (Payload::Get(args), OperationKind::Get) => {
-                        let resolver = resolvers
-                            .get
-                            .get(&operation.resource)
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let resolver = registered(
+                            resolvers.get.get(&operation.resource),
+                            "get",
+                            &operation.resource,
+                        )?;
                         resolver(ctx, args).await.map(Outcome::Get)
                     }
                     (Payload::Query(args), OperationKind::Query) => {
-                        let resolver = resolvers
-                            .query
-                            .get(&operation.resource)
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let resolver = registered(
+                            resolvers.query.get(&operation.resource),
+                            "query",
+                            &operation.resource,
+                        )?;
                         resolver(ctx, args).await.map(Outcome::Query)
                     }
                     (Payload::Action(args), OperationKind::Action) => {
-                        let action = operation
-                            .action
-                            .clone()
-                            .expect("action operations carry the action name");
-                        let resolver = resolvers
-                            .action
-                            .get(&(operation.resource.clone(), action))
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let action = named(operation.action.as_ref(), "action")?;
+                        let resolver = registered(
+                            resolvers.action.get(&(operation.resource.clone(), action)),
+                            "action",
+                            &operation.resource,
+                        )?;
                         resolver(ctx, args).await.map(Outcome::Action)
                     }
                     (Payload::SubList(args), OperationKind::SubList) => {
-                        let sub = operation
-                            .sub
-                            .clone()
-                            .expect("sub-list operations carry the sub-resource name");
-                        let resolver = resolvers
-                            .sub_list
-                            .get(&(operation.resource.clone(), sub))
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let sub = named(operation.sub.as_ref(), "sub-resource")?;
+                        let resolver = registered(
+                            resolvers.sub_list.get(&(operation.resource.clone(), sub)),
+                            "sub-list",
+                            &operation.resource,
+                        )?;
                         resolver(ctx, args).await.map(Outcome::List)
                     }
                     (Payload::Watch(args), OperationKind::Watch) => {
-                        let resolver = resolvers
-                            .watch
-                            .get(&operation.resource)
-                            .expect("completeness-checked at build")
-                            .clone();
+                        let resolver = registered(
+                            resolvers.watch.get(&operation.resource),
+                            "watch",
+                            &operation.resource,
+                        )?;
                         // The slot is taken before the resolver runs,
                         // so a refused open never starts a live query,
                         // and it rides the stream so dropping the

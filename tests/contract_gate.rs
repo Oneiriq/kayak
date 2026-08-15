@@ -41,6 +41,7 @@ fn files_resource() -> Resource {
         name: "files".into(),
         table: "file".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![
             FieldExposure::column("path"),
             FieldExposure::column("state"),
@@ -177,6 +178,7 @@ fn pins_no_index_leads_with_are_refused() {
         name: "deliveries".into(),
         table: "webhook_delivery".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![
             FieldExposure::column("endpoint"),
             FieldExposure::column("state"),
@@ -255,6 +257,7 @@ fn a_search_index_leading_with_the_pin_is_not_a_seek() {
         name: "notes".into(),
         table: "note".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant_id".into()],
         filterable: vec![],
@@ -288,6 +291,7 @@ fn an_unknown_pin_is_reported_once_not_twice() {
         name: "notes".into(),
         table: "note".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant".into()],
         filterable: vec![],
@@ -315,6 +319,7 @@ fn unknown_names_and_collisions_are_each_reported() {
         name: "files".into(),
         table: "file".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![
             FieldExposure::column("no_such_column"),
             FieldExposure::renamed("path", "state"),

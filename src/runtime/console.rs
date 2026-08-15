@@ -2669,6 +2669,7 @@ mod previews {
             pinned: vec![],
             filterable: vec![],
             filter_options: Default::default(),
+            faces: Default::default(),
             sortable: vec![],
             max_page_size: 50,
             actions: vec![],

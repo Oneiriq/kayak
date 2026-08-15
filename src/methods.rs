@@ -29,14 +29,21 @@ pub(crate) fn client_methods(contract: &Contract) -> Vec<Method> {
     let mut methods = Vec::new();
     for resource in &contract.resources {
         let one = snake(&singular(&resource.name));
-        methods.push(Method {
-            name: format!("list_{}", snake(&resource.name)),
-            source: format!("the {} listing", resource.name),
-        });
-        methods.push(Method {
-            name: format!("get_{one}"),
-            source: format!("the {} getter", resource.name),
-        });
+        // Only the faces the resource actually exposes, or a resource
+        // with no listing would reserve `list_x` against an action
+        // that is free to take it.
+        if resource.faces.list {
+            methods.push(Method {
+                name: format!("list_{}", snake(&resource.name)),
+                source: format!("the {} listing", resource.name),
+            });
+        }
+        if resource.faces.get {
+            methods.push(Method {
+                name: format!("get_{one}"),
+                source: format!("the {} getter", resource.name),
+            });
+        }
         for sub in &resource.sub_resources {
             methods.push(Method {
                 // Mirrors clients::sub_method_stem.

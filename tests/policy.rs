@@ -21,6 +21,7 @@ fn resource(name: &str, table: &str) -> Resource {
         pinned: vec!["tenant_id".into()],
         filterable: vec![],
         filter_options: Default::default(),
+        faces: Default::default(),
         sortable: vec![],
         max_page_size: 100,
         actions: vec![],

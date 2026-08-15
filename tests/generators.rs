@@ -152,6 +152,7 @@ fn contract() -> Contract {
             ],
             content: None,
             filter_options: Default::default(),
+            faces: Default::default(),
         }],
         // One query with a path parameter and one without, so the
         // goldens carry both shapes and the CLI test's real Python and

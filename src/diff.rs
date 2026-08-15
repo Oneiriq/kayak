@@ -462,6 +462,20 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         )));
     }
 
+    // Withdrawing a face deletes an endpoint, a GraphQL field and a
+    // client method that callers are using. Adding one back is
+    // additive: nothing that worked stops working.
+    for (face, before, after) in [
+        ("listing", old.faces.list, new.faces.list),
+        ("getter", old.faces.get, new.faces.get),
+    ] {
+        match (before, after) {
+            (true, false) => changes.push(Change::Breaking(format!("{scope}: {face} removed"))),
+            (false, true) => changes.push(Change::Compatible(format!("{scope}: {face} added"))),
+            _ => {}
+        }
+    }
+
     // GraphQL names are part of a deployed schema's identity: fragments
     // name types, queries name fields. Effective names are compared so
     // an override equal to the derived default is a no-op.

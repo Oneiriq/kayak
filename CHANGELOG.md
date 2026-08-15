@@ -11,6 +11,30 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A resource says which collection faces it exposes.** Every resource
+  emitted a listing and a getter, which misdescribes a resource whose
+  collection is deliberately not browsable. polyconsole-social serves
+  `GET /accounts/{id}` and must never serve `GET /accounts` — a social
+  service does not enumerate its users — and it hangs a keys
+  sub-resource off that same resource, so leaving `accounts` undeclared
+  cost the sub-resource too. The other shape is a domain that is all
+  verbs: `friends` is eight two-account RPCs over a table of unordered
+  pairs, with no listing and no getter to declare.
+
+  `Resource.faces` declares it, both by default and omitted from the
+  serialized document when it is. Gated in all seven artifacts, because
+  a gate that reached six of them would leave one still promising the
+  enumeration the contract just refused. Actions and sub-resources are
+  independent of both flags, which is what makes a faceless resource
+  useful rather than empty.
+
+  Turning the listing off refuses `filterable`, `sortable`,
+  `filter_options` and `watchable` — each is a claim about an endpoint
+  that does not exist, and janus refuses claims that cannot be true
+  rather than letting them reach the artifacts as promises. A resource
+  exposing nothing at all is refused outright. Withdrawing a face is
+  breaking; restoring one is not.
+
 - **A contract says where its routes live.** `/v1` was hardcoded in
   four client generators and the OpenAPI emitter, which quietly made
   janus a generator for services that had already chosen janus's

@@ -8,10 +8,9 @@
 //! enums list only index-backed orderings. Generation refuses invalid
 //! contracts through the same gate.
 
-use std::fmt::Write as _;
-
 use surql::schema::{FieldDefinition, FieldType, TableDefinition};
 
+use crate::emit::wln;
 use crate::ir::{Action, ActionOutput, Contract, Resource, TypeRef};
 use crate::naming::camel;
 use crate::openapi::GenerateError;
@@ -38,8 +37,8 @@ pub fn generate_sdl(
             .expect("validated: table exists");
         let type_name = resource.graphql_type_name();
 
-        writeln!(body, "type {type_name} {{").unwrap();
-        writeln!(body, "  id: ID!").unwrap();
+        wln!(body, "type {type_name} {{");
+        wln!(body, "  id: ID!");
         for exposure in &resource.fields {
             let field = table
                 .fields
@@ -49,35 +48,34 @@ pub fn generate_sdl(
             let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
             uses_datetime |= datetime;
             uses_json |= json;
-            writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
+            wln!(body, "  {}: {gql}", exposure.api_name());
         }
         // Sub-collections read as fields on their parent, which is the
         // only place they exist.
         for sub in &resource.sub_resources {
-            writeln!(
+            wln!(
                 body,
                 "  {}: {}Page!",
                 sub_field_signature(resource, sub),
                 sub.graphql_type_name(resource),
-            )
-            .unwrap();
+            );
         }
-        writeln!(body, "}}\n").unwrap();
+        wln!(body, "}}\n");
 
         if !resource.sortable.is_empty() {
-            writeln!(body, "enum {type_name}Sort {{").unwrap();
+            wln!(body, "enum {type_name}Sort {{");
             for column in &resource.sortable {
                 let upper = column.to_ascii_uppercase();
-                writeln!(body, "  {upper}_ASC").unwrap();
-                writeln!(body, "  {upper}_DESC").unwrap();
+                wln!(body, "  {upper}_ASC");
+                wln!(body, "  {upper}_DESC");
             }
-            writeln!(body, "}}\n").unwrap();
+            wln!(body, "}}\n");
         }
 
-        writeln!(body, "type {type_name}Page {{").unwrap();
-        writeln!(body, "  items: [{type_name}!]!").unwrap();
-        writeln!(body, "  nextCursor: String").unwrap();
-        writeln!(body, "}}\n").unwrap();
+        wln!(body, "type {type_name}Page {{");
+        wln!(body, "  items: [{type_name}!]!");
+        wln!(body, "  nextCursor: String");
+        wln!(body, "}}\n");
 
         // Sub-resource types and pages. The field that reaches them
         // lives on the parent object, printed above.
@@ -87,8 +85,8 @@ pub fn generate_sdl(
                 .find(|t| t.name == sub.table)
                 .expect("validated: table exists");
             let sub_type = sub.graphql_type_name(resource);
-            writeln!(body, "type {sub_type} {{").unwrap();
-            writeln!(body, "  id: ID!").unwrap();
+            wln!(body, "type {sub_type} {{");
+            wln!(body, "  id: ID!");
             for exposure in &sub.fields {
                 let field = sub_table
                     .fields
@@ -98,24 +96,24 @@ pub fn generate_sdl(
                 let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
                 uses_datetime |= datetime;
                 uses_json |= json;
-                writeln!(body, "  {}: {gql}", exposure.api_name()).unwrap();
+                wln!(body, "  {}: {gql}", exposure.api_name());
             }
-            writeln!(body, "}}\n").unwrap();
+            wln!(body, "}}\n");
 
             if !sub.sortable.is_empty() {
-                writeln!(body, "enum {sub_type}Sort {{").unwrap();
+                wln!(body, "enum {sub_type}Sort {{");
                 for column in &sub.sortable {
                     let upper = column.to_ascii_uppercase();
-                    writeln!(body, "  {upper}_ASC").unwrap();
-                    writeln!(body, "  {upper}_DESC").unwrap();
+                    wln!(body, "  {upper}_ASC");
+                    wln!(body, "  {upper}_DESC");
                 }
-                writeln!(body, "}}\n").unwrap();
+                wln!(body, "}}\n");
             }
 
-            writeln!(body, "type {sub_type}Page {{").unwrap();
-            writeln!(body, "  items: [{sub_type}!]!").unwrap();
-            writeln!(body, "  nextCursor: String").unwrap();
-            writeln!(body, "}}\n").unwrap();
+            wln!(body, "type {sub_type}Page {{");
+            wln!(body, "  items: [{sub_type}!]!");
+            wln!(body, "  nextCursor: String");
+            wln!(body, "}}\n");
         }
     }
 
@@ -135,13 +133,16 @@ pub fn generate_sdl(
         if !resource.sortable.is_empty() {
             arguments.push(format!("sort: {type_name}Sort"));
         }
-        writeln!(
-            body,
-            "  {field}({args}): {type_name}Page!",
-            args = arguments.join(", "),
-        )
-        .unwrap();
-        writeln!(body, "  {singular}(id: ID!): {type_name}").unwrap();
+        if resource.faces.list {
+            wln!(
+                body,
+                "  {field}({args}): {type_name}Page!",
+                args = arguments.join(", "),
+            );
+        }
+        if resource.faces.get {
+            wln!(body, "  {singular}(id: ID!): {type_name}");
+        }
     }
     // Contract queries join the same root: a question with typed
     // arguments answers as JSON, because the answer's shape is the
@@ -149,7 +150,7 @@ pub fn generate_sdl(
     for query in &contract.queries {
         let (field, json) = query_field(query);
         uses_json |= json;
-        writeln!(body, "  {field}").unwrap();
+        wln!(body, "  {field}");
     }
     body.push_str("}\n");
 
@@ -161,7 +162,7 @@ pub fn generate_sdl(
             for action in &resource.actions {
                 let (field, json) = mutation_field(resource, action);
                 uses_json |= json;
-                writeln!(body, "  {field}").unwrap();
+                wln!(body, "  {field}");
             }
         }
         body.push_str("}\n");
@@ -182,14 +183,13 @@ pub fn generate_sdl(
                 .map(|column| format!("{}: String", camel(column)))
                 .collect::<Vec<_>>();
             if arguments.is_empty() {
-                writeln!(body, "  {field}: {type_name}!").unwrap();
+                wln!(body, "  {field}: {type_name}!");
             } else {
-                writeln!(
+                wln!(
                     body,
                     "  {field}({args}): {type_name}!",
                     args = arguments.join(", "),
-                )
-                .unwrap();
+                );
             }
         }
         body.push_str("}\n");

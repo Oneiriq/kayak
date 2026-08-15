@@ -383,6 +383,76 @@ impl Contract {
     }
 }
 
+/// Which collection faces a resource exposes.
+///
+/// Both, before this existed. That suits a resource whose collection is
+/// browsable, and misdescribes one whose is not: a social service
+/// serves `GET /accounts/{id}` and must never serve `GET /accounts`,
+/// because enumerating every user is the thing it is careful not to do.
+/// A contract had no way to say that, so it either promised an endpoint
+/// the service refuses to build or left the resource — and everything
+/// hanging off it — undeclared.
+///
+/// Actions and sub-resources are independent of both flags. A resource
+/// with neither face is still a place for verbs to live, which is what
+/// an RPC-shaped domain like `friends` actually is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceFaces {
+    /// `GET /{resource}`: the paged collection.
+    #[serde(default = "ResourceFaces::yes")]
+    pub list: bool,
+    /// `GET /{resource}/{id}`: one instance by id.
+    #[serde(default = "ResourceFaces::yes")]
+    pub get: bool,
+}
+
+impl Default for ResourceFaces {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl ResourceFaces {
+    /// A browsable collection: both faces, which is what every
+    /// resource had before it could say otherwise.
+    pub const ALL: Self = Self {
+        list: true,
+        get: true,
+    };
+    /// Reachable by id, never enumerable.
+    pub const GET_ONLY: Self = Self {
+        list: false,
+        get: true,
+    };
+    /// Enumerable, with no by-id face.
+    pub const LIST_ONLY: Self = Self {
+        list: true,
+        get: false,
+    };
+    /// Neither: a resource that exists to carry actions and
+    /// sub-resources.
+    pub const NONE: Self = Self {
+        list: false,
+        get: false,
+    };
+
+    fn yes() -> bool {
+        true
+    }
+
+    /// Whether this is the default pair, so it stays out of a
+    /// serialized contract that never chose.
+    fn is_default(&self) -> bool {
+        *self == Self::ALL
+    }
+
+    /// Whether the resource exposes no collection face at all.
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        !self.list && !self.get
+    }
+}
+
 /// One exposed resource over one table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
@@ -436,6 +506,10 @@ pub struct Resource {
     /// why they are not resources of their own.
     #[serde(default)]
     pub sub_resources: Vec<SubResource>,
+    /// Which collection faces this resource exposes. Both by default,
+    /// so a contract that says nothing behaves as it always did.
+    #[serde(default, skip_serializing_if = "ResourceFaces::is_default")]
+    pub faces: ResourceFaces,
     /// The rate class metering reads of this resource: list, get,
     /// sub-collections, and watch opens. Absent means unmetered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -831,6 +905,7 @@ mod tests {
                 reads_require: vec![],
                 rate_class: None,
                 sub_resources: vec![],
+                faces: Default::default(),
                 content: None,
                 filter_options: Default::default(),
             }],

@@ -59,14 +59,18 @@ pub fn generate_openapi(
         let schema_name = component_name(&resource.name);
         schemas.insert(schema_name.clone(), resource_schema(resource, table));
         schemas.insert(format!("{schema_name}Page"), page_schema(&schema_name));
-        paths.insert(
-            format!("{prefix}/{}", resource.name),
-            list_path(resource, &schema_name),
-        );
-        paths.insert(
-            format!("{prefix}/{}/{{id}}", resource.name),
-            get_path(resource, &schema_name),
-        );
+        if resource.faces.list {
+            paths.insert(
+                format!("{prefix}/{}", resource.name),
+                list_path(resource, &schema_name),
+            );
+        }
+        if resource.faces.get {
+            paths.insert(
+                format!("{prefix}/{}/{{id}}", resource.name),
+                get_path(resource, &schema_name),
+            );
+        }
         for sub in &resource.sub_resources {
             let sub_table = schema
                 .iter()

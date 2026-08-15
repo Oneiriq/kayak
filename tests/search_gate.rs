@@ -29,6 +29,7 @@ fn chunk_resource() -> Resource {
         name: "chunks".into(),
         table: "text_chunk".into(),
         filter_options: Default::default(),
+        faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant_id".into()],
         filterable: vec![],

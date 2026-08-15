@@ -22,6 +22,7 @@ fn base() -> Contract {
             name: "reads".into(),
             units_per_minute: 1_000,
         }],
+        auth: janus::AuthScheme::Bearer,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -301,6 +302,24 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "a backing the deployment had to have is now optional",
             Box::new(|c: &mut Contract| c.queries[0].backing[1].optional = true),
+        ),
+        // Every direction of moving authentication takes something away.
+        // Switching it strands every deployed client on a credential the
+        // service stopped reading; adding one locks out callers that sent
+        // nothing; and dropping one stops refusing whoever it kept out --
+        // the same reasoning that makes a REMOVED field guard breaking.
+        (
+            "authentication switched to another scheme",
+            Box::new(|c: &mut Contract| {
+                c.auth = janus::AuthScheme::Header {
+                    name: "x-api-key".into(),
+                    credential: "api_key".into(),
+                }
+            }),
+        ),
+        (
+            "authentication is gone",
+            Box::new(|c: &mut Contract| c.auth = janus::AuthScheme::None),
         ),
     ]
 }

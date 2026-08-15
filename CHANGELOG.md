@@ -11,6 +11,36 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A contract says how its callers authenticate.** Copal's
+  `x-copal-tenant` header was hardcoded in four client generators, so a
+  service authenticating any other way had four files to edit and no
+  way to say so in the contract. `Contract::auth` now declares the
+  scheme — `none`, `bearer`, or a named header — and every face reads
+  the declaration: the four clients, the OpenAPI `securitySchemes` and
+  document-level `security`, and the differ, which treats any change of
+  scheme as breaking in both directions. The credential's *name* is
+  part of the declaration and reaches the generated constructors, so a
+  bearer contract gets `Client::new(url, token)` and copal's gets
+  `Client::new(url, tenant)`. Declaring copal's existing scheme
+  reproduces all four client goldens byte for byte, which is what
+  establishes the mechanism is faithful to the behaviour it replaced.
+
+- **A blocking Rust client, on request.** `--targets
+  client-rs-blocking` emits `client_blocking.rs`: the same types,
+  renames, nullability, auth scheme, URLs and query shaping as
+  `client-rs`, reached through `reqwest::blocking`. A caller with no
+  runtime no longer has to stand up an executor to make one call or
+  hand-maintain a synchronous port that drifts from the contract.
+
+  One generator parameterised by how a call suspends, not two to keep
+  in step. The four fragments that differ — asyncness, await, the
+  reqwest module, the feature list — are the whole of it, and a test
+  asserts exactly that by converting the async output into the blocking
+  one and demanding byte equality. Opt-in rather than default, like
+  `engine-policy`: it is a second flavour of a language the default set
+  already covers, and defaulting it would hand every consumer a second
+  Rust client to review.
+
 - **The vector-index gate: a declared search with nothing behind it
   does not generate.** The backing rules could refuse a search resting
   on the wrong machinery, but not a search resting on none — a query
@@ -72,6 +102,31 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   people to wave a gate through.
 
 ### Changed
+
+- **Re-blessing a golden names the golden.** `JANUS_BLESS` took any
+  value and re-blessed all eight goldens at once, so reaching for it to
+  read one generator's diff silently rewrote the other seven. It now
+  takes the artifacts to bless — `JANUS_BLESS=client-go`, a comma
+  separated list, or `1`/`all` for the blanket form a change touching
+  every face still wants. An unrecognised name fails rather than
+  blessing nothing quietly: `golang` is a plausible thing to type when
+  Go is `client-go` internally, and a bless that matched nothing would
+  read as a clean run. A test asserts every `TARGETS` entry has a bless
+  name, so a new target cannot arrive with no way to re-bless it alone.
+
+- **One client generator per module.** `clients.rs` reached 1,245 lines
+  and a second Rust flavour was about to make that worse. Split to
+  `clients/{rust,typescript,python,go}.rs`, with only what more than
+  one language needs left in `clients/mod.rs`. A pure move: the
+  goldens do not shift.
+
+- **Generated Rust is checked.** The CLI test compiled the generated
+  Python and parsed the generated Go, but nothing looked at the
+  generated Rust at all. It now runs `rustfmt` over both flavours,
+  which parses before it formats. That catches syntax only — a stray
+  `.await` in the blocking client parses fine and fails to build — so
+  the generators suite separately asserts the blocking flavour never
+  suspends.
 
 - **`tests/search_gate.rs` carries the search half of the gate.**
   `contract_gate.rs` crossed a thousand lines. What moved is already

@@ -83,6 +83,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
         ir_revision: 1,
         rate_classes: vec![],
         limits: None,
+        auth: Default::default(),
         resources,
         queries: vec![],
     }

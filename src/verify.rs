@@ -526,6 +526,7 @@ mod tests {
             ir_revision: 1,
             rate_classes: vec![],
             limits: None,
+            auth: Default::default(),
             resources: vec![resource()],
             queries: vec![],
         }

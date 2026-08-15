@@ -107,11 +107,25 @@ unclaimed, correct to add by hand, compatible when you do.
 
 ## Testing
 
-Golden files per generator (`JANUS_BLESS=1 cargo test` re-blesses as an
-explicit step), gate refusal tests by name, IR round-trips, a runtime suite
+Golden files per generator, gate refusal tests by name, IR round-trips, a
+runtime suite
 covering middleware ordering and enforcement, and a CLI integration test
 that compiles the generated Python and parses the generated Go with the
 real toolchains where they exist.
+
+Re-blessing a golden is an explicit step that names what you meant to
+change:
+
+```
+JANUS_BLESS=client-go cargo test          one artifact
+JANUS_BLESS=client-go,openapi cargo test  several
+JANUS_BLESS=1 cargo test                  all of them
+```
+
+An unrecognised name fails rather than blessing nothing quietly, so a
+typo cannot pass for a clean run. Blessing everything is right after a
+change that touches every face; it is not a way to read a diff, since a
+failing run already prints both sides.
 
 ## License
 

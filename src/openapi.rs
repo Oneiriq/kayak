@@ -248,6 +248,26 @@ pub fn generate_openapi(
         }
         document["x-limits"] = Value::Object(rendered);
     }
+    // The credential, as a real security scheme rather than something a
+    // reader has to infer from an example. A document that describes every
+    // path and never says how to authenticate is incomplete, and the
+    // generated clients read the same declaration, so the document and the
+    // SDKs cannot disagree about it.
+    match &contract.auth {
+        crate::ir::AuthScheme::None => {}
+        crate::ir::AuthScheme::Bearer => {
+            document["components"]["securitySchemes"] = json!({
+                "bearer": { "type": "http", "scheme": "bearer" },
+            });
+            document["security"] = json!([{ "bearer": [] }]);
+        }
+        crate::ir::AuthScheme::Header { name, .. } => {
+            document["components"]["securitySchemes"] = json!({
+                "header": { "type": "apiKey", "in": "header", "name": name },
+            });
+            document["security"] = json!([{ "header": [] }]);
+        }
+    }
     Ok(canonical(document))
 }
 

@@ -1,7 +1,11 @@
 //! Every generator over one action-bearing contract, golden-tested.
 //!
-//! `JANUS_BLESS=1 cargo test` re-blesses all goldens deliberately;
-//! anything else that changes an artifact is drift and fails.
+//! `JANUS_BLESS=client-go cargo test` re-blesses one golden, a comma
+//! separated list re-blesses several, and `JANUS_BLESS=1` re-blesses
+//! all of them. Anything else that changes an artifact is drift and
+//! fails. See `tests/common` for why a bless names its target.
+
+mod common;
 
 use janus::clients::{
     generate_client_go, generate_client_py, generate_client_rs, generate_client_ts,
@@ -234,15 +238,16 @@ fn all_targets_generate_and_match_goldens() {
             env!("CARGO_MANIFEST_DIR"),
             filename,
         );
-        if std::env::var("JANUS_BLESS").is_ok() {
+        let artifact = common::artifact_of(filename);
+        if common::blessed(artifact) {
             std::fs::write(&golden_path, content).unwrap();
         }
         let golden = std::fs::read_to_string(&golden_path)
-            .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS=1 to create"));
+            .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS={artifact} to create"));
         assert_eq!(
             content.trim(),
             golden.trim(),
-            "{filename} drifted from its golden; JANUS_BLESS=1 to re-bless deliberately",
+            "{filename} drifted from its golden; JANUS_BLESS={artifact} to re-bless deliberately",
         );
     }
 }
@@ -1166,4 +1171,64 @@ fn the_openapi_document_declares_the_security_scheme() {
     let open = doc(janus::AuthScheme::None);
     assert!(open["components"]["securitySchemes"].is_null(), "{open}");
     assert!(open["security"].is_null(), "{open}");
+}
+
+#[test]
+fn a_bless_names_the_artifact_it_means_to_rewrite() {
+    use common::wants;
+
+    assert!(
+        !wants(None, "client-go"),
+        "an unset variable blesses nothing"
+    );
+    assert!(wants(Some("client-go"), "client-go"));
+    assert!(
+        !wants(Some("client-go"), "client-py"),
+        "and only that artifact -- this is the whole point",
+    );
+
+    assert!(wants(Some("client-go,openapi"), "openapi"), "a list");
+    assert!(
+        wants(Some(" client-go , openapi "), "client-go"),
+        "loosely spaced"
+    );
+
+    for artifact in common::BLESSABLE {
+        assert!(wants(Some("1"), artifact), "1 still blesses everything");
+        assert!(wants(Some("all"), artifact), "and so does the spelled form");
+    }
+}
+
+#[test]
+#[should_panic(expected = "no such artifact")]
+fn a_bless_that_names_nothing_real_fails_loudly() {
+    // Go is `client-go` here and "golang" appears nowhere, so this is a
+    // plausible thing to type. Blessing nothing quietly would read as a
+    // clean run and leave you believing a golden had moved.
+    let _ = common::wants(Some("golang"), "client-go");
+}
+
+#[test]
+#[should_panic(expected = "no such artifact")]
+fn a_typo_beside_a_real_name_still_fails() {
+    let _ = common::wants(Some("client-go,typpo"), "client-go");
+}
+
+#[test]
+fn every_target_can_be_blessed_by_name() {
+    // Two readers that would otherwise drift: adding a target without
+    // teaching the bless gate its name leaves an artifact that can only
+    // be re-blessed by blessing all of them.
+    for target in TARGETS {
+        assert!(
+            common::BLESSABLE.contains(target),
+            "target {target} has no bless name; add it to tests/common",
+        );
+    }
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    for filename in artifacts.keys() {
+        // Panics if a generated filename has no artifact name.
+        let name = common::artifact_of(filename);
+        assert!(common::BLESSABLE.contains(&name));
+    }
 }

@@ -6,6 +6,8 @@
 //! machinery, a search resting on a b-tree, a declared search resting
 //! on nothing — lives next door in `search_gate.rs`.
 
+mod common;
+
 use janus::{generate_openapi, validate, Contract, FieldExposure, Resource, Violation};
 use surql::schema::{
     bm25_index, datetime_field, index, int_field, string_field, table_schema, unique_index,
@@ -355,15 +357,15 @@ fn generated_openapi_matches_the_golden_document() {
     let rendered = serde_json::to_string_pretty(&doc).unwrap();
 
     let golden_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/copal_files.json");
-    if std::env::var("JANUS_BLESS").is_ok() {
+    if common::blessed("copal-files") {
         std::fs::write(golden_path, &rendered).unwrap();
     }
     let golden = std::fs::read_to_string(golden_path)
-        .expect("golden file missing; run with JANUS_BLESS=1 to create");
+        .expect("golden file missing; run with JANUS_BLESS=copal-files to create");
     assert_eq!(
         rendered.trim(),
         golden.trim(),
-        "generated OpenAPI drifted from golden; JANUS_BLESS=1 to re-bless deliberately",
+        "generated OpenAPI drifted from golden; JANUS_BLESS=copal-files to re-bless deliberately",
     );
 }
 

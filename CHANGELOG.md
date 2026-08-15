@@ -11,6 +11,15 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A resource with no face needs no fields.** Requiring an exposure
+  on a resource that never renders its row type was requiring a
+  projection nobody builds. Found writing polyconsole-social's
+  contract, where `friends` is five two-account verbs over a table of
+  unordered pairs and `me` is three writes that name no id: both are
+  resources whose only job is to give their actions a path. A face
+  still demands fields, and so does an action answering with the
+  resource, because those do render it.
+
 - **A resource says which collection faces it exposes.** Every resource
   emitted a listing and a getter, which misdescribes a resource whose
   collection is deliberately not browsable. polyconsole-social serves

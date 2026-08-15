@@ -56,6 +56,14 @@ struct Listing<'a> {
     bound: Vec<&'a str>,
     filterable: &'a [String],
     sortable: &'a [String],
+    /// Whether this surface projects rows at all.
+    ///
+    /// A resource with no collection face and no action answering with
+    /// one never renders its type, so it has nothing to expose and
+    /// requiring a field would be requiring a projection that is never
+    /// built. That is the shape of an RPC-only domain: `friends` is
+    /// five verbs over a table whose rows no caller ever receives.
+    projects: bool,
 }
 
 /// A single contract-vs-schema violation, formatted for humans in
@@ -425,6 +433,19 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// declare and turns a whole class of silent table scan into a build
 /// failure; what it cannot do is make an author declare, which is the
 /// same limit every claim in a declaration language has.
+/// Whether a resource ever renders its row type.
+///
+/// Either collection face does, and so does an action answering with
+/// the resource. A resource with none of those exists to carry verbs
+/// and sub-resources, and has nothing of its own to project.
+fn projects_rows(resource: &Resource) -> bool {
+    !resource.faces.is_none()
+        || resource
+            .actions
+            .iter()
+            .any(|action| matches!(action.output, crate::ir::ActionOutput::Resource))
+}
+
 /// A resource that exposes no listing cannot honour the declarations
 /// that only a listing has: what may be filtered, what may be sorted,
 /// and how large a page may be are claims about an endpoint that does
@@ -694,7 +715,7 @@ fn validate_listing(
         });
     };
 
-    if listing.fields.is_empty() {
+    if listing.projects && listing.fields.is_empty() {
         violations.push(Violation::NoFields {
             resource: listing.scope.clone(),
         });
@@ -883,6 +904,7 @@ fn validate_sub_resource(
             bound: sub.bound_columns(),
             filterable: &sub.filterable,
             sortable: &sub.sortable,
+            projects: true,
         },
         table,
         violations,
@@ -1093,6 +1115,7 @@ fn validate_resource(
             bound: resource.pinned.iter().map(String::as_str).collect(),
             filterable: &resource.filterable,
             sortable: &resource.sortable,
+            projects: projects_rows(resource),
         },
         table,
         violations,

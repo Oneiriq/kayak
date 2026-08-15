@@ -302,3 +302,60 @@ fn the_default_faces_stay_out_of_a_serialized_contract() {
     let parsed: Contract = serde_json::from_str(&rendered).unwrap();
     assert_eq!(parsed.resources[0].faces, ResourceFaces::ALL);
 }
+
+#[test]
+fn a_faceless_resource_needs_no_fields_to_expose() {
+    // An RPC-only domain has rows nobody receives, so requiring an
+    // exposure would be requiring a projection that is never built.
+    // Found writing polyconsole-social's contract, where `friends` is
+    // five verbs over a table of unordered pairs and `me` is three
+    // writes that name no id.
+    let mut verbs_only = contract(ResourceFaces::NONE);
+    verbs_only.resources[0].fields = vec![];
+    assert_eq!(validate(&verbs_only, &schema()), vec![]);
+
+    // A face still demands one: something has to be in the row.
+    for faces in [
+        ResourceFaces::ALL,
+        ResourceFaces::GET_ONLY,
+        ResourceFaces::LIST_ONLY,
+    ] {
+        let mut bare = contract(faces);
+        bare.resources[0].fields = vec![];
+        bare.resources[0].filterable = vec![];
+        let violations = validate(&bare, &schema());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.to_string().contains("exposes no fields")),
+            "{faces:?} projects rows and must expose some: {violations:?}",
+        );
+    }
+}
+
+#[test]
+fn an_action_answering_with_the_resource_still_needs_fields() {
+    // No collection face, but the type is rendered anyway because an
+    // action returns it -- so an empty projection would emit a struct
+    // with nothing but an id.
+    let mut answering = contract(ResourceFaces::NONE);
+    answering.resources[0].fields = vec![];
+    answering.resources[0].actions = vec![Action {
+        name: "adopt".into(),
+        method: "POST".into(),
+        path: "/{id}/adopt".into(),
+        input: vec![],
+        output: ActionOutput::Resource,
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+    }];
+    let violations = validate(&answering, &schema());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.to_string().contains("exposes no fields")),
+        "{violations:?}",
+    );
+}

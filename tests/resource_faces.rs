@@ -38,6 +38,7 @@ fn accounts(faces: ResourceFaces) -> Resource {
         table: "account".into(),
         fields: vec![FieldExposure::column("handle")],
         pinned: vec![],
+        pinned_either: vec![],
         // Only meaningful with a listing, so the callers below that
         // turn the listing off clear these too.
         filterable: if faces.list {

@@ -509,6 +509,29 @@ pub struct Resource {
     /// filterable.
     #[serde(default)]
     pub pinned: Vec<String>,
+    /// Columns the server binds the caller's value to ONE of, rather
+    /// than all of.
+    ///
+    /// [`Self::pinned`] is an AND: every column is equality-bound, and
+    /// the index rules credit them as a prefix. A symmetric
+    /// relationship cannot be said that way. A friendship stored as
+    /// one row per unordered pair holds the two accounts in `a` and
+    /// `b`, and the caller is EITHER of them -- so their friendships
+    /// are `a = me OR b = me`, and pinning `a` alone would be a claim
+    /// the server does not honour, crediting an index for half the
+    /// rows.
+    ///
+    /// The index rule is the prefix rule applied once per alternative:
+    /// the listing is reachable only if EVERY named column heads an
+    /// index whose remaining columns serve the filter and sort claims.
+    /// That is what the engine needs -- it answers the disjunction as
+    /// a union of one seek per branch, and a branch with no index
+    /// behind it drags the whole read back to a scan.
+    ///
+    /// Fewer than two columns is refused: one alternative is a pin,
+    /// and saying it this way only hides that.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_either: Vec<String>,
     /// Columns callers may filter on. Validated against indexes.
     #[serde(default)]
     pub filterable: Vec<String>,
@@ -918,6 +941,7 @@ mod tests {
                     FieldExposure::renamed("size_bytes", "size"),
                 ],
                 pinned: vec!["tenant_id".into()],
+                pinned_either: vec![],
                 filterable: vec!["state".into()],
                 sortable: vec!["created_at".into()],
                 max_page_size: 100,

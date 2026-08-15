@@ -489,6 +489,7 @@ mod tests {
             table: "file".into(),
             fields: vec![FieldExposure::column("path")],
             pinned: vec!["tenant_id".into()],
+            pinned_either: vec![],
             filterable: vec!["state".into()],
             filter_options: [(
                 "state".to_owned(),

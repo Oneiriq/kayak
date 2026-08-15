@@ -11,6 +11,20 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A resource can pin to one of several columns.** `pinned` is an
+  AND, which cannot describe a symmetric relationship: a friendship
+  stored as one row per unordered pair holds its accounts in `a` and
+  `b`, the caller is either of them, and pinning one side would credit
+  an index for half the rows. `pinned_either` says the server binds to
+  one of a set.
+
+  The index rule was measured against SurrealDB 3 rather than reasoned
+  about. The engine answers the disjunction as a `UnionIndexScan`, one
+  seek per branch, so every alternative must head an index whose
+  remaining columns serve the filter and sort claims. A branch with no
+  index behind it is refused, naming the branch. Changing the set is
+  breaking both ways: narrowing hides rows, widening discloses them.
+
 - **The dispatcher reports rather than panics, and janus has no
   production `unwrap` left.** Eight sites relied on the build-time
   completeness gate having registered a resolver, and asserted it at

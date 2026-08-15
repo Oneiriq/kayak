@@ -203,6 +203,7 @@ mod tests {
             table: table.into(),
             fields: vec![FieldExposure::column("path")],
             pinned: vec![],
+            pinned_either: vec![],
             filterable: vec![],
             filter_options: Default::default(),
             faces: Default::default(),

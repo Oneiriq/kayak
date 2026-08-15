@@ -38,6 +38,7 @@ fn contract(open: bool) -> Contract {
             table: "file".into(),
             fields,
             pinned: vec![],
+            pinned_either: vec![],
             filterable: vec![],
             sortable: vec![],
             max_page_size: 100,

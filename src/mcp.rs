@@ -225,6 +225,7 @@ mod tests {
                 table: "file".into(),
                 fields: vec![FieldExposure::column("path")],
                 pinned: vec![],
+                pinned_either: vec![],
                 filterable: vec!["state".into()],
                 sortable: vec!["created_at".into()],
                 max_page_size: 100,

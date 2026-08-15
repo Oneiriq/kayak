@@ -32,6 +32,7 @@ fn chunk_resource() -> Resource {
         faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant_id".into()],
+        pinned_either: vec![],
         filterable: vec![],
         sortable: vec![],
         max_page_size: 100,
@@ -129,6 +130,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
             FieldExposure::column("locator"),
         ],
         pinned: vec!["tenant_id".into()],
+        pinned_either: vec![],
         filterable: vec!["body".into(), "embedding".into(), "locator".into()],
         sortable: vec!["body".into(), "embedding".into(), "locator".into()],
         ..chunk_resource()
@@ -176,6 +178,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
             table: "text_chunk".into(),
             fields: vec![FieldExposure::column("body")],
             pinned: vec!["tenant_id".into()],
+            pinned_either: vec![],
             filterable: vec!["body".into()],
             sortable: vec![],
             ..chunk_resource()
@@ -202,6 +205,7 @@ fn an_ordering_index_beside_a_search_one_still_carries_the_claim() {
         table: "text_chunk".into(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant_id".into()],
+        pinned_either: vec![],
         filterable: vec!["body".into()],
         sortable: vec!["body".into()],
         ..chunk_resource()
@@ -224,6 +228,7 @@ fn an_unbound_prefix_is_reported_as_a_prefix_and_not_as_an_index_type() {
         table: "text_chunk".into(),
         fields: vec![FieldExposure::column("body")],
         pinned: vec![],
+        pinned_either: vec![],
         filterable: vec![],
         sortable: vec!["body".into()],
         ..chunk_resource()

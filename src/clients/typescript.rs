@@ -32,34 +32,34 @@ pub fn generate_client_ts(
             &type_name(&resource.name),
             &resource.fields,
             table,
-        );
+        )?;
         for sub in &resource.sub_resources {
             ts_interface(
                 &mut out,
                 &sub_type_name(resource, sub),
                 &sub.fields,
-                sub_table(schema, sub),
-            );
+                sub_table(schema, sub)?,
+            )?;
         }
     }
 
     // The credential the contract declared, in the one place every
     // request funnels through.
-    let credential = contract.auth.credential_name();
-    let param = credential.map_or_else(String::new, |name| format!(", private {name}: string"));
-    let header = match contract.auth.header() {
-        Some((name, prefix)) => {
-            let value = credential.expect("a header scheme names its credential");
-            // A template literal only where there is a prefix to join;
-            // `\u{60}${this.tenant}\u{60}` for a bare value is noise.
-            if prefix.is_empty() {
-                format!("        '{name}': this.{value},\n")
-            } else {
-                format!("        '{name}': `{prefix}${{this.{value}}}`,\n")
-            }
+    let wire = contract.auth.wire();
+    let param = wire.map_or_else(String::new, |a| {
+        format!(", private {}: string", a.credential)
+    });
+    let header = wire.map_or_else(String::new, |auth| {
+        let (name, value) = (auth.header, auth.credential);
+        // A template literal only where there is a prefix to join;
+        // `\u{60}${this.tenant}\u{60}` for a bare value is noise.
+        if auth.prefix.is_empty() {
+            format!("        '{name}': this.{value},\n")
+        } else {
+            let prefix = auth.prefix;
+            format!("        '{name}': `{prefix}${{this.{value}}}`,\n")
         }
-        None => String::new(),
-    };
+    });
     wln!(
         out,
         "export class Client {{\n\
@@ -224,11 +224,11 @@ fn ts_interface(
     name: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
-) {
+) -> Result<(), GenerateError> {
     wln!(out, "export interface {name} {{");
     wln!(out, "  id: string");
     for exposure in fields {
-        let field = column(table, &exposure.column);
+        let field = column(table, &exposure.column)?;
         let base = match field.field_type {
             FieldType::Int | FieldType::Float | FieldType::Decimal | FieldType::Number => "number",
             FieldType::Bool => "boolean",
@@ -249,4 +249,5 @@ fn ts_interface(
     wln!(out, "  items: {name}[]");
     wln!(out, "  next_cursor?: string | null");
     wln!(out, "}}\n");
+    Ok(())
 }

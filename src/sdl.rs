@@ -31,20 +31,13 @@ pub fn generate_sdl(
     let mut body = String::new();
 
     for resource in &contract.resources {
-        let table = schema
-            .iter()
-            .find(|t| t.name == resource.table)
-            .expect("validated: table exists");
+        let table = crate::resolve::table(schema, &resource.table)?;
         let type_name = resource.graphql_type_name();
 
         wln!(body, "type {type_name} {{");
         wln!(body, "  id: ID!");
         for exposure in &resource.fields {
-            let field = table
-                .fields
-                .iter()
-                .find(|f| f.name == exposure.column)
-                .expect("validated: column exists");
+            let field = crate::resolve::column(table, &exposure.column)?;
             let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
             uses_datetime |= datetime;
             uses_json |= json;
@@ -80,19 +73,12 @@ pub fn generate_sdl(
         // Sub-resource types and pages. The field that reaches them
         // lives on the parent object, printed above.
         for sub in &resource.sub_resources {
-            let sub_table = schema
-                .iter()
-                .find(|t| t.name == sub.table)
-                .expect("validated: table exists");
+            let sub_table = crate::resolve::table(schema, &sub.table)?;
             let sub_type = sub.graphql_type_name(resource);
             wln!(body, "type {sub_type} {{");
             wln!(body, "  id: ID!");
             for exposure in &sub.fields {
-                let field = sub_table
-                    .fields
-                    .iter()
-                    .find(|f| f.name == exposure.column)
-                    .expect("validated: column exists");
+                let field = crate::resolve::column(sub_table, &exposure.column)?;
                 let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
                 uses_datetime |= datetime;
                 uses_json |= json;

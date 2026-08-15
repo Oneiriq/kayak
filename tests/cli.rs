@@ -441,17 +441,25 @@ fn a_directory_of_entities_generates_what_one_file_generates() {
     generate(&from_file, &one);
     generate(&ordered, &many);
 
-    for artifact in [
-        "openapi.json",
-        "schema.graphql",
-        "client.rs",
-        "client.ts",
-        "client.py",
-        "client.go",
-    ] {
+    // Read what was actually produced rather than listing it here. The
+    // hand-written list this replaces had six of the seven default
+    // artifacts, having silently fallen a target behind: mcp-tools.json
+    // was never compared, so the manifest could have differed between
+    // the two input forms and nothing would have said so.
+    let mut artifacts: Vec<String> = std::fs::read_dir(&one)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    artifacts.sort();
+    assert_eq!(
+        artifacts.len(),
+        TARGETS.len(),
+        "expected one file per default target: {artifacts:?}",
+    );
+    for artifact in artifacts {
         assert_eq!(
-            std::fs::read_to_string(one.join(artifact)).unwrap(),
-            std::fs::read_to_string(many.join(artifact)).unwrap(),
+            std::fs::read_to_string(one.join(&artifact)).unwrap(),
+            std::fs::read_to_string(many.join(&artifact)).unwrap(),
             "{artifact} differs between the one file and the directory",
         );
     }

@@ -79,31 +79,44 @@ fn needs_value(
     contract: &Contract,
     resources: &[(&crate::ir::Resource, &TableDefinition)],
     schema: &[TableDefinition],
-) -> bool {
+) -> Result<bool, GenerateError> {
     if !contract.queries.is_empty() {
-        return true;
+        return Ok(true);
     }
-    resources.iter().any(|(resource, table)| {
-        resource
+    // Written as loops rather than chained `any`, because the column
+    // lookup can fail and a fallible closure inside `any` either
+    // swallows that or turns the expression inside out.
+    for (resource, table) in resources {
+        let open_action = resource
             .actions
             .iter()
-            .any(|action| !action.input.is_empty() || matches!(action.output, ActionOutput::Json))
-            || open_column(&resource.fields, table)
-            || resource
-                .sub_resources
-                .iter()
-                .any(|sub| open_column(&sub.fields, sub_table(schema, sub)))
-    })
+            .any(|action| !action.input.is_empty() || matches!(action.output, ActionOutput::Json));
+        if open_action || open_column(&resource.fields, table)? {
+            return Ok(true);
+        }
+        for sub in &resource.sub_resources {
+            if open_column(&sub.fields, sub_table(schema, sub)?)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Whether any exposed column maps to `Value` rather than a scalar.
-fn open_column(fields: &[crate::ir::FieldExposure], table: &TableDefinition) -> bool {
-    fields.iter().any(|exposure| {
-        matches!(
-            column(table, &exposure.column).field_type,
+fn open_column(
+    fields: &[crate::ir::FieldExposure],
+    table: &TableDefinition,
+) -> Result<bool, GenerateError> {
+    for exposure in fields {
+        if matches!(
+            column(table, &exposure.column)?.field_type,
             FieldType::Object | FieldType::Array | FieldType::Geometry | FieldType::Any
-        )
-    })
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// How a generated client suspends: the whole of the difference
@@ -171,7 +184,7 @@ fn generate(
     // Imported, and declared as a dependency, only when something
     // names it: an unused import is a warning in the consumer's build,
     // and they cannot edit a generated file to silence it.
-    let value = needs_value(contract, &resources, schema);
+    let value = needs_value(contract, &resources, schema)?;
     let json_dep = if value { ", serde_json" } else { "" };
     let mut out = String::new();
     wln!(
@@ -195,14 +208,14 @@ fn generate(
             &type_name(&resource.name),
             &resource.fields,
             table,
-        );
+        )?;
         for sub in &resource.sub_resources {
             rust_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
                 &sub.fields,
-                sub_table(schema, sub),
-            );
+                sub_table(schema, sub)?,
+            )?;
         }
     }
 
@@ -211,29 +224,29 @@ fn generate(
     // `Client::new(url, token)`, one with a tenant header gets
     // `Client::new(url, tenant)`, and one with neither gets
     // `Client::new(url)` and no field to carry.
-    let credential = contract.auth.credential_name();
+    let wire = contract.auth.wire();
     // Built once and spliced into every request below, so a scheme
     // change cannot reach some call sites and miss others.
-    let auth_header = match contract.auth.header() {
-        Some((name, scheme_prefix)) => {
-            let value = credential.expect("a header scheme names its credential");
-            if scheme_prefix.is_empty() {
-                format!(".header(\"{name}\", &self.{value})")
-            } else {
-                format!(".header(\"{name}\", format!(\"{scheme_prefix}{{}}\", self.{value}))")
-            }
+    let auth_header = wire.map_or_else(String::new, |auth| {
+        let (header, credential) = (auth.header, auth.credential);
+        if auth.prefix.is_empty() {
+            format!(".header(\"{header}\", &self.{credential})")
+        } else {
+            let prefix = auth.prefix;
+            format!(".header(\"{header}\", format!(\"{prefix}{{}}\", self.{credential}))")
         }
-        None => String::new(),
-    };
+    });
     // The tail every request shares. Spliced rather than repeated so
     // the two flavours cannot disagree about error handling either.
     let sent = format!("{awaited}?.error_for_status()?");
     let received = format!(".json(){awaited}?");
 
-    let field = credential.map_or_else(String::new, |name| format!("    {name}: String,\n"));
-    let param = credential.map_or_else(String::new, |name| format!(", {name}: impl Into<String>"));
-    let init = credential.map_or_else(String::new, |name| {
-        format!("            {name}: {name}.into(),\n")
+    let field = wire.map_or_else(String::new, |a| format!("    {}: String,\n", a.credential));
+    let param = wire.map_or_else(String::new, |a| {
+        format!(", {}: impl Into<String>", a.credential)
+    });
+    let init = wire.map_or_else(String::new, |a| {
+        format!("            {0}: {0}.into(),\n", a.credential)
     });
     wln!(
         out,
@@ -266,21 +279,22 @@ fn generate(
             );
             wln!(
                 out,
-                "        let mut url = format!(\"{{}}{prefix}/{}\", self.base_url);",
+                "        let url = format!(\"{{}}{prefix}/{}\", self.base_url);",
                 resource.name,
             );
+            // Handed to reqwest rather than joined by hand. A cursor is
+            // opaque to the caller and routinely base64, so it carries
+            // `+`, `/` and `=`; pasted straight into a query string, a
+            // `+` reaches the server as a space and the page after it is
+            // not the page that was asked for.
             out.push_str(
-                "        let mut query: Vec<(String, String)> = Vec::new();\n\
-                 \x20       if let Some(limit) = limit { query.push((\"limit\".into(), limit.to_string())); }\n\
-                 \x20       if let Some(cursor) = cursor { query.push((\"cursor\".into(), cursor.to_string())); }\n\
-                 \x20       if !query.is_empty() {\n\
-                 \x20           let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();\n\
-                 \x20           url = format!(\"{url}?{}\", joined.join(\"&\"));\n\
-                 \x20       }\n",
+                "        let mut query: Vec<(&str, String)> = Vec::new();\n\
+                 \x20       if let Some(limit) = limit { query.push((\"limit\", limit.to_string())); }\n\
+                 \x20       if let Some(cursor) = cursor { query.push((\"cursor\", cursor.to_string())); }\n",
             );
             wln!(
                 out,
-                "        Ok(self.http.get(url){auth_header}\
+                "        Ok(self.http.get(url){auth_header}.query(&query)\
                  .send(){sent}{received})"
             );
             out.push_str("    }\n\n");
@@ -314,25 +328,21 @@ fn generate(
             );
             wln!(
                 out,
-                "        let mut url = format!(\"{{}}{prefix}/{}/{{id}}/{}\", self.base_url);",
+                "        let url = format!(\"{{}}{prefix}/{}/{{id}}/{}\", self.base_url);",
                 resource.name,
                 sub.name,
             );
             out.push_str(
-                "        let mut query: Vec<(String, String)> = Vec::new();
-                         if let Some(limit) = limit { query.push((\"limit\".into(), limit.to_string())); }
-                         if let Some(cursor) = cursor { query.push((\"cursor\".into(), cursor.to_string())); }
-                         if !query.is_empty() {
-                             let joined: Vec<String> = query.iter().map(|(k, v)| format!(\"{k}={v}\")).collect();
-                             url = format!(\"{url}?{}\", joined.join(\"&\"));
-                         }
+                "        let mut query: Vec<(&str, String)> = Vec::new();
+                         if let Some(limit) = limit { query.push((\"limit\", limit.to_string())); }
+                         if let Some(cursor) = cursor { query.push((\"cursor\", cursor.to_string())); }
 ",
             );
             // A separate write, because the line above is a plain
             // push_str and would emit `{auth_header}` verbatim.
             wln!(
                 out,
-                "                         Ok(self.http.get(url){auth_header}                 .send(){sent}{received})\n    }}\n",
+                "                         Ok(self.http.get(url){auth_header}.query(&query)                 .send(){sent}{received})\n    }}\n",
             );
         }
         for action in &resource.actions {
@@ -470,12 +480,12 @@ fn rust_struct(
     name: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
-) {
+) -> Result<(), GenerateError> {
     wln!(out, "#[derive(Debug, Clone, Deserialize)]");
     wln!(out, "pub struct {name} {{");
     wln!(out, "    pub id: String,");
     for exposure in fields {
-        let field = column(table, &exposure.column);
+        let field = column(table, &exposure.column)?;
         let base = match field.field_type {
             FieldType::Int => "i64",
             FieldType::Float | FieldType::Decimal | FieldType::Number => "f64",
@@ -510,4 +520,5 @@ fn rust_struct(
     wln!(out, "    #[serde(default)]");
     wln!(out, "    pub next_cursor: Option<String>,");
     wln!(out, "}}\n");
+    Ok(())
 }

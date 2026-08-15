@@ -53,16 +53,14 @@ pub fn generate_all(
                 format!(
                     "{}
 ",
-                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract))
-                        .expect("mcp manifest serializes"),
+                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract))?,
                 ),
             ),
             "openapi" => (
                 "openapi.json".to_owned(),
                 format!(
                     "{}\n",
-                    serde_json::to_string_pretty(&generate_openapi(contract, schema)?)
-                        .expect("openapi document serializes"),
+                    serde_json::to_string_pretty(&generate_openapi(contract, schema)?)?,
                 ),
             ),
             "sdl" => ("schema.graphql".to_owned(), generate_sdl(contract, schema)?),
@@ -82,8 +80,7 @@ pub fn generate_all(
                     serde_json::to_string_pretty(&crate::policy::derive_policy(
                         contract,
                         &crate::policy::ClaimVocabulary::default(),
-                    )?)
-                    .expect("engine policy serializes"),
+                    )?)?,
                 ),
             ),
             "client-rs" => (

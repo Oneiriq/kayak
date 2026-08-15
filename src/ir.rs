@@ -143,12 +143,51 @@ impl AuthScheme {
     /// `None` when the scheme sends no header.
     #[must_use]
     pub fn header(&self) -> Option<(&str, &'static str)> {
+        self.wire().map(|wire| (wire.header, wire.prefix))
+    }
+
+    /// Everything a generated client needs to put a credential on the
+    /// wire, or `None` for an open API.
+    ///
+    /// One value rather than [`Self::header`] and
+    /// [`Self::credential_name`] read separately. Those are `Some`
+    /// together and `None` together, but nothing in their types said
+    /// so, and each of the four generators paid for it the same way:
+    /// matching on one and unwrapping the other with a note explaining
+    /// why it could not fail. Four proofs of an invariant, none of them
+    /// checked. Here the invariant is the shape.
+    #[must_use]
+    pub fn wire(&self) -> Option<AuthWire<'_>> {
         match self {
             Self::None => Option::None,
-            Self::Bearer => Some(("authorization", "Bearer ")),
-            Self::Header { name, .. } => Some((name, "")),
+            Self::Bearer => Some(AuthWire {
+                header: "authorization",
+                prefix: "Bearer ",
+                credential: "token",
+            }),
+            Self::Header { name, credential } => Some(AuthWire {
+                header: name,
+                prefix: "",
+                credential,
+            }),
         }
     }
+}
+
+/// What a generated client puts on the wire to authenticate.
+///
+/// Borrowed from the scheme rather than owned, so producing it costs
+/// nothing and no generator is tempted to cache it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthWire<'a> {
+    /// The header name, sent verbatim.
+    pub header: &'a str,
+    /// What precedes the credential in the header value, empty when
+    /// the credential is sent bare.
+    pub prefix: &'static str,
+    /// What the credential is called in generated constructors and
+    /// fields.
+    pub credential: &'a str,
 }
 
 /// One named read that answers a question rather than paging a

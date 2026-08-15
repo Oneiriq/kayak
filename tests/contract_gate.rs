@@ -368,9 +368,9 @@ fn generated_openapi_matches_the_golden_document() {
     }
     let golden = std::fs::read_to_string(golden_path)
         .expect("golden file missing; run with JANUS_BLESS=copal-files to create");
+    // Whole, not trimmed: see the note in tests/common::check_golden.
     assert_eq!(
-        rendered.trim(),
-        golden.trim(),
+        rendered, golden,
         "generated OpenAPI drifted from golden; JANUS_BLESS=copal-files to re-bless deliberately",
     );
 }

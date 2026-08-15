@@ -31,7 +31,7 @@ pub use python::generate_client_py;
 pub use rust::{generate_client_rs, generate_client_rs_blocking};
 pub use typescript::generate_client_ts;
 
-use surql::schema::{FieldDefinition, TableDefinition};
+use surql::schema::TableDefinition;
 
 use crate::ir::{Contract, Query, TypeRef};
 use crate::naming::{snake, type_name};
@@ -46,26 +46,17 @@ pub(super) fn checked<'a>(
     if !violations.is_empty() {
         return Err(GenerateError::Invalid(violations));
     }
-    Ok(contract
+    contract
         .resources
         .iter()
         .map(|resource| {
-            let table = schema
-                .iter()
-                .find(|t| t.name == resource.table)
-                .expect("validated: table exists");
-            (resource, table)
+            let table = crate::resolve::table(schema, &resource.table)?;
+            Ok((resource, table))
         })
-        .collect())
+        .collect()
 }
 
-pub(super) fn column<'a>(table: &'a TableDefinition, name: &str) -> &'a FieldDefinition {
-    table
-        .fields
-        .iter()
-        .find(|f| f.name == name)
-        .expect("validated: column exists")
-}
+pub(super) use crate::resolve::column;
 
 pub(super) fn query_takes_id(query: &Query) -> bool {
     query.path.contains("{id}")
@@ -115,11 +106,8 @@ pub(super) fn query_kind(kind: TypeRef, language: &str) -> &'static str {
 pub(super) fn sub_table<'a>(
     schema: &'a [TableDefinition],
     sub: &crate::ir::SubResource,
-) -> &'a TableDefinition {
-    schema
-        .iter()
-        .find(|t| t.name == sub.table)
-        .expect("validated: table exists")
+) -> Result<&'a TableDefinition, GenerateError> {
+    crate::resolve::table(schema, &sub.table)
 }
 
 /// The generated type name for a sub-resource, composed with the

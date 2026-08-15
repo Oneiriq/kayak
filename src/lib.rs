@@ -13,6 +13,7 @@ pub mod generate;
 mod indexes;
 pub mod ir;
 pub mod mcp;
+mod methods;
 mod naming;
 pub mod openapi;
 pub mod policy;

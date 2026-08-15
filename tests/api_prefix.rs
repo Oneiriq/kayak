@@ -35,6 +35,7 @@ fn contract(prefix: &str) -> Contract {
             table: "account".into(),
             fields: vec![FieldExposure::column("handle")],
             pinned: vec!["realm".into()],
+            pinned_either: vec![],
             filterable: vec![],
             sortable: vec![],
             max_page_size: 50,

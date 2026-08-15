@@ -34,6 +34,7 @@ fn base() -> Contract {
                 FieldExposure::column("digest").with_guard("audit_only"),
             ],
             pinned: vec!["tenant_id".into()],
+            pinned_either: vec![],
             filterable: vec!["state".into()],
             filter_options: Default::default(),
             faces: Default::default(),

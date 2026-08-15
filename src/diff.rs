@@ -462,6 +462,17 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
         )));
     }
 
+    // Changing what the server binds changes which rows a caller
+    // sees. Narrowing the alternatives hides rows that used to come
+    // back; widening them shows rows that did not. Both are breaking:
+    // one costs a caller results, the other is a disclosure.
+    if old.pinned_either != new.pinned_either {
+        changes.push(Change::Breaking(format!(
+            "{scope}: the either-of pin changed, {:?} -> {:?}",
+            old.pinned_either, new.pinned_either,
+        )));
+    }
+
     // Withdrawing a face deletes an endpoint, a GraphQL field and a
     // client method that callers are using. Adding one back is
     // additive: nothing that worked stops working.

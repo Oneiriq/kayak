@@ -2667,6 +2667,7 @@ mod previews {
             table: "thing".into(),
             fields: fields.iter().map(|f| FieldExposure::column(*f)).collect(),
             pinned: vec![],
+            pinned_either: vec![],
             filterable: vec![],
             filter_options: Default::default(),
             faces: Default::default(),

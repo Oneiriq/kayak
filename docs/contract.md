@@ -39,6 +39,31 @@ Nothing is exposed by default. A column absent from `fields` does not exist
 on any surface. Renames apply everywhere at once, from the wire name to every generated
 client.
 
+## Pinning to one of several columns
+
+`pinned` is an AND: every column is equality-bound and credited as an
+index prefix. A symmetric relationship cannot be said that way. A
+friendship stored as one row per unordered pair holds its two accounts
+in `a` and `b`, and the caller is *either* of them:
+
+```rust
+pinned: vec![],
+pinned_either: vec!["a".into(), "b".into()],
+filterable: vec!["state".into()],
+```
+
+The engine answers that as a union of one index seek per branch, so
+**every** alternative must head an index whose remaining columns serve
+the filter and sort claims — here `(a, state)` and `(b, state)`. A
+branch with no index behind it drags the whole read back to a scan, and
+is refused, naming the branch so the author knows which index is
+missing.
+
+Fewer than two alternatives is refused, as is a column that is both
+pinned and an alternative. Changing the set is breaking in both
+directions: narrowing hides rows a caller used to see, widening shows
+rows they did not.
+
 ## Which faces a resource exposes
 
 A resource exposes a listing and a getter by default. `faces` narrows

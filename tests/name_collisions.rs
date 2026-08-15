@@ -41,6 +41,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
             table: "file".into(),
             fields: columns.iter().map(|c| FieldExposure::column(*c)).collect(),
             pinned: vec![],
+            pinned_either: vec![],
             filterable: vec![],
             sortable: vec![],
             max_page_size: 100,

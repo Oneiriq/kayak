@@ -1102,24 +1102,94 @@ fn validate_filter_options(resource: &Resource, violations: &mut Vec<Violation>)
     }
 }
 
+/// The shape rules for an either-of pin, before its branches are
+/// checked as listings.
+fn validate_either_pins(
+    resource: &Resource,
+    table: &TableDefinition,
+    violations: &mut Vec<Violation>,
+) {
+    let invalid = |name: &str, text: &str| Violation::InvalidName {
+        scope: format!("resource {}", resource.name),
+        name: name.to_owned(),
+        problem: text.to_owned(),
+    };
+    if resource.pinned_either.len() < 2 {
+        violations.push(invalid(
+            "pinned_either",
+            "names fewer than two columns; one alternative is a pin, and              saying it this way only hides that",
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for column in &resource.pinned_either {
+        if !table.fields.iter().any(|field| &field.name == column) {
+            violations.push(Violation::UnknownColumn {
+                resource: resource.name.clone(),
+                table: resource.table.clone(),
+                column: column.clone(),
+            });
+        }
+        if resource.pinned.contains(column) {
+            violations.push(invalid(
+                column,
+                "is both pinned and an either-of alternative; a column the                  server always binds is not a choice between branches",
+            ));
+        }
+        if !seen.insert(column) {
+            violations.push(invalid(
+                column,
+                "is named twice among the either-of alternatives",
+            ));
+        }
+    }
+}
+
 fn validate_resource(
     resource: &Resource,
     table: &TableDefinition,
     violations: &mut Vec<Violation>,
 ) {
-    validate_listing(
-        &Listing {
-            scope: resource.name.clone(),
-            table: &resource.table,
-            fields: &resource.fields,
-            bound: resource.pinned.iter().map(String::as_str).collect(),
-            filterable: &resource.filterable,
-            sortable: &resource.sortable,
-            projects: projects_rows(resource),
-        },
-        table,
-        violations,
-    );
+    let pinned: Vec<&str> = resource.pinned.iter().map(String::as_str).collect();
+    let projects = projects_rows(resource);
+    if resource.pinned_either.is_empty() {
+        validate_listing(
+            &Listing {
+                scope: resource.name.clone(),
+                table: &resource.table,
+                fields: &resource.fields,
+                bound: pinned,
+                filterable: &resource.filterable,
+                sortable: &resource.sortable,
+                projects,
+            },
+            table,
+            violations,
+        );
+    } else {
+        // The engine answers a disjunction as a union of one seek per
+        // branch, so EVERY branch has to be servable: one without an
+        // index behind it drags the whole read back to a scan. Each
+        // alternative is checked as though it were an ordinary pin,
+        // which is exactly what it is within its own branch.
+        validate_either_pins(resource, table, violations);
+        for alternative in &resource.pinned_either {
+            let mut bound = pinned.clone();
+            bound.push(alternative);
+            validate_listing(
+                &Listing {
+                    scope: format!("{} (pinned on {alternative})", resource.name),
+                    table: &resource.table,
+                    fields: &resource.fields,
+                    bound,
+                    filterable: &resource.filterable,
+                    sortable: &resource.sortable,
+                    projects,
+                },
+                table,
+                violations,
+            );
+        }
+    }
 
     let mut action_names = std::collections::BTreeSet::new();
     for action in &resource.actions {

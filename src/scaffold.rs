@@ -187,6 +187,7 @@ fn resource_from(
         table: table.name.clone(),
         fields,
         pinned: bound,
+        pinned_either: vec![],
         filterable,
         // A schema states its closed sets as an assertion, which is
         // arbitrary SurrealQL rather than a list, so the scaffold

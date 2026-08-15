@@ -36,6 +36,42 @@ pub enum GraphqlBuildError {
     Invalid(Vec<Violation>),
     #[error("schema registration failed: {0}")]
     Schema(String),
+    /// A name validation resolves could not be resolved while building
+    /// the schema. Reaching it means validation and the builder
+    /// disagree, which is a janus bug -- reported rather than panicked
+    /// so a server can refuse to start instead of dying mid-request.
+    #[error("internal: {what} {name:?} passed validation but could not be resolved")]
+    Unresolved { what: &'static str, name: String },
+}
+
+/// The table `name`, or the error that says the invariant broke.
+/// Named `find_` because a local `table` binding is everywhere below.
+fn find_table<'a>(
+    schema: &'a [TableDefinition],
+    name: &str,
+) -> Result<&'a TableDefinition, GraphqlBuildError> {
+    schema
+        .iter()
+        .find(|table| table.name == name)
+        .ok_or_else(|| GraphqlBuildError::Unresolved {
+            what: "table",
+            name: name.to_owned(),
+        })
+}
+
+/// The column `name` on `table`, or the error that says so.
+fn find_column<'a>(
+    table: &'a TableDefinition,
+    name: &str,
+) -> Result<&'a surql::schema::FieldDefinition, GraphqlBuildError> {
+    table
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| GraphqlBuildError::Unresolved {
+            what: "column",
+            name: name.to_owned(),
+        })
 }
 
 /// Build the executable schema with default settings.
@@ -83,10 +119,7 @@ pub fn schema_builder(
     let mut subscription = Subscription::new("Subscription");
 
     for resource in &contract.resources {
-        let table = schema
-            .iter()
-            .find(|t| t.name == resource.table)
-            .expect("validated: table exists");
+        let table = find_table(schema, &resource.table)?;
         let type_name = resource.graphql_type_name();
         let page_name = format!("{type_name}Page");
         let sort_name = format!("{type_name}Sort");
@@ -104,11 +137,7 @@ pub fn schema_builder(
             })
         }));
         for exposure in &resource.fields {
-            let field_def = table
-                .fields
-                .iter()
-                .find(|f| f.name == exposure.column)
-                .expect("validated: column exists");
+            let field_def = find_column(table, &exposure.column)?;
             let (base, datetime, json) = graphql_scalar(&field_def.field_type);
             uses_datetime |= datetime;
             uses_json |= json;
@@ -130,10 +159,7 @@ pub fn schema_builder(
         // the parent row's own id, so the collection cannot be reached
         // without one.
         for sub in &resource.sub_resources {
-            let sub_table = schema
-                .iter()
-                .find(|t| t.name == sub.table)
-                .expect("validated: table exists");
+            let sub_table = find_table(schema, &sub.table)?;
             let sub_type = sub.graphql_type_name(resource);
             let sub_page = format!("{sub_type}Page");
 
@@ -148,11 +174,7 @@ pub fn schema_builder(
                 })
             }));
             for exposure in &sub.fields {
-                let field_def = sub_table
-                    .fields
-                    .iter()
-                    .find(|f| f.name == exposure.column)
-                    .expect("validated: column exists");
+                let field_def = find_column(sub_table, &exposure.column)?;
                 let (base, datetime, json) = graphql_scalar(&field_def.field_type);
                 uses_datetime |= datetime;
                 uses_json |= json;

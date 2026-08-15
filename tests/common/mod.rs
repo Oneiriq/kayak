@@ -106,9 +106,13 @@ pub fn check_golden(filename: &str, content: &str) {
     }
     let golden = std::fs::read_to_string(&golden_path)
         .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS={artifact} to create"));
+    // Compared whole, not trimmed. A golden is a byte-for-byte record
+    // of what a generator emits, and trailing bytes are exactly where
+    // a generator drifts without anyone noticing: a file that gains or
+    // loses its final newline is a diff in every consumer's repository
+    // and was invisible here.
     assert_eq!(
-        content.trim(),
-        golden.trim(),
+        content, golden,
         "{filename} drifted from its golden; JANUS_BLESS={artifact} to re-bless deliberately",
     );
 }

@@ -42,56 +42,53 @@ pub fn generate_client_go(
             &type_name(&resource.name),
             &resource.fields,
             table,
-        );
+        )?;
         for sub in &resource.sub_resources {
             go_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
                 &sub.fields,
-                sub_table(schema, sub),
-            );
+                sub_table(schema, sub)?,
+            )?;
         }
     }
 
-    let credential = contract.auth.credential_name();
+    let wire = contract.auth.wire();
     // Go exports struct fields by capitalising them, and takes its
     // constructor parameter in the lower-camel form of the same word.
-    let go_field = credential.map(pascal);
+    // Both derive from one credential, so they are resolved together.
+    let go_field = wire.map(|auth| pascal(auth.credential));
     // gofmt aligns a struct's types to one column, so the padding depends
-    // on the longest field name -- which the credential can now be.
+    // on the longest field name -- which the credential can now be. The
+    // fallback is the width of "BaseURL", which the array always holds.
     let width = ["BaseURL", "HTTP"]
         .into_iter()
         .chain(go_field.as_deref())
         .map(str::len)
         .max()
-        .unwrap_or(7);
+        .unwrap_or(const { "BaseURL".len() });
     let pad = |name: &str| " ".repeat(width - name.len() + 1);
     let struct_field = go_field
         .as_ref()
         .map_or_else(String::new, |name| format!("\t{name}{}string\n", pad(name)));
     // Go's shared-type parameter form: `(baseURL, tenant string)`, not
     // `(baseURL string, tenant string)`.
-    let ctor_param = credential.map_or_else(
+    let ctor_param = wire.map_or_else(
         || "baseURL string".to_owned(),
-        |name| format!("baseURL, {name} string"),
+        |auth| format!("baseURL, {} string", auth.credential),
     );
-    let ctor_init = go_field.as_ref().map_or_else(String::new, |name| {
-        let arg = credential.expect("named above");
-        format!(", {name}: {arg}")
+    let ctor_init = wire.map_or_else(String::new, |auth| {
+        format!(", {}: {}", pascal(auth.credential), auth.credential)
     });
-    let set_header = match contract.auth.header() {
-        Some((header, scheme_prefix)) => {
-            let name = go_field
-                .as_ref()
-                .expect("a header scheme names its credential");
-            if scheme_prefix.is_empty() {
-                format!("\trequest.Header.Set(\"{header}\", c.{name})\n")
-            } else {
-                format!("\trequest.Header.Set(\"{header}\", \"{scheme_prefix}\"+c.{name})\n")
-            }
+    let set_header = wire.map_or_else(String::new, |auth| {
+        let (header, name) = (auth.header, pascal(auth.credential));
+        if auth.prefix.is_empty() {
+            format!("\trequest.Header.Set(\"{header}\", c.{name})\n")
+        } else {
+            let prefix = auth.prefix;
+            format!("\trequest.Header.Set(\"{header}\", \"{prefix}\"+c.{name})\n")
         }
-        None => String::new(),
-    };
+    });
     let base_pad = pad("BaseURL");
     let http_pad = pad("HTTP");
     w!(
@@ -352,7 +349,12 @@ pub fn generate_client_go(
 }
 
 fn go_path_expr(path: &str) -> String {
-    let (before, after) = path.split_once("{id}").expect("takes_id checked");
+    // Only reached for a path that takes an id, but a path without one
+    // has an obvious answer -- itself, quoted -- so there is nothing to
+    // gain by insisting the caller was right.
+    let Some((before, after)) = path.split_once("{id}") else {
+        return format!("\"{path}\"");
+    };
     let mut expression = String::new();
     if !before.is_empty() {
         expression.push_str(&format!("\"{before}\" + "));
@@ -369,11 +371,11 @@ fn go_struct(
     name: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
-) {
+) -> Result<(), GenerateError> {
     wln!(out, "type {name} struct {{");
     wln!(out, "\tID string `json:\"id\"`");
     for exposure in fields {
-        let field = column(table, &exposure.column);
+        let field = column(table, &exposure.column)?;
         let base = match field.field_type {
             FieldType::Int => "int64",
             FieldType::Float | FieldType::Decimal | FieldType::Number => "float64",
@@ -394,4 +396,5 @@ fn go_struct(
     wln!(out, "\tItems []{name} `json:\"items\"`");
     wln!(out, "\tNextCursor *string `json:\"next_cursor\"`");
     wln!(out, "}}\n");
+    Ok(())
 }

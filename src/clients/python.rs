@@ -40,32 +40,35 @@ pub fn generate_client_py(
             &type_name(&resource.name),
             &resource.fields,
             table,
-        );
+        )?;
         for sub in &resource.sub_resources {
             py_dataclass(
                 &mut out,
                 &sub_type_name(resource, sub),
                 &sub.fields,
-                sub_table(schema, sub),
-            );
+                sub_table(schema, sub)?,
+            )?;
         }
     }
 
-    let credential = contract.auth.credential_name();
-    let param = credential.map_or_else(String::new, |name| format!(", {name}: str"));
-    let assign = credential.map_or_else(String::new, |name| format!("   self.{name} = {name}\n"));
-    let headers = match contract.auth.header() {
-        Some((name, prefix)) => {
-            let value = credential.expect("a header scheme names its credential");
+    let wire = contract.auth.wire();
+    let param = wire.map_or_else(String::new, |a| format!(", {}: str", a.credential));
+    let assign = wire.map_or_else(String::new, |a| {
+        format!("   self.{0} = {0}\n", a.credential)
+    });
+    let headers = wire.map_or_else(
+        || "   headers: dict[str, str] = {}\n".to_owned(),
+        |auth| {
+            let (name, value) = (auth.header, auth.credential);
             // An f-string only where there is a prefix to join.
-            if prefix.is_empty() {
+            if auth.prefix.is_empty() {
                 format!("   headers = {{'{name}': self.{value}}}\n")
             } else {
+                let prefix = auth.prefix;
                 format!("   headers = {{'{name}': f'{prefix}{{self.{value}}}'}}\n")
             }
-        }
-        None => "   headers: dict[str, str] = {}\n".to_owned(),
-    };
+        },
+    );
     w!(
         out,
         "class Client:\n\
@@ -250,13 +253,13 @@ fn py_dataclass(
     name: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
-) {
+) -> Result<(), GenerateError> {
     wln!(out, "@dataclass\nclass {name}:");
     wln!(out, "  id: str");
     let mut required_lines = Vec::new();
     let mut optional_lines = Vec::new();
     for exposure in fields {
-        let schema_field = column(table, &exposure.column);
+        let schema_field = column(table, &exposure.column)?;
         let base = match schema_field.field_type {
             FieldType::Int => "int",
             FieldType::Float | FieldType::Decimal | FieldType::Number => "float",
@@ -278,4 +281,5 @@ fn py_dataclass(
     wln!(out, "@dataclass\nclass {name}Page:");
     wln!(out, "  items: list[{name}] = field(default_factory=list)");
     wln!(out, "  next_cursor: str | None = None\n");
+    Ok(())
 }

@@ -28,6 +28,24 @@ pub enum GenerateError {
     /// The engine policy could not be rendered.
     #[error("engine policy: {0}")]
     Policy(#[from] crate::policy::PolicyError),
+    /// An artifact could not be serialized.
+    #[error("serializing the generated artifact: {0}")]
+    Serialization(#[from] serde_json::Error),
+    /// A name that validation resolves could not be resolved while
+    /// generating.
+    ///
+    /// Reaching this means the two disagree, which is a bug in janus
+    /// rather than in the contract -- validation runs first and refuses
+    /// exactly these. It is an error and not a panic because a library
+    /// that is wrong about its own invariant should say so to its
+    /// caller, not take the process down.
+    #[error("internal: {what} {name:?} passed validation but could not be resolved")]
+    Unresolved {
+        /// What kind of name it was: a table, a column.
+        what: &'static str,
+        /// The name itself.
+        name: String,
+    },
 }
 
 fn format_violations(violations: &[Violation]) -> String {
@@ -52,12 +70,9 @@ pub fn generate_openapi(
     let mut paths = Map::new();
     let mut schemas = Map::new();
     for resource in &contract.resources {
-        let table = schema
-            .iter()
-            .find(|t| t.name == resource.table)
-            .expect("validated: table exists");
+        let table = crate::resolve::table(schema, &resource.table)?;
         let schema_name = component_name(&resource.name);
-        schemas.insert(schema_name.clone(), resource_schema(resource, table));
+        schemas.insert(schema_name.clone(), resource_schema(resource, table)?);
         schemas.insert(format!("{schema_name}Page"), page_schema(&schema_name));
         if resource.faces.list {
             paths.insert(
@@ -72,12 +87,9 @@ pub fn generate_openapi(
             );
         }
         for sub in &resource.sub_resources {
-            let sub_table = schema
-                .iter()
-                .find(|t| t.name == sub.table)
-                .expect("validated: table exists");
+            let sub_table = crate::resolve::table(schema, &sub.table)?;
             let sub_schema = format!("{schema_name}{}", component_name(&sub.name));
-            schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table));
+            schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table)?);
             schemas.insert(format!("{sub_schema}Page"), page_schema(&sub_schema));
             paths.insert(
                 format!("{prefix}/{}/{{id}}/{}", resource.name, sub.name),
@@ -312,16 +324,15 @@ fn component_name(resource: &str) -> String {
 
 /// The object schema for a sub-resource, identical in shape to a
 /// resource's: an opaque id plus the exposed columns.
-fn sub_resource_schema(sub: &crate::ir::SubResource, table: &TableDefinition) -> Value {
+fn sub_resource_schema(
+    sub: &crate::ir::SubResource,
+    table: &TableDefinition,
+) -> Result<Value, GenerateError> {
     let mut properties = Map::new();
     let mut required = vec![json!("id")];
     properties.insert("id".into(), json!({"type": "string"}));
     for exposure in &sub.fields {
-        let field = table
-            .fields
-            .iter()
-            .find(|f| f.name == exposure.column)
-            .expect("validated: column exists");
+        let field = crate::resolve::column(table, &exposure.column)?;
         let mut schema = field_schema(field);
         if let Some(guard) = &exposure.guard {
             schema["x-guard"] = json!(guard);
@@ -331,11 +342,11 @@ fn sub_resource_schema(sub: &crate::ir::SubResource, table: &TableDefinition) ->
             required.push(json!(exposure.api_name()));
         }
     }
-    json!({
+    Ok(json!({
         "type": "object",
         "properties": Value::Object(properties),
         "required": required,
-    })
+    }))
 }
 
 /// `GET /v1/{parent}/{id}/{sub}`: the parent id is a path parameter,
@@ -415,18 +426,14 @@ fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &
     json!({ "get": operation })
 }
 
-fn resource_schema(resource: &Resource, table: &TableDefinition) -> Value {
+fn resource_schema(resource: &Resource, table: &TableDefinition) -> Result<Value, GenerateError> {
     let mut properties = Map::new();
     let mut required = Vec::new();
     // Every resource carries an opaque id.
     properties.insert("id".into(), json!({"type": "string"}));
     required.push(json!("id"));
     for exposure in &resource.fields {
-        let field = table
-            .fields
-            .iter()
-            .find(|f| f.name == exposure.column)
-            .expect("validated: column exists");
+        let field = crate::resolve::column(table, &exposure.column)?;
         let mut schema = field_schema(field);
         if let Some(guard) = &exposure.guard {
             // Visible where the API is read: this field may be absent,
@@ -438,11 +445,11 @@ fn resource_schema(resource: &Resource, table: &TableDefinition) -> Value {
             required.push(json!(exposure.api_name()));
         }
     }
-    json!({
+    Ok(json!({
         "type": "object",
         "properties": Value::Object(properties),
         "required": required,
-    })
+    }))
 }
 
 /// Map a schema field to a JSON Schema fragment. Nullable columns

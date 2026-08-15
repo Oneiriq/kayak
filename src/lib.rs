@@ -19,6 +19,7 @@ mod naming;
 pub mod openapi;
 pub mod policy;
 pub mod reserved;
+mod resolve;
 pub mod scaffold;
 pub mod sdl;
 pub mod validate;

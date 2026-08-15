@@ -46,15 +46,11 @@ impl Client {
     }
 
     pub fn list_files(&self, limit: Option<u32>, cursor: Option<&str>) -> Result<FilePage, Error> {
-        let mut url = format!("{}/v1/files", self.base_url);
-        let mut query: Vec<(String, String)> = Vec::new();
-        if let Some(limit) = limit { query.push(("limit".into(), limit.to_string())); }
-        if let Some(cursor) = cursor { query.push(("cursor".into(), cursor.to_string())); }
-        if !query.is_empty() {
-            let joined: Vec<String> = query.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            url = format!("{url}?{}", joined.join("&"));
-        }
-        Ok(self.http.get(url).header("x-copal-tenant", &self.tenant).send()?.error_for_status()?.json()?)
+        let url = format!("{}/v1/files", self.base_url);
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Some(limit) = limit { query.push(("limit", limit.to_string())); }
+        if let Some(cursor) = cursor { query.push(("cursor", cursor.to_string())); }
+        Ok(self.http.get(url).header("x-copal-tenant", &self.tenant).query(&query).send()?.error_for_status()?.json()?)
     }
 
     pub fn get_file(&self, id: &str) -> Result<File, Error> {

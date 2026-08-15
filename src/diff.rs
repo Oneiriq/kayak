@@ -62,6 +62,19 @@ pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
         )));
     }
 
+    // The prefix moves every resource route at once, so changing it is
+    // the broadest break a contract can express: every deployed client
+    // calls a path that is no longer served. Queries keep their own
+    // absolute paths and are unaffected, which is why this is stated as
+    // being about the resource faces rather than about the API.
+    if old.prefix() != new.prefix() {
+        changes.push(Change::Breaking(format!(
+            "the resource path prefix changed: {:?} -> {:?}; every resource route moves",
+            old.prefix(),
+            new.prefix(),
+        )));
+    }
+
     // Rate classes: shrinking a budget refuses callers that used to
     // pass; growing one refuses nothing. A class appearing or leaving
     // matters only through the operations that reference it, which the

@@ -18,6 +18,7 @@ pub fn generate_client_ts(
     schema: &[TableDefinition],
 ) -> Result<String, GenerateError> {
     let resources = checked(contract, schema)?;
+    let prefix = contract.prefix();
     let mut out = String::new();
     writeln!(
         out,
@@ -95,7 +96,7 @@ pub fn generate_client_ts(
              \x20   if (limit !== undefined) query.set('limit', String(limit))\n\
              \x20   if (cursor !== undefined) query.set('cursor', cursor)\n\
              \x20   const suffix = query.size > 0 ? `?${{query}}` : ''\n\
-             \x20   return this.request('GET', `/v1/{}${{suffix}}`)",
+             \x20   return this.request('GET', `{prefix}/{}${{suffix}}`)",
             resource.name,
         )
         .unwrap();
@@ -103,7 +104,7 @@ pub fn generate_client_ts(
         writeln!(out, "  {get_fn}(id: string): Promise<{name}> {{").unwrap();
         writeln!(
             out,
-            "    return this.request('GET', `/v1/{}/${{id}}`)",
+            "    return this.request('GET', `{prefix}/{}/${{id}}`)",
             resource.name,
         )
         .unwrap();
@@ -123,7 +124,7 @@ pub fn generate_client_ts(
                      if (limit !== undefined) query.set('limit', String(limit))
                      if (cursor !== undefined) query.set('cursor', cursor)
                      const suffix = query.size > 0 ? `?${{query}}` : ''
-                     return this.request('GET', `/v1/{}/${{id}}/{}${{suffix}}`)",
+                     return this.request('GET', `{prefix}/{}/${{id}}/{}${{suffix}}`)",
                 resource.name, sub.name,
             )
             .unwrap();
@@ -165,7 +166,7 @@ pub fn generate_client_ts(
             .unwrap();
             writeln!(
                 out,
-                "    return this.request('{}', `/v1/{}{path}`{body_argument})",
+                "    return this.request('{}', `{prefix}/{}{path}`{body_argument})",
                 action.method, resource.name,
             )
             .unwrap();

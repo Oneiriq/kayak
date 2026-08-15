@@ -162,6 +162,7 @@ fn generate(
     flavor: Flavor,
 ) -> Result<String, GenerateError> {
     let resources = checked(contract, schema)?;
+    let prefix = contract.prefix();
     let Flavor {
         asyncness,
         awaited,
@@ -215,12 +216,12 @@ fn generate(
     // Built once and spliced into every request below, so a scheme
     // change cannot reach some call sites and miss others.
     let auth_header = match contract.auth.header() {
-        Some((name, prefix)) => {
+        Some((name, scheme_prefix)) => {
             let value = credential.expect("a header scheme names its credential");
-            if prefix.is_empty() {
+            if scheme_prefix.is_empty() {
                 format!(".header(\"{name}\", &self.{value})")
             } else {
-                format!(".header(\"{name}\", format!(\"{prefix}{{}}\", self.{value}))")
+                format!(".header(\"{name}\", format!(\"{scheme_prefix}{{}}\", self.{value}))")
             }
         }
         None => String::new(),
@@ -267,7 +268,7 @@ fn generate(
         .unwrap();
         writeln!(
             out,
-            "        let mut url = format!(\"{{}}/v1/{}\", self.base_url);",
+            "        let mut url = format!(\"{{}}{prefix}/{}\", self.base_url);",
             resource.name,
         )
         .unwrap();
@@ -294,7 +295,7 @@ fn generate(
         .unwrap();
         writeln!(
             out,
-            "        let url = format!(\"{{}}/v1/{}/{{id}}\", self.base_url);",
+            "        let url = format!(\"{{}}{prefix}/{}/{{id}}\", self.base_url);",
             resource.name,
         )
         .unwrap();
@@ -318,7 +319,7 @@ fn generate(
             .unwrap();
             writeln!(
                 out,
-                "        let mut url = format!(\"{{}}/v1/{}/{{id}}/{}\", self.base_url);",
+                "        let mut url = format!(\"{{}}{prefix}/{}/{{id}}/{}\", self.base_url);",
                 resource.name, sub.name,
             )
             .unwrap();
@@ -368,7 +369,7 @@ fn generate(
             // string, where the method's `id` parameter interpolates.
             writeln!(
                 out,
-                "        let url = format!(\"{{}}/v1/{}{}\", self.base_url);",
+                "        let url = format!(\"{{}}{prefix}/{}{}\", self.base_url);",
                 resource.name, action.path,
             )
             .unwrap();

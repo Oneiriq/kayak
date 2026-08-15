@@ -39,6 +39,30 @@ Nothing is exposed by default. A column absent from `fields` does not exist
 on any surface. Renames apply everywhere at once, from the wire name to every generated
 client.
 
+## Where the routes live
+
+Resource faces hang under `api_prefix`, `/v1` by default:
+
+```rust
+api_prefix: "/v1".into(),   // /v1/files, /v1/files/{id}, /v1/files/{id}/url
+api_prefix: String::new(),  // /files, /files/{id} -- the service's own routes
+api_prefix: "/api/v2".into(),
+```
+
+A contract that omits it gets `/v1`, and the field stays out of the
+serialized document, so contracts written before it existed round-trip
+unchanged.
+
+Queries are unaffected: they declare absolute paths (`"/me"`,
+`"/v1/search"`) and always have, which is why a query could describe a
+service's real route before a resource could.
+
+Moving the prefix is breaking in both directions — every resource route
+moves at once, and every deployed client calls a path that is no longer
+served. That is the point of declaring it rather than hardcoding it: a
+service already serving `/accounts` adopts a generated client by saying
+so, instead of moving its routes and breaking whatever is shipped.
+
 ## Authentication
 
 A contract declares how its callers authenticate, and every face reads

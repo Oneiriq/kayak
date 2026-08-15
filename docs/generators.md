@@ -16,6 +16,10 @@ refuses with each violation named.
 | `client-go` | `client.go` | Go client, `net/http` only. |
 | `engine-policy` (opt-in) | `policy.json` | The derived engine row-security clauses: select conjuncts from `reads_require`, field redactions from guards. See below. |
 
+Resource routes hang under the contract's `api_prefix` (`/v1` by
+default; see `docs/contract.md`), so the paths above are what a contract
+that says nothing gets. Query paths are absolute and never prefixed.
+
 Each client is one self-contained file: typed resources plus a method for
 every operation, list and get included. Emission is deterministic, and the OpenAPI document serializes
 with canonical key order so artifact bytes never depend on feature

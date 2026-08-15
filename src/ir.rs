@@ -33,6 +33,22 @@ pub struct Contract {
     /// invisible in review, silent when it tightens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<ContractLimits>,
+    /// The path every resource face hangs under, `/v1` by default.
+    ///
+    /// It was hardcoded, which made janus a generator for services
+    /// that had chosen janus's version prefix before they had janus.
+    /// A service already serving `/accounts` cannot adopt a client
+    /// that calls `/v1/accounts`, and telling it to move its routes
+    /// breaks whatever is already shipped against them — for a
+    /// contract layer whose point is catching breaks, that is the
+    /// wrong direction to push.
+    ///
+    /// Empty means the resources sit at the root. Queries are
+    /// unaffected either way: they declare absolute paths, which is
+    /// why they could always describe a service's real routes.
+    #[serde(default = "Contract::default_api_prefix")]
+    #[serde(skip_serializing_if = "Contract::is_default_api_prefix")]
+    pub api_prefix: String,
     /// How a caller proves who it is.
     ///
     /// Every generated client has to put a credential on the wire, and
@@ -344,6 +360,27 @@ pub struct ContractLimits {
 
 pub(crate) fn default_ir_revision() -> u32 {
     1
+}
+
+impl Contract {
+    /// The prefix a contract gets when it does not say: what every
+    /// resource face hung under before the prefix was declarable.
+    #[must_use]
+    pub fn default_api_prefix() -> String {
+        "/v1".to_owned()
+    }
+
+    fn is_default_api_prefix(prefix: &str) -> bool {
+        prefix == "/v1"
+    }
+
+    /// The prefix, normalised for joining: either empty or leading
+    /// slash with no trailing one, so `{prefix}/{resource}` is right
+    /// in both cases and no generator has to think about it.
+    #[must_use]
+    pub fn prefix(&self) -> &str {
+        self.api_prefix.trim_end_matches('/')
+    }
 }
 
 /// One exposed resource over one table.
@@ -756,6 +793,7 @@ mod tests {
             name: "copal".into(),
             version: "1.0.0".into(),
             ir_revision: 1,
+            api_prefix: "/v1".into(),
             limits: None,
             rate_classes: vec![],
             auth: Default::default(),

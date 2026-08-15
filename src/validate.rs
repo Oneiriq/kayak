@@ -258,6 +258,7 @@ fn width_word(dimension: Option<u32>) -> String {
 /// Validate a contract against schema definitions; empty means valid.
 pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violation> {
     let mut violations = Vec::new();
+    validate_api_prefix(contract, &mut violations);
     validate_client_methods(contract, &mut violations);
     // Two resources under one name would claim the same REST prefix
     // and the same GraphQL field, and the one written second would
@@ -423,6 +424,34 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// declare and turns a whole class of silent table scan into a build
 /// failure; what it cannot do is make an author declare, which is the
 /// same limit every claim in a declaration language has.
+/// The prefix is pasted straight in front of every resource route, so
+/// a malformed one produces paths that are wrong in every artifact at
+/// once and wrong in the same way -- which is exactly the kind of
+/// mistake that looks deliberate on review.
+fn validate_api_prefix(contract: &Contract, violations: &mut Vec<Violation>) {
+    let prefix = &contract.api_prefix;
+    let problem = if prefix.is_empty() || prefix == "/" {
+        // The root is a legitimate choice: a service whose routes are
+        // already `/accounts` says so with an empty prefix.
+        None
+    } else if !prefix.starts_with('/') {
+        Some("must start with '/'")
+    } else if prefix.contains("//") {
+        Some("contains an empty path segment")
+    } else if prefix.contains(char::is_whitespace) {
+        Some("contains whitespace")
+    } else {
+        None
+    };
+    if let Some(problem) = problem {
+        violations.push(Violation::InvalidName {
+            scope: "contract".into(),
+            name: prefix.clone(),
+            problem: format!("api_prefix {problem}"),
+        });
+    }
+}
+
 /// Every operation in the contract becomes a method on one generated
 /// `Client`, so two that derive the same name emit a duplicate method
 /// in the same impl. The clients cannot resolve that -- they would

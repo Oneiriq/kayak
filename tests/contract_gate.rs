@@ -68,6 +68,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![],
         auth: Default::default(),

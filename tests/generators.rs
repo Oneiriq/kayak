@@ -77,6 +77,7 @@ fn contract() -> Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![],
         // Copal's convention, now declared rather than hardcoded in four

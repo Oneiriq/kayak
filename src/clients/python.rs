@@ -18,6 +18,7 @@ pub fn generate_client_py(
     schema: &[TableDefinition],
 ) -> Result<String, GenerateError> {
     let resources = checked(contract, schema)?;
+    let prefix = contract.prefix();
     let mut out = String::new();
     writeln!(
         out,
@@ -106,7 +107,7 @@ pub fn generate_client_py(
             out,
             "    query = {{k: v for k, v in {{'limit': limit, 'cursor': cursor}}.items() if v is not None}}\n\
              \x20   suffix = f'?{{urllib.parse.urlencode(query)}}' if query else ''\n\
-             \x20   payload = self._request('GET', f'/v1/{plural}{{suffix}}')\n\
+             \x20   payload = self._request('GET', f'{prefix}/{plural}{{suffix}}')\n\
              \x20   return {name}Page(\n\
              \x20     items=[{fields_from} for item in payload.get('items', [])],\n\
              \x20     next_cursor=payload.get('next_cursor'),\n\
@@ -117,7 +118,7 @@ pub fn generate_client_py(
         writeln!(
             out,
             "  def get_{single}(self, id: str) -> {name}:\n\
-             \x20   item = self._request('GET', f'/v1/{plural}/{{id}}')\n\
+             \x20   item = self._request('GET', f'{prefix}/{plural}/{{id}}')\n\
              \x20   return {fields_from}\n",
             single = snake(&singular(&resource.name)),
             plural = resource.name,
@@ -140,7 +141,7 @@ pub fn generate_client_py(
                     .to_owned(),
                 "    suffix = f'?{urllib.parse.urlencode(query)}' if query else ''".to_owned(),
                 format!(
-                    "    payload = self._request('GET', f'/v1/{parent}/{{id}}/{child}{{suffix}}')",
+                    "    payload = self._request('GET', f'{prefix}/{parent}/{{id}}/{child}{{suffix}}')",
                     parent = resource.name,
                     child = sub.name,
                 ),
@@ -187,7 +188,7 @@ pub fn generate_client_py(
                 ActionOutput::Resource => {
                     writeln!(
                         out,
-                        "    item = self._request('{method}', f'/v1/{plural}{path}'{body_argument})\n\
+                        "    item = self._request('{method}', f'{prefix}/{plural}{path}'{body_argument})\n\
                          \x20   return {fields_from}\n",
                         method = action.method,
                         plural = resource.name,
@@ -197,7 +198,7 @@ pub fn generate_client_py(
                 _ => {
                     writeln!(
                         out,
-                        "    return self._request('{method}', f'/v1/{plural}{path}'{body_argument})\n",
+                        "    return self._request('{method}', f'{prefix}/{plural}{path}'{body_argument})\n",
                         method = action.method,
                         plural = resource.name,
                     )

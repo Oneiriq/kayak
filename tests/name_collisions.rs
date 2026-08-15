@@ -32,6 +32,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
         name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![],
         auth: janus::AuthScheme::None,

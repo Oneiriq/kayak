@@ -247,6 +247,7 @@ pub fn scaffold(
             ir_revision: crate::ir::default_ir_revision(),
             rate_classes: Vec::new(),
             limits: None,
+            api_prefix: Contract::default_api_prefix(),
             auth: Default::default(),
             resources,
             queries: Vec::new(),

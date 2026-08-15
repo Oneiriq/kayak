@@ -81,6 +81,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
         name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
+        api_prefix: "/v1".into(),
         rate_classes: vec![],
         limits: None,
         auth: Default::default(),

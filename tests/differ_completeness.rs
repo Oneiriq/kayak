@@ -17,6 +17,7 @@ fn base() -> Contract {
         name: "probe".into(),
         version: "1.0.0".into(),
         ir_revision: 1,
+        api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![RateClass {
             name: "reads".into(),

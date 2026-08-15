@@ -11,6 +11,22 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
+- **A contract says where its routes live.** `/v1` was hardcoded in
+  four client generators and the OpenAPI emitter, which quietly made
+  janus a generator for services that had already chosen janus's
+  version prefix. A service serving `/accounts` could not adopt a
+  generated client that called `/v1/accounts`, and moving its routes to
+  suit the generator breaks whatever is already shipped against them —
+  the wrong direction for a tool whose job is catching breaks.
+
+  `Contract.api_prefix` declares it, `/v1` by default and omitted from
+  the serialized document when it is, so existing contracts round-trip
+  unchanged and every golden holds byte for byte. An empty prefix puts
+  the resources at the root. Moving it is breaking in both directions,
+  since every resource route moves at once. Queries are unaffected —
+  they declare absolute paths, which is why a query could always
+  describe a service's real routes when a resource could not.
+
 - **A contract says how its callers authenticate.** Copal's
   `x-copal-tenant` header was hardcoded in four client generators, so a
   service authenticating any other way had four files to edit and no

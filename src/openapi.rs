@@ -48,6 +48,7 @@ pub fn generate_openapi(
         return Err(GenerateError::Invalid(violations));
     }
 
+    let prefix = contract.prefix();
     let mut paths = Map::new();
     let mut schemas = Map::new();
     for resource in &contract.resources {
@@ -59,11 +60,11 @@ pub fn generate_openapi(
         schemas.insert(schema_name.clone(), resource_schema(resource, table));
         schemas.insert(format!("{schema_name}Page"), page_schema(&schema_name));
         paths.insert(
-            format!("/v1/{}", resource.name),
+            format!("{prefix}/{}", resource.name),
             list_path(resource, &schema_name),
         );
         paths.insert(
-            format!("/v1/{}/{{id}}", resource.name),
+            format!("{prefix}/{}/{{id}}", resource.name),
             get_path(resource, &schema_name),
         );
         for sub in &resource.sub_resources {
@@ -75,7 +76,7 @@ pub fn generate_openapi(
             schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table));
             schemas.insert(format!("{sub_schema}Page"), page_schema(&sub_schema));
             paths.insert(
-                format!("/v1/{}/{{id}}/{}", resource.name, sub.name),
+                format!("{prefix}/{}/{{id}}/{}", resource.name, sub.name),
                 sub_list_path(resource, sub, &sub_schema),
             );
         }
@@ -122,13 +123,13 @@ pub fn generate_openapi(
             }
             if !operations.is_empty() {
                 paths.insert(
-                    format!("/v1/{}/{{id}}/content", resource.name),
+                    format!("{prefix}/{}/{{id}}/content", resource.name),
                     Value::Object(operations),
                 );
             }
         }
         for action in &resource.actions {
-            let path = format!("/v1/{}{}", resource.name, action.path);
+            let path = format!("{prefix}/{}{}", resource.name, action.path);
             let entry = paths
                 .entry(path)
                 .or_insert_with(|| Value::Object(Map::new()));

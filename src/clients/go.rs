@@ -18,6 +18,7 @@ pub fn generate_client_go(
     schema: &[TableDefinition],
 ) -> Result<String, GenerateError> {
     let resources = checked(contract, schema)?;
+    let prefix = contract.prefix();
     let mut out = String::new();
     writeln!(
         out,
@@ -80,14 +81,14 @@ pub fn generate_client_go(
         format!(", {name}: {arg}")
     });
     let set_header = match contract.auth.header() {
-        Some((header, prefix)) => {
+        Some((header, scheme_prefix)) => {
             let name = go_field
                 .as_ref()
                 .expect("a header scheme names its credential");
-            if prefix.is_empty() {
+            if scheme_prefix.is_empty() {
                 format!("\trequest.Header.Set(\"{header}\", c.{name})\n")
             } else {
-                format!("\trequest.Header.Set(\"{header}\", \"{prefix}\"+c.{name})\n")
+                format!("\trequest.Header.Set(\"{header}\", \"{scheme_prefix}\"+c.{name})\n")
             }
         }
         None => String::new(),
@@ -164,7 +165,7 @@ pub fn generate_client_go(
              \tif cursor != \"\" {{\n\
              \t\tquery.Set(\"cursor\", cursor)\n\
              \t}}\n\
-             \tpath := \"/v1/{plural}\"\n\
+             \tpath := \"{prefix}/{plural}\"\n\
              \tif encoded := query.Encode(); encoded != \"\" {{\n\
              \t\tpath += \"?\" + encoded\n\
              \t}}\n\
@@ -180,7 +181,7 @@ pub fn generate_client_go(
             out,
             "func (c *Client) Get{single}(id string) (*{name}, error) {{\n\
              \tvar out {name}\n\
-             \tif err := c.request(\"GET\", \"/v1/{plural}/\"+id, nil, &out); err != nil {{\n\
+             \tif err := c.request(\"GET\", \"{prefix}/{plural}/\"+id, nil, &out); err != nil {{\n\
              \t\treturn nil, err\n\
              \t}}\n\
              \treturn &out, nil\n}}\n",
@@ -206,7 +207,7 @@ pub fn generate_client_go(
                  	if cursor != \"\" {{
                  		query.Set(\"cursor\", cursor)
                  	}}
-                 	path := \"/v1/{parent}/\" + id + \"/{child}\"
+                 	path := \"{prefix}/{parent}/\" + id + \"/{child}\"
                  	if encoded := query.Encode(); encoded != \"\" {{
                  		path += \"?\" + encoded
                  	}}
@@ -236,9 +237,13 @@ pub fn generate_client_go(
                 parameters.push("input map[string]any".to_owned());
             }
             let path_expression = if action.takes_id() {
-                format!("\"/v1/{}\" + {}", resource.name, go_path_expr(&action.path),)
+                format!(
+                    "\"{prefix}/{}\" + {}",
+                    resource.name,
+                    go_path_expr(&action.path),
+                )
             } else {
-                format!("\"/v1/{}{}\"", resource.name, action.path)
+                format!("\"{prefix}/{}{}\"", resource.name, action.path)
             };
             let body_expression = if action.input.is_empty() {
                 "nil"

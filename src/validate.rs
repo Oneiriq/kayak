@@ -78,6 +78,22 @@ pub enum Violation {
     #[error("resource {resource}: duplicate API field name {name} (rename collision)")]
     DuplicateApiName { resource: String, name: String },
 
+    #[error(
+        "resource {resource}: field {name} shadows the id every resource carries; \
+         rename it or leave it unexposed"
+    )]
+    ShadowsId { resource: String, name: String },
+
+    #[error(
+        "{first} and {second} both generate the client method {name}; \
+         rename one of them"
+    )]
+    DuplicateMethod {
+        name: String,
+        first: String,
+        second: String,
+    },
+
     #[error("resource {resource}: action {action}: {problem}")]
     InvalidAction {
         resource: String,
@@ -242,6 +258,7 @@ fn width_word(dimension: Option<u32>) -> String {
 /// Validate a contract against schema definitions; empty means valid.
 pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violation> {
     let mut violations = Vec::new();
+    validate_client_methods(contract, &mut violations);
     // Two resources under one name would claim the same REST prefix
     // and the same GraphQL field, and the one written second would
     // win without saying so.
@@ -406,6 +423,27 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// declare and turns a whole class of silent table scan into a build
 /// failure; what it cannot do is make an author declare, which is the
 /// same limit every claim in a declaration language has.
+/// Every operation in the contract becomes a method on one generated
+/// `Client`, so two that derive the same name emit a duplicate method
+/// in the same impl. The clients cannot resolve that -- they would
+/// simply not compile -- so the contract is refused instead, naming
+/// both sides of the collision.
+fn validate_client_methods(contract: &Contract, violations: &mut Vec<Violation>) {
+    let mut claimed: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for method in crate::methods::client_methods(contract) {
+        match claimed.get(&method.name) {
+            Some(first) => violations.push(Violation::DuplicateMethod {
+                name: method.name.clone(),
+                first: first.clone(),
+                second: method.source,
+            }),
+            None => {
+                claimed.insert(method.name, method.source);
+            }
+        }
+    }
+}
+
 fn validate_searches(query: &Query, violations: &mut Vec<Violation>) {
     let mut declared = std::collections::BTreeSet::new();
     for kind in &query.searches {
@@ -593,6 +631,18 @@ fn validate_listing(
     for exposure in listing.fields {
         if !column_exists(&exposure.column) {
             push_unknown(&exposure.column, violations);
+        }
+        // Every generated resource type carries an `id` the contract
+        // never declares, so an exposure that lands on that name is a
+        // duplicate field the author cannot see in their own contract.
+        // A rename to `id` is already refused by the reserved gate;
+        // this catches the plain column, which is not reserved because
+        // column names belong to the schema layer.
+        if exposure.api_name() == "id" {
+            violations.push(Violation::ShadowsId {
+                resource: listing.scope.clone(),
+                name: exposure.api_name().to_owned(),
+            });
         }
         if !seen_api_names.insert(exposure.api_name().to_owned()) {
             violations.push(Violation::DuplicateApiName {

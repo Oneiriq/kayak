@@ -8,7 +8,8 @@
 mod common;
 
 use janus::clients::{
-    generate_client_go, generate_client_py, generate_client_rs, generate_client_ts,
+    generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
+    generate_client_ts,
 };
 use janus::diff::{diff, Change};
 use janus::generate::{generate_all, TARGETS};
@@ -233,23 +234,16 @@ fn all_targets_generate_and_match_goldens() {
     let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
     assert_eq!(artifacts.len(), TARGETS.len());
     for (filename, content) in &artifacts {
-        let golden_path = format!(
-            "{}/tests/golden/full_{}",
-            env!("CARGO_MANIFEST_DIR"),
-            filename,
-        );
-        let artifact = common::artifact_of(filename);
-        if common::blessed(artifact) {
-            std::fs::write(&golden_path, content).unwrap();
-        }
-        let golden = std::fs::read_to_string(&golden_path)
-            .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS={artifact} to create"));
-        assert_eq!(
-            content.trim(),
-            golden.trim(),
-            "{filename} drifted from its golden; JANUS_BLESS={artifact} to re-bless deliberately",
-        );
+        common::check_golden(filename, content);
     }
+}
+
+#[test]
+fn the_blocking_client_matches_its_golden() {
+    // Opt-in, so it is not in TARGETS and the loop above never sees it.
+    let artifacts = generate_all(&contract(), &schema(), &["client-rs-blocking"]).unwrap();
+    let content = &artifacts["client_blocking.rs"];
+    common::check_golden("client_blocking.rs", content);
 }
 
 #[test]
@@ -1231,4 +1225,61 @@ fn every_target_can_be_blessed_by_name() {
         let name = common::artifact_of(filename);
         assert!(common::BLESSABLE.contains(&name));
     }
+}
+
+#[test]
+fn the_blocking_client_never_suspends() {
+    let client = generate_client_rs_blocking(&contract(), &schema()).unwrap();
+    assert!(
+        !client.contains(".await"),
+        "a blocking client that awaits does not compile without a runtime",
+    );
+    assert!(!client.contains("async fn"), "nor does an async fn");
+    assert!(
+        client.contains("reqwest::blocking::Client"),
+        "and it reaches for the blocking module",
+    );
+    assert!(
+        client.contains("features = [\"json\", \"blocking\"]"),
+        "which the header tells the caller to enable: {}",
+        client.lines().take(4).collect::<Vec<_>>().join("\n"),
+    );
+}
+
+#[test]
+fn the_two_rust_flavours_describe_the_same_contract() {
+    let asynchronous = generate_client_rs(&contract(), &schema()).unwrap();
+    let blocking = generate_client_rs_blocking(&contract(), &schema()).unwrap();
+
+    // Everything the client says ABOUT the contract has to survive the
+    // flavour change: the types, the renames, the nullability, the auth
+    // header, the URLs, the query shaping. Rather than spot-check those
+    // one at a time, undo the four differences and demand the rest be
+    // identical -- which also asserts there are only four.
+    let converted = asynchronous
+        .replace(
+            "features = [\"json\"]",
+            "features = [\"json\", \"blocking\"]",
+        )
+        .replace("reqwest::Client", "reqwest::blocking::Client")
+        .replace("pub async fn", "pub fn")
+        .replace(".await", "");
+    assert_eq!(
+        converted, blocking,
+        "the flavours differ somewhere other than how a call suspends",
+    );
+}
+
+#[test]
+fn the_blocking_client_is_not_in_a_default_run() {
+    assert!(
+        !TARGETS.contains(&"client-rs-blocking"),
+        "a second Rust client in the default set churns every consumer",
+    );
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    assert!(!artifacts.contains_key("client_blocking.rs"));
+
+    // Both at once land in different files rather than racing for one.
+    let both = generate_all(&contract(), &schema(), &["client-rs", "client-rs-blocking"]).unwrap();
+    assert_eq!(both.len(), 2, "{:?}", both.keys().collect::<Vec<_>>());
 }

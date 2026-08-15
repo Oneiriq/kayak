@@ -19,6 +19,7 @@ pub const BLESSABLE: &[&str] = &[
     "sdl",
     "mcp",
     "client-rs",
+    "client-rs-blocking",
     "client-ts",
     "client-py",
     "client-go",
@@ -89,6 +90,29 @@ pub fn wants(requested: Option<&str>, artifact: &str) -> bool {
     names.contains(&artifact)
 }
 
+/// Compare a generated artifact against its golden, re-blessing it
+/// first if this run named it.
+///
+/// # Panics
+/// If the golden is missing, or the artifact drifted from it.
+pub fn check_golden(filename: &str, content: &str) {
+    let golden_path = format!(
+        "{}/tests/golden/full_{filename}",
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    let artifact = artifact_of(filename);
+    if blessed(artifact) {
+        std::fs::write(&golden_path, content).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS={artifact} to create"));
+    assert_eq!(
+        content.trim(),
+        golden.trim(),
+        "{filename} drifted from its golden; JANUS_BLESS={artifact} to re-bless deliberately",
+    );
+}
+
 /// The artifact name for a generated filename, since the generator
 /// keys its output by filename and the blessing vocabulary is the
 /// target names the CLI takes.
@@ -103,6 +127,7 @@ pub fn artifact_of(filename: &str) -> &'static str {
         "schema.graphql" => "sdl",
         "mcp-tools.json" => "mcp",
         "client.rs" => "client-rs",
+        "client_blocking.rs" => "client-rs-blocking",
         "client.ts" => "client-ts",
         "client.py" => "client-py",
         "client.go" => "client-go",

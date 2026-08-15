@@ -7,6 +7,10 @@
 //! serde (stated in the file header); TypeScript uses `fetch`; Python
 //! uses the standard library only; Go uses net/http only.
 //!
+//! Rust emits two clients, async and blocking, from one generator
+//! parameterised by how a call suspends. They are the same contract,
+//! not two contracts that happen to agree.
+//!
 //! This module is why the four SDKs stop being hand-maintained: one
 //! contract, four clients, regenerated instead of ported.
 //!
@@ -24,7 +28,7 @@ mod typescript;
 
 pub use go::generate_client_go;
 pub use python::generate_client_py;
-pub use rust::generate_client_rs;
+pub use rust::{generate_client_rs, generate_client_rs_blocking};
 pub use typescript::generate_client_ts;
 
 use surql::schema::{FieldDefinition, TableDefinition};

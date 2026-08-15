@@ -5,6 +5,7 @@
 
 use std::process::Command;
 
+use janus::generate::TARGETS;
 use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
 use surql::schema::{
     datetime_field, index, int_field, string_field, table_schema, TableDefinition, TableMode,
@@ -232,7 +233,8 @@ fn generate_and_diff_through_the_binary() {
     )
     .unwrap();
 
-    // Generate every target.
+    // Generate every target, naming the opt-in blocking client so the
+    // real toolchain below sees both Rust flavours.
     let output = Command::new(env!("CARGO_BIN_EXE_janus"))
         .args([
             "generate",
@@ -242,6 +244,8 @@ fn generate_and_diff_through_the_binary() {
             schema_path.to_str().unwrap(),
             "--out",
             out_dir.to_str().unwrap(),
+            "--targets",
+            &format!("{},client-rs-blocking", TARGETS.join(",")),
         ])
         .output()
         .unwrap();
@@ -254,6 +258,7 @@ fn generate_and_diff_through_the_binary() {
         "openapi.json",
         "schema.graphql",
         "client.rs",
+        "client_blocking.rs",
         "client.ts",
         "client.py",
         "client.go",
@@ -293,6 +298,29 @@ fn generate_and_diff_through_the_binary() {
             "generated client.go does not parse: {}",
             String::from_utf8_lossy(&check.stderr),
         );
+    }
+    // Rust the same way, since rustfmt parses before it formats. This
+    // catches syntax only -- a stray `.await` in the blocking client
+    // parses fine and fails to build -- so the generators suite asserts
+    // separately that the blocking flavour never suspends.
+    if tool_available("rustfmt", &["--version"]) {
+        for client in ["client.rs", "client_blocking.rs"] {
+            let check = Command::new("rustfmt")
+                .args([
+                    "--edition",
+                    "2021",
+                    "--emit",
+                    "stdout",
+                    out_dir.join(client).to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                check.status.success(),
+                "generated {client} does not parse: {}",
+                String::from_utf8_lossy(&check.stderr),
+            );
+        }
     }
 
     // Diff: identical contracts exit 0.

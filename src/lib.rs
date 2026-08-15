@@ -9,6 +9,7 @@
 
 pub mod clients;
 pub mod diff;
+mod emit;
 pub mod generate;
 mod indexes;
 pub mod ir;

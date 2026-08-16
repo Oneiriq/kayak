@@ -5,12 +5,14 @@
 //! a column named `id` beside the one every resource already carries,
 //! and an action deriving a method name a listing or getter had taken.
 //!
-//! Two different answers, chosen by who owns the name. A column named
+//! Three different answers, chosen by who owns the name. A column named
 //! `type` is ordinary in a schema and ordinary on the wire, and the
 //! other three clients spell it plainly -- so Rust escapes it rather
 //! than the contract being refused over a limitation of one language.
-//! A duplicate method or a second `id` is a contract that cannot be
-//! served by any client, so it is refused.
+//! A duplicate method is a contract that cannot be served by any
+//! client, so it is refused. And a column landing on the identity's
+//! wire name is the identity, described once with the column's real
+//! type, rather than a collision with a synthesised copy.
 
 use janus::clients::{
     generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
@@ -39,7 +41,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
-            identity: None,
+            identity: Default::default(),
             fields: columns.iter().map(|c| FieldExposure::column(*c)).collect(),
             pinned: vec![],
             pinned_either: vec![],
@@ -128,20 +130,21 @@ fn the_other_three_clients_spell_a_keyword_column_plainly() {
 }
 
 #[test]
-fn a_column_named_id_is_refused() {
-    // Every generated resource type carries an `id` the contract never
-    // declares, so this one would be the second field of that name.
+fn a_column_named_id_is_the_identity_described_once() {
+    // Exposing a column that lands on the identity's wire name used to
+    // be refused, because the generators synthesised a second `id`
+    // beside it. Now the exposure IS the identity's description -- one
+    // field, carrying the column's real type -- so the contract is
+    // ordinary and every client spells `id` exactly once.
     let columns = ["id", "path"];
     let contract = contract_exposing(&columns);
     let schema = vec![table(&columns)];
 
     let violations = validate(&contract, &schema);
-    assert!(
-        violations
-            .iter()
-            .any(|v| matches!(v, Violation::ShadowsId { .. })),
-        "{violations:?}",
-    );
+    assert!(violations.is_empty(), "{violations:?}");
+
+    let rust = generate_client_rs(&contract, &schema).unwrap();
+    assert_eq!(rust.matches("pub id: String,").count(), 1, "{rust}");
 }
 
 #[test]

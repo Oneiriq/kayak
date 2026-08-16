@@ -438,10 +438,39 @@ fn diff_fields(
     }
 }
 
+/// How the wire name rows answer to may change: renaming or
+/// withdrawing it strands deployed callers, gaining one is additive.
+fn diff_identity(
+    scope: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    changes: &mut Vec<Change>,
+) {
+    match (before, after) {
+        (before, after) if before == after => {}
+        (None, Some(gained)) => changes.push(Change::Compatible(format!(
+            "{scope}: rows gained the identity {gained}",
+        ))),
+        (before, after) => changes.push(Change::Breaking(format!(
+            "{scope}: identity changed {} -> {}",
+            before.unwrap_or("(none)"),
+            after.unwrap_or("(none)"),
+        ))),
+    }
+}
+
 fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
     let scope = &old.name;
 
     diff_fields(scope, &old.fields, &new.fields, changes);
+
+    // The identity is the wire name callers address instances by: it
+    // rides every row, the by-instance path, and the GraphQL get
+    // argument. Renaming it breaks all three at once, and withdrawing
+    // it removes a field deployed callers read. Rows gaining a name
+    // where they had none is additive. Compared on the wire so that
+    // spelling the default out loud is not a change.
+    diff_identity(scope, old.wire_identity(), new.wire_identity(), changes);
 
     for column in &old.filterable {
         if !new.filterable.contains(column) {
@@ -523,6 +552,12 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
                     &format!("{scope}.{}", old_sub.name),
                     &old_sub.fields,
                     &new_sub.fields,
+                    changes,
+                );
+                diff_identity(
+                    &format!("{scope}.{}", old_sub.name),
+                    old_sub.identity.wire_column(),
+                    new_sub.identity.wire_column(),
                     changes,
                 );
                 for column in &old_sub.filterable {

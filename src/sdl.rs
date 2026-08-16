@@ -35,10 +35,13 @@ pub fn generate_sdl(
         let type_name = resource.graphql_type_name();
 
         wln!(body, "type {type_name} {{");
-        // The identity column, unless the resource exposes it as a field --
-        // then the loop below declares it once, with its real type.
-        let identity = resource.identity_column();
-        if !resource.fields.iter().any(|f| f.api_name() == identity) {
+        // The identity column -- when the rows name themselves at all,
+        // and unless the resource exposes it as a field, in which case
+        // the loop below declares it once, with its real type.
+        let synthesised = resource
+            .wire_identity()
+            .filter(|id| !resource.fields.iter().any(|f| f.api_name() == *id));
+        if let Some(identity) = synthesised {
             wln!(body, "  {identity}: ID!");
         }
         for exposure in &resource.fields {
@@ -81,7 +84,13 @@ pub fn generate_sdl(
             let sub_table = crate::resolve::table(schema, &sub.table)?;
             let sub_type = sub.graphql_type_name(resource);
             wln!(body, "type {sub_type} {{");
-            wln!(body, "  id: ID!");
+            let sub_synthesised = sub
+                .identity
+                .wire_column()
+                .filter(|id| !sub.fields.iter().any(|f| f.api_name() == *id));
+            if let Some(identity) = sub_synthesised {
+                wln!(body, "  {identity}: ID!");
+            }
             for exposure in &sub.fields {
                 let field = crate::resolve::column(sub_table, &exposure.column)?;
                 let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());
@@ -139,7 +148,7 @@ pub fn generate_sdl(
             wln!(
                 body,
                 "  {singular}({}: ID!): {type_name}",
-                resource.identity_column(),
+                crate::openapi::addressed_identity(resource)?,
             );
         }
     }

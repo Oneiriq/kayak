@@ -33,7 +33,7 @@ fn contract(prefix: &str) -> Contract {
         resources: vec![Resource {
             name: "accounts".into(),
             table: "account".into(),
-            identity: None,
+            identity: Default::default(),
             fields: vec![FieldExposure::column("handle")],
             pinned: vec!["realm".into()],
             pinned_either: vec![],

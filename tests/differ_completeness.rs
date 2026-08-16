@@ -27,7 +27,7 @@ fn base() -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
-            identity: None,
+            identity: Default::default(),
             fields: vec![
                 FieldExposure::column("path"),
                 FieldExposure::column("state"),
@@ -65,6 +65,7 @@ fn base() -> Contract {
                 name: "versions".into(),
                 table: "file_version".into(),
                 parent_key: "file".into(),
+                identity: Default::default(),
                 fields: vec![
                     FieldExposure::column("ordinal"),
                     FieldExposure::column("created_by").with_guard("owner_or_admin"),
@@ -262,6 +263,26 @@ fn taking_something_away() -> Vec<Mutation> {
                     FieldExposure::renamed("legacy_ordinal", "ordinal")
             }),
         ),
+        // The identity is the name callers address instances by --
+        // in rows, in the by-instance path, in the GraphQL argument.
+        // Renaming it moves all three; withdrawing it removes a field
+        // deployed callers read.
+        (
+            "the identity is renamed",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].identity = janus::Identity::Column("path".into())
+            }),
+        ),
+        (
+            "the rows lost their identity",
+            Box::new(|c: &mut Contract| c.resources[0].identity = janus::Identity::Absent),
+        ),
+        (
+            "a sub-collection's rows lost their identity",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].sub_resources[0].identity = janus::Identity::Absent
+            }),
+        ),
         // A capability the query stops performing is a capability its
         // callers stop getting, whatever the resolver falls back to.
         (
@@ -354,13 +375,22 @@ fn every_change_that_takes_something_away_is_breaking() {
 #[test]
 fn a_contract_has_no_quarrel_with_itself() {
     assert_eq!(diff(&base(), &base()), vec![]);
+
+    // Spelling the default out loud is not a change: identities are
+    // compared on the wire, where `id` and silence are the same name.
+    let mut spelled = base();
+    spelled.resources[0].identity = janus::Identity::Column("id".into());
+    assert_eq!(diff(&base(), &spelled), vec![]);
 }
 
 /// Adding is not taking away.
 #[test]
 fn additions_are_compatible() {
-    let before = base();
+    let mut before = base();
     let mut after = base();
+    // Rows that gained a name where they had none: additive, the way
+    // a new field is. Everything a caller read is still there.
+    before.resources[0].identity = janus::Identity::Absent;
     after.resources[0].filterable.push("path".into());
     after.resources[0].max_page_size = 500;
     after.rate_classes[0].units_per_minute = 10_000;

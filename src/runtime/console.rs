@@ -2665,7 +2665,7 @@ mod previews {
         Resource {
             name: "things".into(),
             table: "thing".into(),
-            identity: None,
+            identity: Default::default(),
             fields: fields.iter().map(|f| FieldExposure::column(*f)).collect(),
             pinned: vec![],
             pinned_either: vec![],

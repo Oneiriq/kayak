@@ -83,14 +83,13 @@ pub enum Violation {
     #[error("resource {resource}: exposes no fields")]
     NoFields { resource: String },
 
+    #[error(
+        "resource {resource}: {face} addresses one instance, and this resource's \n         wire carries no identity to address it by; name an identity column or \n         drop the face"
+    )]
+    Unaddressable { resource: String, face: String },
+
     #[error("resource {resource}: duplicate API field name {name} (rename collision)")]
     DuplicateApiName { resource: String, name: String },
-
-    #[error(
-        "resource {resource}: field {name} shadows the id every resource carries; \
-         rename it or leave it unexposed"
-    )]
-    ShadowsId { resource: String, name: String },
 
     #[error(
         "{first} and {second} both generate the client method {name}; \
@@ -726,18 +725,6 @@ fn validate_listing(
         if !column_exists(&exposure.column) {
             push_unknown(&exposure.column, violations);
         }
-        // Every generated resource type carries an `id` the contract
-        // never declares, so an exposure that lands on that name is a
-        // duplicate field the author cannot see in their own contract.
-        // A rename to `id` is already refused by the reserved gate;
-        // this catches the plain column, which is not reserved because
-        // column names belong to the schema layer.
-        if exposure.api_name() == "id" {
-            violations.push(Violation::ShadowsId {
-                resource: listing.scope.clone(),
-                name: exposure.api_name().to_owned(),
-            });
-        }
         if !seen_api_names.insert(exposure.api_name().to_owned()) {
             violations.push(Violation::DuplicateApiName {
                 resource: listing.scope.clone(),
@@ -1154,14 +1141,48 @@ fn validate_resource(
     // is the failure this whole option exists to prevent, so it is
     // checked here rather than discovered by a client that cannot parse
     // a successful response.
-    if let Some(identity) = &resource.identity {
-        if !table.fields.iter().any(|field| &field.name == identity) {
-            violations.push(Violation::UnknownColumn {
-                resource: resource.name.clone(),
-                table: resource.table.clone(),
-                column: identity.clone(),
-            });
+    match &resource.identity {
+        crate::ir::Identity::Column(identity) => {
+            if !table.fields.iter().any(|field| &field.name == identity) {
+                violations.push(Violation::UnknownColumn {
+                    resource: resource.name.clone(),
+                    table: resource.table.clone(),
+                    column: identity.clone(),
+                });
+            }
         }
+        // No identity means no way to ADDRESS one instance, so every
+        // face that does is refused -- generating them would document
+        // paths that bind a parameter the wire cannot answer.
+        crate::ir::Identity::Absent => {
+            if !resource.sub_resources.is_empty() {
+                violations.push(Violation::Unaddressable {
+                    resource: resource.name.clone(),
+                    face: "sub-resources (their paths bind the parent)".to_owned(),
+                });
+            }
+            if resource.faces.get {
+                violations.push(Violation::Unaddressable {
+                    resource: resource.name.clone(),
+                    face: "the by-instance GET".to_owned(),
+                });
+            }
+            if resource.content.is_some() {
+                violations.push(Violation::Unaddressable {
+                    resource: resource.name.clone(),
+                    face: "content faces".to_owned(),
+                });
+            }
+            for action in &resource.actions {
+                if action.takes_id() {
+                    violations.push(Violation::Unaddressable {
+                        resource: resource.name.clone(),
+                        face: format!("action {} (its path takes an id)", action.name),
+                    });
+                }
+            }
+        }
+        crate::ir::Identity::Id => {}
     }
     let pinned: Vec<&str> = resource.pinned.iter().map(String::as_str).collect();
     let projects = projects_rows(resource);

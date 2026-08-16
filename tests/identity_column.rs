@@ -1,4 +1,5 @@
-//! A resource that does not name itself `id`.
+//! How a resource's rows name themselves: `id`, another column, or
+//! not at all.
 //!
 //! Every emitter used to write `id` unconditionally: the OpenAPI schema
 //! and its required list, the Rust struct, the GraphQL type, the MCP
@@ -13,13 +14,18 @@
 //! once, while the byte-comparison gate stayed green because the
 //! generator was deterministically wrong.
 //!
-//! These tests hold the two halves: a resource that says nothing still
-//! gets `id`, and a resource that names its identity gets that name
-//! everywhere.
+//! Naming a column was the first fix, and it could not describe the
+//! third shape: rows with no identity at all. An invite listing is
+//! `{account, token_hash, expires_at}` -- nothing on that wire addresses
+//! one row, and a contract forced to pick a column would be lying the
+//! same way `id` was. These tests hold all three states: silence keeps
+//! `id`, a named column reaches every artifact, and named nothing
+//! synthesises nothing while refusing every face that needs to address
+//! an instance.
 
 use janus::generate::generate_all;
 use janus::validate::validate;
-use janus::{AuthScheme, Contract, FieldExposure, Resource};
+use janus::{AuthScheme, Contract, FieldExposure, Identity, Resource, ResourceFaces};
 use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
 
 /// A table keyed by `user` rather than `id`: one presence row per
@@ -39,7 +45,7 @@ fn schema() -> Vec<TableDefinition> {
         ])]
 }
 
-fn contract(identity: Option<&str>) -> Contract {
+fn contract(identity: Identity) -> Contract {
     Contract {
         name: "probe".into(),
         version: "0.1.0".into(),
@@ -51,7 +57,7 @@ fn contract(identity: Option<&str>) -> Contract {
         resources: vec![Resource {
             name: "presences".into(),
             table: "presence".into(),
-            identity: identity.map(str::to_owned),
+            identity,
             fields: vec![FieldExposure::column("status")],
             pinned: vec!["realm".into()],
             pinned_either: vec![],
@@ -77,7 +83,7 @@ fn contract(identity: Option<&str>) -> Contract {
 #[test]
 fn a_resource_that_names_no_identity_still_carries_id() {
     let schema = schema();
-    let contract = contract(None);
+    let contract = contract(Identity::Id);
     assert!(validate(&contract, &schema).is_empty());
 
     let artifacts = generate_all(&contract, &schema, janus::generate::TARGETS).expect("generates");
@@ -96,7 +102,7 @@ fn a_resource_that_names_no_identity_still_carries_id() {
 #[test]
 fn a_named_identity_reaches_every_artifact() {
     let schema = schema();
-    let contract = contract(Some("user"));
+    let contract = contract(Identity::Column("user".into()));
     assert!(
         validate(&contract, &schema).is_empty(),
         "{:?}",
@@ -170,7 +176,7 @@ fn a_named_identity_reaches_every_artifact() {
 #[test]
 fn an_identity_that_is_not_a_column_is_refused() {
     let schema = schema();
-    let contract = contract(Some("nonesuch"));
+    let contract = contract(Identity::Column("nonesuch".into()));
     let violations = validate(&contract, &schema);
     assert!(
         violations.iter().any(|v| {
@@ -179,4 +185,108 @@ fn an_identity_that_is_not_a_column_is_refused() {
         }),
         "expected a violation naming the missing column, got {violations:?}",
     );
+}
+
+/// Rows that carry no identity get no synthesised field, in any
+/// artifact -- the same phantom-`id` failure as a misnamed identity,
+/// prevented the same way.
+#[test]
+fn rows_that_carry_no_identity_get_no_synthesised_field() {
+    let schema = schema();
+    let mut contract = contract(Identity::Absent);
+    contract.resources[0].faces = ResourceFaces::LIST_ONLY;
+    let violations = validate(&contract, &schema);
+    assert!(violations.is_empty(), "{violations:?}");
+
+    let artifacts = generate_all(&contract, &schema, janus::generate::TARGETS).expect("generates");
+
+    let openapi = artifacts.get("openapi.json").expect("an OpenAPI document");
+    let doc: serde_json::Value = serde_json::from_str(openapi).expect("valid JSON");
+    let presence = &doc["components"]["schemas"]["Presence"];
+    assert!(
+        presence["properties"].get("id").is_none(),
+        "no id should be described: {presence}",
+    );
+    let required = presence["required"]
+        .as_array()
+        .expect("a required list")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !required.contains(&"id"),
+        "required should not demand a field the service never sends, got {required:?}",
+    );
+
+    let rust = artifacts.get("client.rs").expect("a Rust client");
+    assert!(
+        !rust.contains("pub id:"),
+        "the Rust struct should carry no id field:\n{rust}",
+    );
+    let sdl = artifacts.get("schema.graphql").expect("an SDL");
+    assert!(
+        !sdl.contains("id: ID!"),
+        "the GraphQL type should carry no id field:\n{sdl}",
+    );
+    let mcp = artifacts.get("mcp-tools.json").expect("an MCP manifest");
+    assert!(
+        mcp.contains("presences_list") && !mcp.contains("presence_get"),
+        "only the listing should become a tool:\n{mcp}",
+    );
+}
+
+/// Every face that addresses one instance is refused when the rows
+/// carry nothing to address them by -- at validation, where the
+/// contradiction is visible, not in a generator that would have to
+/// invent a path parameter out of nothing.
+#[test]
+fn addressing_rows_that_carry_no_identity_is_refused() {
+    let schema = schema();
+    let contract = contract(Identity::Absent);
+    // The default faces include get: addressing one presence by...
+    // nothing. There is no path template, no parameter name, no wire
+    // field for a client to read the answer's identity from.
+    let violations = validate(&contract, &schema);
+    assert!(
+        violations.iter().any(|v| {
+            let rendered = v.to_string();
+            rendered.contains("presences") && rendered.contains("no identity")
+        }),
+        "expected the get face refused for want of an identity, got {violations:?}",
+    );
+}
+
+/// The three states on the contract document: silence, a string, and
+/// an explicit null are all distinct, and each survives the round trip.
+#[test]
+fn the_identity_states_round_trip_through_the_contract_document() {
+    let cases = [
+        (Identity::Id, None),
+        (
+            Identity::Column("user".into()),
+            Some(serde_json::json!("user")),
+        ),
+        (Identity::Absent, Some(serde_json::Value::Null)),
+    ];
+    for (identity, rendered) in cases {
+        let document = serde_json::to_value(contract(identity.clone())).expect("serializes");
+        assert_eq!(
+            document["resources"][0].get("identity").cloned(),
+            rendered,
+            "{identity:?} should render as {rendered:?}",
+        );
+        let parsed: Contract = serde_json::from_value(document).expect("parses");
+        assert_eq!(
+            parsed.resources[0].identity, identity,
+            "{identity:?} should survive the round trip",
+        );
+    }
+
+    // And the spelled-out default reads back as the default, so a
+    // contract that says `"identity": "id"` out loud is not a third
+    // state pretending to be a fourth.
+    let mut document = serde_json::to_value(contract(Identity::Id)).expect("serializes");
+    document["resources"][0]["identity"] = serde_json::json!("id");
+    let parsed: Contract = serde_json::from_value(document).expect("parses");
+    assert_eq!(parsed.resources[0].identity, Identity::Id);
 }

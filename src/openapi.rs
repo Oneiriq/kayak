@@ -41,11 +41,25 @@ pub enum GenerateError {
     /// caller, not take the process down.
     #[error("internal: {what} {name:?} passed validation but could not be resolved")]
     Unresolved {
-        /// What kind of name it was: a table, a column.
+        /// What kind of name it was: a table, a column, an identity.
         what: &'static str,
         /// The name itself.
         name: String,
     },
+}
+
+/// The column an addressed context binds, for a resource validation
+/// has already admitted. A contract that addresses instances of a
+/// resource whose rows carry no identity is refused before generation
+/// starts, so `None` cannot reach an addressed context; failing here
+/// means janus disagrees with its own validator.
+pub(crate) fn addressed_identity(resource: &Resource) -> Result<&str, GenerateError> {
+    resource
+        .wire_identity()
+        .ok_or_else(|| GenerateError::Unresolved {
+            what: "identity of",
+            name: resource.name.clone(),
+        })
 }
 
 fn format_violations(violations: &[Violation]) -> String {
@@ -84,14 +98,15 @@ pub fn generate_openapi(
         // matching the parameter `get_path` declares. `{id}` was a
         // literal here, so a service serving `/presence/{user}` was
         // documented as serving a path it does not have.
-        let identity = resource.identity_column();
         if resource.faces.get {
+            let identity = addressed_identity(resource)?;
             paths.insert(
                 format!("{prefix}/{}/{{{identity}}}", resource.name),
-                get_path(resource, &schema_name),
+                get_path(resource, identity, &schema_name),
             );
         }
         for sub in &resource.sub_resources {
+            let identity = addressed_identity(resource)?;
             let sub_table = crate::resolve::table(schema, &sub.table)?;
             let sub_schema = format!("{schema_name}{}", component_name(&sub.name));
             schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table)?);
@@ -99,10 +114,11 @@ pub fn generate_openapi(
             paths.insert(
                 // The parent segment binds the PARENT's identity.
                 format!("{prefix}/{}/{{{identity}}}/{}", resource.name, sub.name),
-                sub_list_path(resource, sub, &sub_schema),
+                sub_list_path(resource, identity, sub, &sub_schema),
             );
         }
         if let Some(content) = &resource.content {
+            let identity = addressed_identity(resource)?;
             let mut operations = Map::new();
             if content.upload {
                 operations.insert(
@@ -335,8 +351,18 @@ fn sub_resource_schema(
     table: &TableDefinition,
 ) -> Result<Value, GenerateError> {
     let mut properties = Map::new();
-    let mut required = vec![json!("id")];
-    properties.insert("id".into(), json!({"type": "string"}));
+    let mut required = Vec::new();
+    // The same three states as the parent's schema: the sub-resource
+    // says how its rows name themselves, and an `id` the service never
+    // sends is not described here either.
+    let synthesised = sub
+        .identity
+        .wire_column()
+        .filter(|id| !sub.fields.iter().any(|f| f.api_name() == *id));
+    if let Some(identity) = synthesised {
+        properties.insert(identity.to_owned(), json!({"type": "string"}));
+        required.push(json!(identity));
+    }
     for exposure in &sub.fields {
         let field = crate::resolve::column(table, &exposure.column)?;
         let mut schema = field_schema(field);
@@ -357,10 +383,15 @@ fn sub_resource_schema(
 
 /// `GET /v1/{parent}/{id}/{sub}`: the parent id is a path parameter,
 /// and the rest mirrors a list endpoint.
-fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &str) -> Value {
+fn sub_list_path(
+    parent: &Resource,
+    identity: &str,
+    sub: &crate::ir::SubResource,
+    schema_name: &str,
+) -> Value {
     let mut parameters = vec![
         json!({
-            "name": parent.identity_column(),
+            "name": identity,
             "in": "path",
             "required": true,
             "schema": {"type": "string"},
@@ -435,20 +466,21 @@ fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &
 fn resource_schema(resource: &Resource, table: &TableDefinition) -> Result<Value, GenerateError> {
     let mut properties = Map::new();
     let mut required = Vec::new();
-    // Every resource names one instance by SOME column. Usually `id`;
-    // a presence row keyed one-per-account names itself `user`. Asking
-    // the resource rather than assuming is what keeps the document
+    // How a resource names one instance is its own to say: usually
+    // `id`, a presence row keyed one-per-account calls itself `user`,
+    // and an invite's rows carry no identity at all. Asking the
+    // resource rather than assuming is what keeps the document
     // describing the service instead of describing a convention.
-    let identity = resource.identity_column();
-    // Only synthesise the identity when the resource does not already
-    // expose it. A resource whose identity IS one of its columns
-    // describes it once, with that column's real type and nullability,
-    // rather than twice with the second copy contradicting the first.
-    let exposes_identity = resource
-        .fields
-        .iter()
-        .any(|exposure| exposure.api_name() == identity);
-    if !exposes_identity {
+    //
+    // Synthesised only when there is an identity and the resource does
+    // not already expose it. A resource whose identity IS one of its
+    // columns describes it once, with that column's real type and
+    // nullability, rather than twice with the second copy
+    // contradicting the first.
+    let synthesised = resource
+        .wire_identity()
+        .filter(|id| !resource.fields.iter().any(|f| f.api_name() == *id));
+    if let Some(identity) = synthesised {
         properties.insert(identity.to_owned(), json!({"type": "string"}));
         required.push(json!(identity));
     }
@@ -670,7 +702,7 @@ fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> 
     Value::Object(operation)
 }
 
-fn get_path(resource: &Resource, schema_name: &str) -> Value {
+fn get_path(resource: &Resource, identity: &str, schema_name: &str) -> Value {
     let mut operation = json!({
         "operationId": format!("get_{}", resource.name.replace('-', "_")),
         // The parameter is the resource's identity column, and it must
@@ -679,7 +711,7 @@ fn get_path(resource: &Resource, schema_name: &str) -> Value {
         // invalid OpenAPI, which is exactly the state this used to
         // ship for any resource not named by `id`.
         "parameters": [{
-            "name": resource.identity_column(),
+            "name": identity,
             "in": "path",
             "required": true,
             "schema": {"type": "string"},

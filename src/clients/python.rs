@@ -38,7 +38,7 @@ pub fn generate_client_py(
         py_dataclass(
             &mut out,
             &type_name(&resource.name),
-            resource.identity_column(),
+            resource.wire_identity(),
             &resource.fields,
             table,
         )?;
@@ -46,7 +46,7 @@ pub fn generate_client_py(
             py_dataclass(
                 &mut out,
                 &sub_type_name(resource, sub),
-                "id",
+                sub.identity.wire_column(),
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -253,13 +253,14 @@ pub fn generate_client_py(
 fn py_dataclass(
     out: &mut String,
     name: &str,
-    identity: &str,
+    identity: Option<&str>,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "@dataclass\nclass {name}:");
-    // The identity column, unless the resource exposes it as a field.
-    if !fields.iter().any(|f| f.api_name() == identity) {
+    // The identity column -- when the rows name themselves at all, and
+    // unless the resource exposes it as a field.
+    if let Some(identity) = identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id)) {
         wln!(out, "  {identity}: str");
     }
     let mut required_lines = Vec::new();

@@ -56,6 +56,7 @@ fn contract_with_versions() -> Contract {
         name: "versions".into(),
         table: "file_version".into(),
         parent_key: "file".into(),
+        identity: Default::default(),
         fields: vec![
             FieldExposure::column("ordinal"),
             FieldExposure::column("digest"),
@@ -83,7 +84,7 @@ fn contract() -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
-            identity: None,
+            identity: Default::default(),
             fields: vec![
                 FieldExposure::column("path"),
                 FieldExposure::column("state"),

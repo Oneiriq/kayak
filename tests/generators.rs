@@ -91,7 +91,7 @@ fn contract() -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
-            identity: None,
+            identity: Default::default(),
             fields: vec![
                 FieldExposure::column("path"),
                 FieldExposure::column("state"),
@@ -576,6 +576,7 @@ fn python_client_indentation_survives_sub_resources() {
         name: "revisions".into(),
         table: "doc_revision".into(),
         parent_key: "doc".into(),
+        identity: Default::default(),
         fields: vec![
             FieldExposure::column("number"),
             FieldExposure::column("created_at"),
@@ -816,7 +817,7 @@ fn a_closed_set_reaches_the_documents() {
         "the mode parameter carries the set: {openapi}",
     );
 
-    let mcp = serde_json::to_string(&janus::mcp::generate_mcp_tools(&contract)).unwrap();
+    let mcp = serde_json::to_string(&janus::mcp::generate_mcp_tools(&contract).unwrap()).unwrap();
     assert!(
         mcp.contains("\"enum\""),
         "the manifest carries it too: {mcp}"
@@ -921,7 +922,7 @@ fn a_backing_changes_no_wire_surface() {
         "Search backing: lexical via idx_chunk_body over text_chunk.body; \
          vector via idx_chunk_embedding over text_chunk.embedding where configured.",
     );
-    let mcp = janus::generate_mcp_tools(&contract());
+    let mcp = janus::generate_mcp_tools(&contract()).unwrap();
     let search = mcp["tools"]
         .as_array()
         .unwrap()

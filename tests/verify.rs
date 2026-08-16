@@ -60,7 +60,7 @@ fn resource(name: &str, table: &str) -> Resource {
     Resource {
         name: name.into(),
         table: table.into(),
-        identity: None,
+        identity: Default::default(),
         fields: vec![FieldExposure::column("created_at")],
         pinned: vec!["tenant_id".into()],
         pinned_either: vec![],
@@ -281,6 +281,7 @@ async fn a_backed_contract_verifies_clean() {
         name: "versions".into(),
         table: "file_version".into(),
         parent_key: "file".into(),
+        identity: Default::default(),
         fields: vec![FieldExposure::column("number")],
         pinned: vec!["tenant_id".into()],
         filterable: vec![],

@@ -132,7 +132,15 @@ pub fn generate_sdl(
             );
         }
         if resource.faces.get {
-            wln!(body, "  {singular}(id: ID!): {type_name}");
+            // The argument is the resource's identity column: a GraphQL
+            // caller names arguments at the call site, so this is
+            // contract-visible in a way a generated client's local
+            // binding is not.
+            wln!(
+                body,
+                "  {singular}({}: ID!): {type_name}",
+                resource.identity_column(),
+            );
         }
     }
     // Contract queries join the same root: a question with typed

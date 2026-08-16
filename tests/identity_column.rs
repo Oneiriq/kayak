@@ -137,6 +137,30 @@ fn a_named_identity_reaches_every_artifact() {
         required.contains(&"user") && !required.contains(&"id"),
         "required should name the real identity, got {required:?}",
     );
+
+    // The PATH names the identity too, and the parameter declaration
+    // matches the template -- a document whose path says one name and
+    // whose parameter list says another is invalid OpenAPI.
+    let get = &doc["paths"]["/v1/presences/{user}"];
+    assert!(
+        get.get("get").is_some(),
+        "the by-instance path should be /v1/presences/{{user}}; paths: {:?}",
+        doc["paths"]
+            .as_object()
+            .map(|m| m.keys().collect::<Vec<_>>()),
+    );
+    assert_eq!(
+        get["get"]["parameters"][0]["name"], "user",
+        "the path parameter declaration must match the template",
+    );
+
+    // And the GraphQL get query argument, which a caller names at the
+    // call site.
+    let sdl = artifacts.get("schema.graphql").expect("an SDL");
+    assert!(
+        sdl.contains("presence(user: ID!)"),
+        "the SDL get field should take `user`, got:\n{sdl}",
+    );
 }
 
 /// An identity that is not a column would emit a field the service can

@@ -80,9 +80,14 @@ pub fn generate_openapi(
                 list_path(resource, &schema_name),
             );
         }
+        // The by-instance path names the resource's identity column,
+        // matching the parameter `get_path` declares. `{id}` was a
+        // literal here, so a service serving `/presence/{user}` was
+        // documented as serving a path it does not have.
+        let identity = resource.identity_column();
         if resource.faces.get {
             paths.insert(
-                format!("{prefix}/{}/{{id}}", resource.name),
+                format!("{prefix}/{}/{{{identity}}}", resource.name),
                 get_path(resource, &schema_name),
             );
         }
@@ -92,7 +97,8 @@ pub fn generate_openapi(
             schemas.insert(sub_schema.clone(), sub_resource_schema(sub, sub_table)?);
             schemas.insert(format!("{sub_schema}Page"), page_schema(&sub_schema));
             paths.insert(
-                format!("{prefix}/{}/{{id}}/{}", resource.name, sub.name),
+                // The parent segment binds the PARENT's identity.
+                format!("{prefix}/{}/{{{identity}}}/{}", resource.name, sub.name),
                 sub_list_path(resource, sub, &sub_schema),
             );
         }
@@ -105,7 +111,7 @@ pub fn generate_openapi(
                         "operationId": format!("{}_upload_content", crate::naming::singular(&resource.name)),
                         "summary": "Upload the content bytes; the stored digest becomes the ETag.",
                         "parameters": [ {
-                            "name": "id", "in": "path", "required": true,
+                            "name": identity, "in": "path", "required": true,
                             "schema": { "type": "string" },
                         } ],
                         "requestBody": {
@@ -125,7 +131,7 @@ pub fn generate_openapi(
                         "operationId": format!("{}_download_content", crate::naming::singular(&resource.name)),
                         "summary": "Serve the content bytes, with ETag, Range, and conditional requests.",
                         "parameters": [ {
-                            "name": "id", "in": "path", "required": true,
+                            "name": identity, "in": "path", "required": true,
                             "schema": { "type": "string" },
                         } ],
                         "responses": { "200": {
@@ -139,7 +145,7 @@ pub fn generate_openapi(
             }
             if !operations.is_empty() {
                 paths.insert(
-                    format!("{prefix}/{}/{{id}}/content", resource.name),
+                    format!("{prefix}/{}/{{{identity}}}/content", resource.name),
                     Value::Object(operations),
                 );
             }
@@ -354,7 +360,7 @@ fn sub_resource_schema(
 fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &str) -> Value {
     let mut parameters = vec![
         json!({
-            "name": "id",
+            "name": parent.identity_column(),
             "in": "path",
             "required": true,
             "schema": {"type": "string"},
@@ -667,8 +673,13 @@ fn action_operation(resource: &Resource, action: &Action, schema_name: &str) -> 
 fn get_path(resource: &Resource, schema_name: &str) -> Value {
     let mut operation = json!({
         "operationId": format!("get_{}", resource.name.replace('-', "_")),
+        // The parameter is the resource's identity column, and it must
+        // match the template in `generate_openapi` -- a document whose
+        // path says one name and whose parameter list says another is
+        // invalid OpenAPI, which is exactly the state this used to
+        // ship for any resource not named by `id`.
         "parameters": [{
-            "name": "id",
+            "name": resource.identity_column(),
             "in": "path",
             "required": true,
             "schema": {"type": "string"},

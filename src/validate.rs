@@ -1149,6 +1149,20 @@ fn validate_resource(
     table: &TableDefinition,
     violations: &mut Vec<Violation>,
 ) {
+    // An identity naming a column the table does not have would emit a
+    // field the service can never send, in every artifact at once. That
+    // is the failure this whole option exists to prevent, so it is
+    // checked here rather than discovered by a client that cannot parse
+    // a successful response.
+    if let Some(identity) = &resource.identity {
+        if !table.fields.iter().any(|field| &field.name == identity) {
+            violations.push(Violation::UnknownColumn {
+                resource: resource.name.clone(),
+                table: resource.table.clone(),
+                column: identity.clone(),
+            });
+        }
+    }
     let pinned: Vec<&str> = resource.pinned.iter().map(String::as_str).collect();
     let projects = projects_rows(resource);
     if resource.pinned_either.is_empty() {

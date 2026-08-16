@@ -17,6 +17,7 @@ fn resource(name: &str, table: &str) -> Resource {
     Resource {
         name: name.into(),
         table: table.into(),
+        identity: None,
         fields: vec![FieldExposure::column("created_at")],
         pinned: vec!["tenant_id".into()],
         pinned_either: vec![],

@@ -28,6 +28,7 @@ fn chunk_resource() -> Resource {
     Resource {
         name: "chunks".into(),
         table: "text_chunk".into(),
+        identity: None,
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
@@ -124,6 +125,7 @@ fn text_chunk_table() -> TableDefinition {
 fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
     let resource = Resource {
         table: "text_chunk".into(),
+        identity: None,
         fields: vec![
             FieldExposure::column("body"),
             FieldExposure::column("embedding"),
@@ -176,6 +178,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
     let err = generate_openapi(
         &contract(vec![Resource {
             table: "text_chunk".into(),
+            identity: None,
             fields: vec![FieldExposure::column("body")],
             pinned: vec!["tenant_id".into()],
             pinned_either: vec![],
@@ -203,6 +206,7 @@ fn an_ordering_index_beside_a_search_one_still_carries_the_claim() {
     ]);
     let resource = Resource {
         table: "text_chunk".into(),
+        identity: None,
         fields: vec![FieldExposure::column("body")],
         pinned: vec!["tenant_id".into()],
         pinned_either: vec![],
@@ -226,6 +230,7 @@ fn an_unbound_prefix_is_reported_as_a_prefix_and_not_as_an_index_type() {
     ]);
     let resource = Resource {
         table: "text_chunk".into(),
+        identity: None,
         fields: vec![FieldExposure::column("body")],
         pinned: vec![],
         pinned_either: vec![],

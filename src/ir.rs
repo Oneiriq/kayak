@@ -499,6 +499,23 @@ pub struct Resource {
     pub name: String,
     /// Backing table in the schema.
     pub table: String,
+    /// The column that names one instance on the wire: what the
+    /// by-id path binds and what every emitted type carries as its
+    /// identity field. `None` means `id`, which is what every
+    /// resource had before it could say otherwise.
+    ///
+    /// IT IS NOT ALWAYS `id`, AND ASSUMING SO EMITS A FIELD THE
+    /// SERVICE DOES NOT SEND. A presence row is one per account and
+    /// names itself `user`; a friendship keyed by an ordered pair
+    /// names itself `key`. A client generated against the assumption
+    /// fails to deserialize a successful response -- not at the
+    /// margins, but on every read of that resource -- and the
+    /// document, the SDL and four SDKs all carry the same mistake,
+    /// because they all ask the same question of the IR.
+    ///
+    /// Validated like any other column: it must exist on the table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
     /// Projected fields. Nothing is exposed that is not listed.
     pub fields: Vec<FieldExposure>,
     /// Columns the SERVER always equality-binds before any caller input
@@ -772,6 +789,18 @@ impl Action {
 }
 
 impl Resource {
+    /// The column that names one instance: [`Self::identity`], or
+    /// `id`.
+    ///
+    /// Every emitter asks this rather than writing `"id"`, so a
+    /// resource whose rows are keyed by something else describes
+    /// itself the same way in the document, the SDL, the MCP tools
+    /// and all four SDKs.
+    #[must_use]
+    pub fn identity_column(&self) -> &str {
+        self.identity.as_deref().unwrap_or("id")
+    }
+
     /// The GraphQL object type name: the override, or PascalCase
     /// singular of the resource name (`files` -> `File`).
     pub fn graphql_type_name(&self) -> String {
@@ -936,6 +965,7 @@ mod tests {
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
+                identity: None,
                 fields: vec![
                     FieldExposure::column("path"),
                     FieldExposure::renamed("size_bytes", "size"),

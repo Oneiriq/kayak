@@ -487,6 +487,7 @@ mod tests {
         Resource {
             name: "files".into(),
             table: "file".into(),
+            identity: None,
             fields: vec![FieldExposure::column("path")],
             pinned: vec!["tenant_id".into()],
             pinned_either: vec![],

@@ -35,7 +35,12 @@ pub fn generate_sdl(
         let type_name = resource.graphql_type_name();
 
         wln!(body, "type {type_name} {{");
-        wln!(body, "  id: ID!");
+        // The identity column, unless the resource exposes it as a field --
+        // then the loop below declares it once, with its real type.
+        let identity = resource.identity_column();
+        if !resource.fields.iter().any(|f| f.api_name() == identity) {
+            wln!(body, "  {identity}: ID!");
+        }
         for exposure in &resource.fields {
             let field = crate::resolve::column(table, &exposure.column)?;
             let (gql, datetime, json) = graphql_type(field, exposure.guard.is_some());

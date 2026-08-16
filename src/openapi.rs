@@ -429,9 +429,23 @@ fn sub_list_path(parent: &Resource, sub: &crate::ir::SubResource, schema_name: &
 fn resource_schema(resource: &Resource, table: &TableDefinition) -> Result<Value, GenerateError> {
     let mut properties = Map::new();
     let mut required = Vec::new();
-    // Every resource carries an opaque id.
-    properties.insert("id".into(), json!({"type": "string"}));
-    required.push(json!("id"));
+    // Every resource names one instance by SOME column. Usually `id`;
+    // a presence row keyed one-per-account names itself `user`. Asking
+    // the resource rather than assuming is what keeps the document
+    // describing the service instead of describing a convention.
+    let identity = resource.identity_column();
+    // Only synthesise the identity when the resource does not already
+    // expose it. A resource whose identity IS one of its columns
+    // describes it once, with that column's real type and nullability,
+    // rather than twice with the second copy contradicting the first.
+    let exposes_identity = resource
+        .fields
+        .iter()
+        .any(|exposure| exposure.api_name() == identity);
+    if !exposes_identity {
+        properties.insert(identity.to_owned(), json!({"type": "string"}));
+        required.push(json!(identity));
+    }
     for exposure in &resource.fields {
         let field = crate::resolve::column(table, &exposure.column)?;
         let mut schema = field_schema(field);

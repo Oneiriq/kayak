@@ -206,6 +206,7 @@ fn generate(
         rust_struct(
             &mut out,
             &type_name(&resource.name),
+            resource.identity_column(),
             &resource.fields,
             table,
         )?;
@@ -213,6 +214,7 @@ fn generate(
             rust_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
+                "id",
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -478,12 +480,23 @@ fn generate(
 fn rust_struct(
     out: &mut String,
     name: &str,
+    identity: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "#[derive(Debug, Clone, Deserialize)]");
     wln!(out, "pub struct {name} {{");
-    wln!(out, "    pub id: String,");
+    // The identity column, unless the resource already exposes it as a
+    // field -- then the loop below emits it once, with its real type.
+    // Emitting `id` unconditionally is how this generator came to
+    // describe a `Presence` the service never sends.
+    if !fields.iter().any(|f| f.api_name() == identity) {
+        let (ident, rename) = rust_ident(&snake(identity));
+        if let Some(wire) = rename {
+            wln!(out, "    #[serde(rename = \"{wire}\")]");
+        }
+        wln!(out, "    pub {ident}: String,");
+    }
     for exposure in fields {
         let field = column(table, &exposure.column)?;
         let base = match field.field_type {

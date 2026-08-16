@@ -91,6 +91,7 @@ fn contract() -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
+            identity: None,
             fields: vec![
                 FieldExposure::column("path"),
                 FieldExposure::column("state"),

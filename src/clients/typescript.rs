@@ -30,6 +30,7 @@ pub fn generate_client_ts(
         ts_interface(
             &mut out,
             &type_name(&resource.name),
+            resource.identity_column(),
             &resource.fields,
             table,
         )?;
@@ -37,6 +38,7 @@ pub fn generate_client_ts(
             ts_interface(
                 &mut out,
                 &sub_type_name(resource, sub),
+                "id",
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -222,11 +224,15 @@ pub fn generate_client_ts(
 fn ts_interface(
     out: &mut String,
     name: &str,
+    identity: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "export interface {name} {{");
-    wln!(out, "  id: string");
+    // The identity column, unless the resource exposes it as a field.
+    if !fields.iter().any(|f| f.api_name() == identity) {
+        wln!(out, "  {identity}: string");
+    }
     for exposure in fields {
         let field = column(table, &exposure.column)?;
         let base = match field.field_type {

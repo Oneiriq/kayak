@@ -108,11 +108,11 @@ fn list_tool(resource: &Resource) -> Value {
 fn get_tool(resource: &Resource) -> Value {
     json!({
         "name": format!("{}_get", singular(&resource.name)),
-        "description": format!("Fetch one of {} by id.", resource.name),
+        "description": format!("Fetch one of {} by {}.", resource.name, resource.identity_column()),
         "inputSchema": {
             "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"],
+            "properties": { resource.identity_column(): { "type": "string" } },
+            "required": [resource.identity_column()],
             "additionalProperties": false,
         },
         "annotations": annotations(&resource.reads_require, resource.rate_class.as_deref()),
@@ -223,6 +223,7 @@ mod tests {
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
+                identity: None,
                 fields: vec![FieldExposure::column("path")],
                 pinned: vec![],
                 pinned_either: vec![],

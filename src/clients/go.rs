@@ -40,6 +40,7 @@ pub fn generate_client_go(
         go_struct(
             &mut out,
             &type_name(&resource.name),
+            resource.identity_column(),
             &resource.fields,
             table,
         )?;
@@ -47,6 +48,7 @@ pub fn generate_client_go(
             go_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
+                "id",
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -369,11 +371,25 @@ fn go_path_expr(path: &str) -> String {
 fn go_struct(
     out: &mut String,
     name: &str,
+    identity: &str,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "type {name} struct {{");
-    wln!(out, "\tID string `json:\"id\"`");
+    // The identity column, unless the resource exposes it as a field --
+    // then the loop below emits it once, with its real type.
+    if !fields.iter().any(|f| f.api_name() == identity) {
+        // `ID`, not `Id`: Go spells initialisms in full caps, which is
+        // what the emitter said before it could be asked for any other
+        // identity and what every golden expects. Anything else
+        // pascal-cases like the fields below it.
+        let go_name = if identity == "id" {
+            "ID".to_owned()
+        } else {
+            pascal(&snake(identity))
+        };
+        wln!(out, "\t{go_name} string `json:\"{identity}\"`");
+    }
     for exposure in fields {
         let field = column(table, &exposure.column)?;
         let base = match field.field_type {

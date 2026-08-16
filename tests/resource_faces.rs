@@ -36,6 +36,7 @@ fn accounts(faces: ResourceFaces) -> Resource {
     Resource {
         name: "accounts".into(),
         table: "account".into(),
+        identity: None,
         fields: vec![FieldExposure::column("handle")],
         pinned: vec![],
         pinned_either: vec![],

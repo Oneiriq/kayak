@@ -39,6 +39,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
+            identity: None,
             fields: columns.iter().map(|c| FieldExposure::column(*c)).collect(),
             pinned: vec![],
             pinned_either: vec![],

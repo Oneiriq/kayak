@@ -49,6 +49,7 @@ fn contract(either: &[&str], filterable: &[&str]) -> Contract {
         resources: vec![Resource {
             name: "friends".into(),
             table: "friend".into(),
+            identity: None,
             faces: ResourceFaces::LIST_ONLY,
             fields: vec![FieldExposure::column("state")],
             pinned: vec![],

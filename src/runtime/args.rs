@@ -329,6 +329,7 @@ mod tests {
         Resource {
             name: "files".into(),
             table: "file".into(),
+            identity: None,
             fields: vec![crate::ir::FieldExposure::column("path")],
             pinned: vec![],
             pinned_either: vec![],

@@ -187,7 +187,7 @@ fn resource_from(
         table: table.name.clone(),
         // Scaffolding cannot know a table names itself something other
         // than `id`; the author says so if it does.
-        identity: None,
+        identity: crate::ir::Identity::Id,
         fields,
         pinned: bound,
         pinned_either: vec![],

@@ -53,7 +53,7 @@ pub fn generate_all(
                 format!(
                     "{}
 ",
-                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract))?,
+                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract)?)?,
                 ),
             ),
             "openapi" => (

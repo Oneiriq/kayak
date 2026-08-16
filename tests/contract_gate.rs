@@ -40,7 +40,7 @@ fn files_resource() -> Resource {
     Resource {
         name: "files".into(),
         table: "file".into(),
-        identity: None,
+        identity: Default::default(),
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![
@@ -179,7 +179,7 @@ fn pins_no_index_leads_with_are_refused() {
     let resource = Resource {
         name: "deliveries".into(),
         table: "webhook_delivery".into(),
-        identity: None,
+        identity: Default::default(),
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![
@@ -227,6 +227,7 @@ fn a_parent_key_leading_an_index_carries_the_pins() {
         name: "deliveries".into(),
         table: "webhook_delivery".into(),
         parent_key: "endpoint".into(),
+        identity: Default::default(),
         fields: vec![
             FieldExposure::column("state"),
             FieldExposure::column("created_at"),
@@ -260,7 +261,7 @@ fn a_search_index_leading_with_the_pin_is_not_a_seek() {
     let resource = Resource {
         name: "notes".into(),
         table: "note".into(),
-        identity: None,
+        identity: Default::default(),
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
@@ -296,7 +297,7 @@ fn an_unknown_pin_is_reported_once_not_twice() {
     let resource = Resource {
         name: "notes".into(),
         table: "note".into(),
-        identity: None,
+        identity: Default::default(),
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![FieldExposure::column("body")],
@@ -326,7 +327,7 @@ fn unknown_names_and_collisions_are_each_reported() {
     let resource = Resource {
         name: "files".into(),
         table: "file".into(),
-        identity: None,
+        identity: Default::default(),
         filter_options: Default::default(),
         faces: Default::default(),
         fields: vec![
@@ -359,7 +360,7 @@ fn unknown_names_and_collisions_are_each_reported() {
 
     let missing_table = Resource {
         table: "nonexistent".into(),
-        identity: None,
+        identity: Default::default(),
         ..files_resource()
     };
     let violations = validate(&contract(vec![missing_table]), &[file_table()]);

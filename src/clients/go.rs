@@ -40,7 +40,7 @@ pub fn generate_client_go(
         go_struct(
             &mut out,
             &type_name(&resource.name),
-            resource.identity_column(),
+            resource.wire_identity(),
             &resource.fields,
             table,
         )?;
@@ -48,7 +48,7 @@ pub fn generate_client_go(
             go_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
-                "id",
+                sub.identity.wire_column(),
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -371,14 +371,15 @@ fn go_path_expr(path: &str) -> String {
 fn go_struct(
     out: &mut String,
     name: &str,
-    identity: &str,
+    identity: Option<&str>,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "type {name} struct {{");
-    // The identity column, unless the resource exposes it as a field --
-    // then the loop below emits it once, with its real type.
-    if !fields.iter().any(|f| f.api_name() == identity) {
+    // The identity column -- when the rows name themselves at all, and
+    // unless the resource exposes it as a field, in which case the loop
+    // below emits it once, with its real type.
+    if let Some(identity) = identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id)) {
         // `ID`, not `Id`: Go spells initialisms in full caps, which is
         // what the emitter said before it could be asked for any other
         // identity and what every golden expects. Anything else

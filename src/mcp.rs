@@ -18,17 +18,18 @@ use serde_json::{json, Map, Value};
 
 use crate::ir::{ActionOutput, Contract, Query, Resource, TypeRef};
 use crate::naming::singular;
+use crate::openapi::{addressed_identity, GenerateError};
 
 /// The manifest: every tool the contract implies, in MCP's
 /// `tools/list` shape.
-pub fn generate_mcp_tools(contract: &Contract) -> Value {
+pub fn generate_mcp_tools(contract: &Contract) -> Result<Value, GenerateError> {
     let mut tools = Vec::new();
     for resource in &contract.resources {
         if resource.faces.list {
             tools.push(list_tool(resource));
         }
         if resource.faces.get {
-            tools.push(get_tool(resource));
+            tools.push(get_tool(resource)?);
         }
         for action in &resource.actions {
             tools.push(action_tool(resource, action));
@@ -37,9 +38,9 @@ pub fn generate_mcp_tools(contract: &Contract) -> Value {
     for query in &contract.queries {
         tools.push(query_tool(query));
     }
-    json!({
+    Ok(json!({
         "tools": tools,
-    })
+    }))
 }
 
 fn annotations(requires: &[String], rate_class: Option<&str>) -> Value {
@@ -105,18 +106,19 @@ fn list_tool(resource: &Resource) -> Value {
     })
 }
 
-fn get_tool(resource: &Resource) -> Value {
-    json!({
+fn get_tool(resource: &Resource) -> Result<Value, GenerateError> {
+    let identity = addressed_identity(resource)?;
+    Ok(json!({
         "name": format!("{}_get", singular(&resource.name)),
-        "description": format!("Fetch one of {} by {}.", resource.name, resource.identity_column()),
+        "description": format!("Fetch one of {} by {}.", resource.name, identity),
         "inputSchema": {
             "type": "object",
-            "properties": { resource.identity_column(): { "type": "string" } },
-            "required": [resource.identity_column()],
+            "properties": { identity: { "type": "string" } },
+            "required": [identity],
             "additionalProperties": false,
         },
         "annotations": annotations(&resource.reads_require, resource.rate_class.as_deref()),
-    })
+    }))
 }
 
 fn action_tool(resource: &Resource, action: &crate::ir::Action) -> Value {
@@ -223,7 +225,7 @@ mod tests {
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
-                identity: None,
+                identity: Default::default(),
                 fields: vec![FieldExposure::column("path")],
                 pinned: vec![],
                 pinned_either: vec![],
@@ -280,7 +282,7 @@ mod tests {
 
     #[test]
     fn every_face_of_the_contract_becomes_a_tool() {
-        let manifest = generate_mcp_tools(&contract());
+        let manifest = generate_mcp_tools(&contract()).unwrap();
         let names: Vec<&str> = manifest["tools"]
             .as_array()
             .unwrap()
@@ -292,7 +294,7 @@ mod tests {
 
     #[test]
     fn declarations_ride_the_tools() {
-        let manifest = generate_mcp_tools(&contract());
+        let manifest = generate_mcp_tools(&contract()).unwrap();
         let tools = manifest["tools"].as_array().unwrap();
         let remove = tools.iter().find(|t| t["name"] == "file_remove").unwrap();
         assert_eq!(remove["annotations"]["requiredScopes"], json!(["write"]));

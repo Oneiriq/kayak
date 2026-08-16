@@ -17,7 +17,7 @@ fn resource(name: &str, table: &str) -> Resource {
     Resource {
         name: name.into(),
         table: table.into(),
-        identity: None,
+        identity: Default::default(),
         fields: vec![FieldExposure::column("created_at")],
         pinned: vec!["tenant_id".into()],
         pinned_either: vec![],
@@ -47,6 +47,7 @@ fn copal_shaped() -> janus::Contract {
         name: "versions".into(),
         table: "file_version".into(),
         parent_key: "file".into(),
+        identity: Default::default(),
         fields: vec![
             FieldExposure::column("number"),
             FieldExposure::column("created_by").with_guard("owner_or_admin"),
@@ -65,6 +66,7 @@ fn copal_shaped() -> janus::Contract {
         name: "deliveries".into(),
         table: "webhook_delivery".into(),
         parent_key: "endpoint".into(),
+        identity: Default::default(),
         fields: vec![
             FieldExposure::column("state"),
             FieldExposure::column("created_at"),

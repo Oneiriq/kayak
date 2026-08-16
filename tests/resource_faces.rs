@@ -36,7 +36,7 @@ fn accounts(faces: ResourceFaces) -> Resource {
     Resource {
         name: "accounts".into(),
         table: "account".into(),
-        identity: None,
+        identity: Default::default(),
         fields: vec![FieldExposure::column("handle")],
         pinned: vec![],
         pinned_either: vec![],
@@ -57,6 +57,7 @@ fn accounts(faces: ResourceFaces) -> Resource {
             name: "keys".into(),
             table: "account_key".into(),
             parent_key: "user".into(),
+            identity: Default::default(),
             fields: vec![FieldExposure::column("pubkey")],
             pinned: vec![],
             filterable: vec![],

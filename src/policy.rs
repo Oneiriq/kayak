@@ -201,7 +201,7 @@ mod tests {
         Resource {
             name: name.into(),
             table: table.into(),
-            identity: None,
+            identity: Default::default(),
             fields: vec![FieldExposure::column("path")],
             pinned: vec![],
             pinned_either: vec![],

@@ -492,6 +492,76 @@ impl ResourceFaces {
     }
 }
 
+/// How a resource's instances are named on the wire.
+///
+/// Three states, because the wire has three: the SurrealDB-conventional
+/// `id`, a domain column (`user`, `key`), or NO identity field at all --
+/// a service that strips record ids and keys rows by their content. The
+/// third state exists because every SurrealDB record has an id, so
+/// whether the wire carries one is a serialization choice janus cannot
+/// infer; synthesising it anyway is how eight artifacts came to declare
+/// a field one service never sends.
+///
+/// The serde form keeps every existing contract meaning what it meant:
+/// absent = `Id`, a string = `Column`, an explicit `null` = `Absent`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Identity {
+    /// The conventional `id` -- what saying nothing always meant.
+    #[default]
+    Id,
+    /// A named column of the backing table.
+    Column(String),
+    /// No identity field on the wire at all. Instances cannot be
+    /// addressed, so this refuses a get face, content faces, and
+    /// id-taking actions at validation.
+    Absent,
+}
+
+impl Identity {
+    /// The column synthesised into the wire types, or `None` when the
+    /// wire carries no identity. Every schema-and-struct emitter asks
+    /// this.
+    #[must_use]
+    pub fn wire_column(&self) -> Option<&str> {
+        match self {
+            Identity::Id => Some("id"),
+            Identity::Column(name) => Some(name),
+            Identity::Absent => None,
+        }
+    }
+
+    /// For serde: the default state serializes as nothing at all.
+    fn is_default(&self) -> bool {
+        matches!(self, Identity::Id)
+    }
+}
+
+impl serde::Serialize for Identity {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            // Reached only through a container that ignores
+            // skip_serializing_if; the honest spelling either way.
+            Identity::Id => serializer.serialize_str("id"),
+            Identity::Column(name) => serializer.serialize_str(name),
+            Identity::Absent => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Identity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A string names the column; an explicit null says the wire has
+        // no identity; an absent field never reaches here (serde's
+        // `default` answers `Id` first).
+        let named = Option::<String>::deserialize(deserializer)?;
+        Ok(match named {
+            Some(name) if name == "id" => Identity::Id,
+            Some(name) => Identity::Column(name),
+            None => Identity::Absent,
+        })
+    }
+}
+
 /// One exposed resource over one table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
@@ -501,8 +571,8 @@ pub struct Resource {
     pub table: String,
     /// The column that names one instance on the wire: what the
     /// by-id path binds and what every emitted type carries as its
-    /// identity field. `None` means `id`, which is what every
-    /// resource had before it could say otherwise.
+    /// identity field. [`Identity::Id`] is what every resource had
+    /// before it could say otherwise.
     ///
     /// IT IS NOT ALWAYS `id`, AND ASSUMING SO EMITS A FIELD THE
     /// SERVICE DOES NOT SEND. A presence row is one per account and
@@ -513,9 +583,21 @@ pub struct Resource {
     /// document, the SDL and four SDKs all carry the same mistake,
     /// because they all ask the same question of the IR.
     ///
-    /// Validated like any other column: it must exist on the table.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity: Option<String>,
+    /// AND IT IS SOMETIMES NOTHING AT ALL. An invite on this wire is
+    /// `{from, to, token, created_at}` -- no field names one row,
+    /// because no caller ever addresses one (the resource is
+    /// list-only, and its actions take the whole shape). Every
+    /// SurrealDB record HAS an id, so janus cannot infer this: whether
+    /// the wire carries it is the service's serialization choice, and
+    /// only the author knows it. [`Identity::Absent`] says it; the
+    /// default keeps synthesising `id`, which every contract written
+    /// before this could say so meant by saying nothing.
+    ///
+    /// Validated like any other column when named; a resource with no
+    /// identity cannot expose a by-instance face, content faces, or an
+    /// id-taking action, because there is nothing to address one by.
+    #[serde(default, skip_serializing_if = "Identity::is_default")]
+    pub identity: Identity,
     /// Projected fields. Nothing is exposed that is not listed.
     pub fields: Vec<FieldExposure>,
     /// Columns the SERVER always equality-binds before any caller input
@@ -653,6 +735,13 @@ pub struct SubResource {
     /// equality-binds it, so index validation credits it the way it
     /// credits `pinned`.
     pub parent_key: String,
+    /// How this sub-resource's rows name themselves on the wire; the
+    /// same three states as [`Resource::identity`], for the same
+    /// reason -- an account's published keys are `{user, key_id,
+    /// pubkey}`, and synthesising an `id` declares a field the
+    /// service never sends.
+    #[serde(default, skip_serializing_if = "Identity::is_default")]
+    pub identity: Identity,
     /// Projected fields. Nothing is exposed that is not listed.
     pub fields: Vec<FieldExposure>,
     /// Further server-bound columns, beyond `parent_key`.
@@ -790,15 +879,19 @@ impl Action {
 
 impl Resource {
     /// The column that names one instance: [`Self::identity`], or
-    /// `id`.
+    /// `id`, or `None` when the wire carries no identity at all.
     ///
     /// Every emitter asks this rather than writing `"id"`, so a
-    /// resource whose rows are keyed by something else describes
-    /// itself the same way in the document, the SDL, the MCP tools
-    /// and all four SDKs.
+    /// resource whose rows are keyed by something else -- or by
+    /// nothing -- describes itself the same way in the document, the
+    /// SDL, the MCP tools and all four SDKs. Contexts that ADDRESS an
+    /// instance (the get path, content faces) cannot render without
+    /// one; validation refuses those combinations, so an emitter
+    /// reaching a `None` there reports it as the internal
+    /// inconsistency it is rather than inventing a field.
     #[must_use]
-    pub fn identity_column(&self) -> &str {
-        self.identity.as_deref().unwrap_or("id")
+    pub fn wire_identity(&self) -> Option<&str> {
+        self.identity.wire_column()
     }
 
     /// The GraphQL object type name: the override, or PascalCase
@@ -965,7 +1058,7 @@ mod tests {
             resources: vec![Resource {
                 name: "files".into(),
                 table: "file".into(),
-                identity: None,
+                identity: Default::default(),
                 fields: vec![
                     FieldExposure::column("path"),
                     FieldExposure::renamed("size_bytes", "size"),

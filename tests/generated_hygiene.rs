@@ -36,7 +36,7 @@ fn contract(open: bool) -> Contract {
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
-            identity: None,
+            identity: Default::default(),
             fields,
             pinned: vec![],
             pinned_either: vec![],

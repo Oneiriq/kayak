@@ -206,7 +206,7 @@ fn generate(
         rust_struct(
             &mut out,
             &type_name(&resource.name),
-            resource.identity_column(),
+            resource.wire_identity(),
             &resource.fields,
             table,
         )?;
@@ -214,7 +214,7 @@ fn generate(
             rust_struct(
                 &mut out,
                 &sub_type_name(resource, sub),
-                "id",
+                sub.identity.wire_column(),
                 &sub.fields,
                 sub_table(schema, sub)?,
             )?;
@@ -480,17 +480,18 @@ fn generate(
 fn rust_struct(
     out: &mut String,
     name: &str,
-    identity: &str,
+    identity: Option<&str>,
     fields: &[crate::ir::FieldExposure],
     table: &TableDefinition,
 ) -> Result<(), GenerateError> {
     wln!(out, "#[derive(Debug, Clone, Deserialize)]");
     wln!(out, "pub struct {name} {{");
-    // The identity column, unless the resource already exposes it as a
-    // field -- then the loop below emits it once, with its real type.
-    // Emitting `id` unconditionally is how this generator came to
-    // describe a `Presence` the service never sends.
-    if !fields.iter().any(|f| f.api_name() == identity) {
+    // The identity column -- when the rows name themselves at all, and
+    // unless the resource already exposes it as a field, in which case
+    // the loop below emits it once, with its real type. Emitting `id`
+    // unconditionally is how this generator came to describe a
+    // `Presence` the service never sends.
+    if let Some(identity) = identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id)) {
         let (ident, rename) = rust_ident(&snake(identity));
         if let Some(wire) = rename {
             wln!(out, "    #[serde(rename = \"{wire}\")]");

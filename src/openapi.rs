@@ -329,19 +329,14 @@ fn canonical(value: Value) -> Value {
     }
 }
 
-/// `files` -> `File`; `file-versions` -> `FileVersion`.
+/// `files` -> `File`; `file-versions` -> `FileVersion`; `deliveries` ->
+/// `Delivery`. The shared naming module, so the OpenAPI component names
+/// agree with the SDL's type names -- this used to strip a bare `s` locally,
+/// which named the `memories` component `Memorie` while the SDL said
+/// `Memory`, and the two documents described the same resource under
+/// different names.
 fn component_name(resource: &str) -> String {
-    let singular = resource.strip_suffix('s').unwrap_or(resource);
-    singular
-        .split(['-', '_'])
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect()
+    crate::naming::type_name(resource)
 }
 
 /// The object schema for a sub-resource, identical in shape to a

@@ -12,10 +12,10 @@
 //! is no listing and no getter to declare, and a resource with neither
 //! is still where those actions belong.
 
-use janus::diff::{diff, Change};
-use janus::generate::generate_all;
-use janus::validate::validate;
-use janus::{Action, ActionOutput, Contract, FieldExposure, Resource, ResourceFaces, SubResource};
+use kayak::diff::{diff, Change};
+use kayak::generate::generate_all;
+use kayak::validate::validate;
+use kayak::{Action, ActionOutput, Contract, FieldExposure, Resource, ResourceFaces, SubResource};
 use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
 
 fn schema() -> Vec<TableDefinition> {
@@ -91,7 +91,7 @@ fn contract(faces: ResourceFaces) -> Contract {
         api_prefix: String::new(),
         limits: None,
         rate_classes: vec![],
-        auth: janus::AuthScheme::None,
+        auth: kayak::AuthScheme::None,
         resources: vec![accounts(faces)],
         queries: vec![],
     }

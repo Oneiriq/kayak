@@ -8,7 +8,7 @@
 //! characters plus the punctuation the parsers look for. Exhaustive
 //! and deterministic, so a failure names an input rather than a seed.
 
-use janus::runtime::cell;
+use kayak::runtime::cell;
 use serde_json::Value;
 
 /// One-, two-, three- and four-byte characters, the escape and

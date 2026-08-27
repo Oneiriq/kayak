@@ -27,7 +27,7 @@
 //!   derived from it would be dodgeable by omission — a future table
 //!   left out of the contract would sit above the floor instead of
 //!   under it. The service keeps the floor where the schema lives;
-//!   janus derives only what the contract declares.
+//!   kayak derives only what the contract declares.
 //! - **Delete conjuncts.** Retention rules (a version row may be
 //!   deleted only when nothing binds it) are enforceable policy the
 //!   contract cannot declare yet. Until the IR can say them, they are

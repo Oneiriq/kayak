@@ -1,4 +1,4 @@
-//! The Janus runtime: the contract, executed.
+//! The Kayak runtime: the contract, executed.
 //!
 //! Generators compile the contract into artifacts; the runtime executes
 //! it. A service registers a [`resolvers::Resolvers`] set (its own
@@ -43,9 +43,9 @@ pub use console::{
     cell, document, humanize, rail_section, ConsoleAnswer, ConsoleConfig, ConsoleRouter,
     FormOutcome, Page, STYLE,
 };
-pub use context::JanusContext;
+pub use context::KayakContext;
 pub use dispatch::{Dispatcher, RuntimeBuildError};
-pub use error::JanusError;
+pub use error::KayakError;
 pub use guards::{
     guarded_fields, hidden_fields, strip_guarded, strip_hidden, GuardedField, Guards, HiddenField,
 };

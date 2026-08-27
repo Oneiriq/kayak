@@ -9,7 +9,7 @@
 //!
 //! The router is transport-free: the host hands in a method, a path,
 //! a query string, an optional parsed body, and a seeded
-//! [`JanusContext`], and receives a status plus a JSON body. Scope
+//! [`KayakContext`], and receives a status plus a JSON body. Scope
 //! checks, argument validation, rate classes, and guards all run in
 //! the dispatcher, exactly as they do for GraphQL and MCP callers.
 
@@ -20,9 +20,9 @@ use serde_json::{json, Map, Value};
 
 use crate::ir::TypeRef;
 use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirection, SubListArgs};
-use crate::runtime::context::JanusContext;
+use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
-use crate::runtime::error::JanusError;
+use crate::runtime::error::KayakError;
 use crate::runtime::wire::percent_decode;
 
 /// One answered request: an HTTP status and a JSON body.
@@ -36,15 +36,15 @@ fn answer(status: u16, body: Value) -> RestAnswer {
     RestAnswer { status, body }
 }
 
-fn refusal(error: &JanusError) -> RestAnswer {
+fn refusal(error: &KayakError) -> RestAnswer {
     let status = match error {
-        JanusError::BadRequest(_) => 400,
-        JanusError::Unauthorized(_) => 401,
-        JanusError::Forbidden(_) => 403,
-        JanusError::NotFound => 404,
-        JanusError::Conflict(_) => 409,
-        JanusError::PayloadTooLarge(_) => 413,
-        JanusError::TooManyRequests(_) => 429,
+        KayakError::BadRequest(_) => 400,
+        KayakError::Unauthorized(_) => 401,
+        KayakError::Forbidden(_) => 403,
+        KayakError::NotFound => 404,
+        KayakError::Conflict(_) => 409,
+        KayakError::PayloadTooLarge(_) => 413,
+        KayakError::TooManyRequests(_) => 429,
         _ => 500,
     };
     answer(status, json!({ "error": error.to_string() }))
@@ -154,7 +154,7 @@ impl RestRouter {
         path: &str,
         query: &str,
         body: Option<Value>,
-        ctx: JanusContext,
+        ctx: KayakContext,
     ) -> RestAnswer {
         let actual: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         // Best match wins by literal count, so a literal tail beats a
@@ -222,7 +222,7 @@ impl RestRouter {
                 let id = params.get("id").cloned().unwrap_or_default();
                 match self.dispatcher.get(resource, ctx, GetArgs { id }).await {
                     Ok(Some(row)) => answer(200, row),
-                    Ok(None) => refusal(&JanusError::NotFound),
+                    Ok(None) => refusal(&KayakError::NotFound),
                     Err(error) => refusal(&error),
                 }
             }

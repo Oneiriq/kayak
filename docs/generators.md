@@ -28,7 +28,7 @@ unification in the dependency graph.
 ## Library use
 
 ```rust
-let artifacts = janus::generate_all(&contract, &schema, janus::generate::TARGETS)?;
+let artifacts = kayak::generate_all(&contract, &schema, kayak::generate::TARGETS)?;
 for (filename, content) in &artifacts {
     std::fs::write(out_dir.join(filename), content)?;
 }
@@ -37,9 +37,9 @@ for (filename, content) in &artifacts {
 ## CLI use
 
 ```
-janus generate --contract contract.json --schema schema.json \
+kayak generate --contract contract.json --schema schema.json \
     --out generated [--targets openapi,sdl,client-rs]
-janus diff old-contract.json new-contract.json
+kayak diff old-contract.json new-contract.json
 ```
 
 Contracts and schemas travel as data. The schema file is a serialized
@@ -53,13 +53,13 @@ contract review one CI line.
 A SurrealDB deployment can enforce the contract a second time at the
 engine: table `PERMISSIONS` filter rows and field `PERMISSIONS` redact
 columns for sessions authenticated as callers rather than as the
-service. `janus::derive_policy` renders those clauses from the
+service. `kayak::derive_policy` renders those clauses from the
 contract, so tightening a scope or guarding a field moves both
 enforcement layers in one edit instead of leaving the engine on
 yesterday's contract:
 
 ```rust
-let policy = janus::derive_policy(&contract, &janus::ClaimVocabulary::default())?;
+let policy = kayak::derive_policy(&contract, &kayak::ClaimVocabulary::default())?;
 // policy.select_conjuncts: (table, "$token.sc CONTAINS 'read'") for
 //   every resource whose reads require scopes, sub-resource tables
 //   included, since a sub-collection is read under its parent's
@@ -84,7 +84,7 @@ floor (tenant-scoped tables admit only their tenant's rows, tables
 without the column are closed) must derive from the schema rather
 than the contract, or a table left out of the contract would dodge
 it. And delete conjuncts, such as retention, are policy the contract
-cannot declare yet. Janus derives only what the contract declares;
+cannot declare yet. Kayak derives only what the contract declares;
 the floor and the retention rules are the service's to state.
 
 ## The golden workflow
@@ -103,7 +103,7 @@ for (filename, content) in &artifacts {
 
 A contract or schema change then shows up as a reviewable artifact diff in
 the same commit. Re-blessing is an explicit step (`MYSERVICE_BLESS=1 cargo test`);
-any other drift fails the build. Janus's own test suite goes one step
+any other drift fails the build. Kayak's own test suite goes one step
 further where the toolchains exist: the generated Python compiles under
 `py_compile` and the generated Go parses under `gofmt`, so client syntax is
 proven by real compilers.

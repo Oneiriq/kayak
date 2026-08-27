@@ -56,15 +56,15 @@ already been answered.
 
 ## Resolvers
 
-A resolver is an async closure the service registers. Janus never talks to a
+A resolver is an async closure the service registers. Kayak never talks to a
 database; whatever the closure calls (repositories, outside services)
 is the service's business.
 
 ```rust
-use janus::runtime::{Dispatcher, JanusContext, ListOutput, Resolvers};
+use kayak::runtime::{Dispatcher, KayakContext, ListOutput, Resolvers};
 
 let resolvers = Resolvers::new()
-    .list("files", |ctx: JanusContext, args| async move {
+    .list("files", |ctx: KayakContext, args| async move {
         // args.limit is clamped, args.filters and args.sort are
         // allowlist-checked before this closure runs
         Ok(ListOutput { items: vec![], next_cursor: None })
@@ -139,9 +139,9 @@ A hand-written face redacts from the same declarations through the
 projection API, which the dispatcher itself delegates to:
 
 ```rust
-let hidden = janus::runtime::hidden_fields(&contract, "files", None, &guards, &ctx);
+let hidden = kayak::runtime::hidden_fields(&contract, "files", None, &guards, &ctx);
 for row in &mut rows {
-    janus::runtime::strip_hidden(row, &hidden);
+    kayak::runtime::strip_hidden(row, &hidden);
 }
 ```
 
@@ -195,7 +195,7 @@ stream of rows that runs until the subscriber drops it:
 ```rust
 let resolvers = resolvers.watch("events", |ctx, args| async move {
     // args.filters is allowlist-checked, same columns list callers filter on
-    Ok(Box::pin(my_live_query(ctx, args)) as janus::runtime::RowStream)
+    Ok(Box::pin(my_live_query(ctx, args)) as kayak::runtime::RowStream)
 });
 ```
 
@@ -216,7 +216,7 @@ the resolver. An `Err` item ends the subscription with that error, which is
 how a resolver that loses its source should report it rather than closing
 silently.
 
-Watching has no REST shape here. Janus generates no long-lived HTTP
+Watching has no REST shape here. Kayak generates no long-lived HTTP
 operations, so subscriptions appear in the SDL and the served schema and
 nowhere else.
 
@@ -227,7 +227,7 @@ over GraphQL or anything else built on the dispatcher, so policy is written
 once.
 
 ```rust
-use janus::runtime::{BoxFuture, JanusError, Middleware, Next, Operation,
+use kayak::runtime::{BoxFuture, KayakError, Middleware, Next, Operation,
                      Outcome, Payload};
 
 struct RequireTenant;
@@ -236,13 +236,13 @@ impl Middleware for RequireTenant {
     fn handle<'a>(
         &'a self,
         operation: Operation,
-        ctx: JanusContext,
+        ctx: KayakContext,
         payload: Payload,
         next: Next,
-    ) -> BoxFuture<'a, Result<Outcome, JanusError>> {
+    ) -> BoxFuture<'a, Result<Outcome, KayakError>> {
         Box::pin(async move {
             if ctx.get::<Tenant>().is_none() {
-                return Err(JanusError::Unauthorized("no tenant".into()));
+                return Err(KayakError::Unauthorized("no tenant".into()));
             }
             next.run(operation, ctx, payload).await
         })
@@ -254,11 +254,11 @@ A layer can short-circuit (return an error), enrich the context before
 calling `next.run`, observe, or transform the outcome on the way back out.
 Layers execute in registration order, innermost last.
 
-`JanusContext` is a typed extension map seeded per request by the HTTP layer
+`KayakContext` is a typed extension map seeded per request by the HTTP layer
 (a tenant, a principal) and readable in every layer and resolver. A missing
 context is an empty context, so context-requiring middleware fails closed.
 
-Errors carry a stable vocabulary (`JanusError::BadRequest`, `Unauthorized`,
+Errors carry a stable vocabulary (`KayakError::BadRequest`, `Unauthorized`,
 `Forbidden`, `NotFound`, `Conflict`, `Internal`) with HTTP status and
 machine-readable code mappings. Protocol layers translate; resolvers never
 think in protocol terms.
@@ -266,9 +266,9 @@ think in protocol terms.
 ## The GraphQL face
 
 ```rust
-let schema = janus::runtime::graphql::build_schema(&tables, dispatcher)?;
+let schema = kayak::runtime::graphql::build_schema(&tables, dispatcher)?;
 let response = schema.execute(
-    async_graphql::Request::new(query).data(janus_context)
+    async_graphql::Request::new(query).data(kayak_context)
 ).await;
 ```
 
@@ -288,7 +288,7 @@ them, so a read-only contract prints neither.
 limits and any extensions attach:
 
 ```rust
-let schema = janus::runtime::graphql::schema_builder(&tables, dispatcher)?
+let schema = kayak::runtime::graphql::schema_builder(&tables, dispatcher)?
     .limit_depth(10)
     .limit_complexity(500)
     .finish()?;

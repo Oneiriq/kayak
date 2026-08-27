@@ -9,7 +9,7 @@ schema without failing generation.
 ## The shape
 
 ```rust
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure,
+use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure,
             Resource, TypeRef};
 
 Contract {
@@ -488,7 +488,7 @@ engine tightens both layers with one edit (see generators.md).
 caller may hold open at once; over the ceiling refuses with the
 retryable code, and closing a subscription frees the slot. It adds a GraphQL
 Subscription field and requires the service to register a watch resolver;
-nothing about REST changes, because Janus generates no long-lived HTTP
+nothing about REST changes, because Kayak generates no long-lived HTTP
 operations.
 
 Watchers narrow the stream with the same `filterable` columns list callers
@@ -516,12 +516,12 @@ Overrides touch the GraphQL surface only. REST paths and generated clients
 keep the resource name. Every override is validated: GraphQL name grammar,
 no `__` prefix, no collision with a root type, no collision across resources
 on the effective type name, and no collision with a SurrealDB v3 reserved
-name. The reserved-word list is exported as `janus::is_reserved` for schema
+name. The reserved-word list is exported as `kayak::is_reserved` for schema
 layers to reuse. Field renames pass through the same reserved gate.
 
 ## Validation
 
-`janus::validate(&contract, &schema)` returns a list of violations; empty
+`kayak::validate(&contract, &schema)` returns a list of violations; empty
 means valid. Generation refuses invalid contracts with every violation named.
 The checks: tables and columns exist, renames do not collide, filters are
 indexed by an index that can narrow one, sorts are reachable through such an
@@ -538,9 +538,9 @@ ships.
 ### Verifying against a live planner
 
 Static validation proves an index exists; it cannot prove the planner
-uses it. Behind the `verify` cargo feature (janus deliberately
+uses it. Behind the `verify` cargo feature (kayak deliberately
 carries no database client, so the client rides this gate the way
-async-graphql rides `graphql`), `janus::verify::verify_contract`
+async-graphql rides `graphql`), `kayak::verify::verify_contract`
 composes one representative listing per filter claim and per sort
 claim — pins as equality binds, the claimed filter bound, the claimed
 sort ordered, always with a LIMIT — and one probe per search backing
@@ -551,12 +551,12 @@ its plan iterates the table, a backing when its plan does not reach
 the named index — unless the backing is optional and this database
 does not define that index, which is the one excuse on offer and it
 costs one extra round trip, spent only on an optional backing that
-already came back unserved. `janus::verify::probes` exposes the composed queries
+already came back unserved. `kayak::verify::probes` exposes the composed queries
 without running them, so what will be asked is inspectable before the
 asker points at production. The same check runs from the CLI:
 
 ```
-janus verify --contract contract.json --db ws://localhost:8000 \
+kayak verify --contract contract.json --db ws://localhost:8000 \
     --namespace app --database app [--user root --pass secret]
 ```
 
@@ -565,7 +565,7 @@ gates in CI beside `diff`.
 
 ## Diffing
 
-`janus::diff(&old, &new)` compares two contracts at the IR level and
+`kayak::diff(&old, &new)` compares two contracts at the IR level and
 classifies every change. Breaking: a removed resource, field, filter, or
 sort; a field re-pointed to a different column under the same wire name; a
 lowered page ceiling; a moved action; a changed output; an input that became
@@ -579,5 +579,5 @@ a new sub-resource, a backing added to an existing query, a width newly
 pinned, a backing now required of every deployment, a search newly performed,
 and removal of an optional input.
 
-The CLI exits non-zero on breaking changes (`janus diff old.json new.json`),
+The CLI exits non-zero on breaking changes (`kayak diff old.json new.json`),
 which makes the gate one line of CI.

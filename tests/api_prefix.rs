@@ -1,16 +1,16 @@
 //! Where a contract's resource routes live.
 //!
 //! `/v1` was hardcoded in four client generators and the OpenAPI
-//! emitter, which meant janus could only generate clients for services
+//! emitter, which meant kayak could only generate clients for services
 //! that had already chosen its version prefix. A service serving
 //! `/accounts` could not adopt a generated client, and moving its
 //! routes to suit the generator breaks whatever is shipped against
 //! them -- the wrong direction for a tool whose job is catching breaks.
 
-use janus::diff::{diff, Change};
-use janus::generate::generate_all;
-use janus::validate::validate;
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
+use kayak::diff::{diff, Change};
+use kayak::generate::generate_all;
+use kayak::validate::validate;
+use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
 use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
 
 fn schema() -> Vec<TableDefinition> {
@@ -29,7 +29,7 @@ fn contract(prefix: &str) -> Contract {
         api_prefix: prefix.into(),
         limits: None,
         rate_classes: vec![],
-        auth: janus::AuthScheme::None,
+        auth: kayak::AuthScheme::None,
         resources: vec![Resource {
             name: "accounts".into(),
             table: "account".into(),

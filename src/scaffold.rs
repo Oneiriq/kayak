@@ -1,6 +1,6 @@
 //! A contract, started from the schema that will back it.
 //!
-//! Janus asks for a contract before it can do anything, and writing
+//! Kayak asks for a contract before it can do anything, and writing
 //! one by hand against an existing database is the work that stops
 //! people from trying it at all: every field copied, every filter and
 //! sort claim checked against an index by eye. The schema already

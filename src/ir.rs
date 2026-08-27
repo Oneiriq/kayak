@@ -35,8 +35,8 @@ pub struct Contract {
     pub limits: Option<ContractLimits>,
     /// The path every resource face hangs under, `/v1` by default.
     ///
-    /// It was hardcoded, which made janus a generator for services
-    /// that had chosen janus's version prefix before they had janus.
+    /// It was hardcoded, which made kayak a generator for services
+    /// that had chosen kayak's version prefix before they had kayak.
     /// A service already serving `/accounts` cannot adopt a client
     /// that calls `/v1/accounts`, and telling it to move its routes
     /// breaks whatever is already shipped against them — for a
@@ -54,7 +54,7 @@ pub struct Contract {
     /// Every generated client has to put a credential on the wire, and
     /// until this existed each of them hardcoded one consumer's
     /// convention: `x-copal-tenant`, in eight places across four
-    /// languages. That made janus a generator of clients for copal
+    /// languages. That made kayak a generator of clients for copal
     /// rather than for contracts — a service authenticating with a
     /// bearer token got a client that sent somebody else's header and
     /// no credential at all.
@@ -498,7 +498,7 @@ impl ResourceFaces {
 /// `id`, a domain column (`user`, `key`), or NO identity field at all --
 /// a service that strips record ids and keys rows by their content. The
 /// third state exists because every SurrealDB record has an id, so
-/// whether the wire carries one is a serialization choice janus cannot
+/// whether the wire carries one is a serialization choice kayak cannot
 /// infer; synthesising it anyway is how eight artifacts came to declare
 /// a field one service never sends.
 ///
@@ -587,7 +587,7 @@ pub struct Resource {
     /// `{from, to, token, created_at}` -- no field names one row,
     /// because no caller ever addresses one (the resource is
     /// list-only, and its actions take the whole shape). Every
-    /// SurrealDB record HAS an id, so janus cannot infer this: whether
+    /// SurrealDB record HAS an id, so kayak cannot infer this: whether
     /// the wire carries it is the service's serialization choice, and
     /// only the author knows it. [`Identity::Absent`] says it; the
     /// default keeps synthesising `id`, which every contract written

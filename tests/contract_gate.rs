@@ -1,5 +1,5 @@
 //! The gate and the generator, driven by a schema shaped like Copal's
-//! `file` table (built inline: Janus takes schema definitions as input
+//! `file` table (built inline: Kayak takes schema definitions as input
 //! and depends on no consumer).
 //!
 //! What an index can ANSWER — a filter or a sort resting on search
@@ -8,7 +8,7 @@
 
 mod common;
 
-use janus::{generate_openapi, validate, Contract, FieldExposure, Resource, Violation};
+use kayak::{generate_openapi, validate, Contract, FieldExposure, Resource, Violation};
 use surql::schema::{
     bm25_index, datetime_field, index, int_field, string_field, table_schema, unique_index,
     TableDefinition, TableMode,
@@ -223,7 +223,7 @@ fn pins_no_index_leads_with_are_refused() {
 #[test]
 fn a_parent_key_leading_an_index_carries_the_pins() {
     let mut parent = files_resource();
-    parent.sub_resources = vec![janus::SubResource {
+    parent.sub_resources = vec![kayak::SubResource {
         name: "deliveries".into(),
         table: "webhook_delivery".into(),
         parent_key: "endpoint".into(),
@@ -379,11 +379,11 @@ fn generated_openapi_matches_the_golden_document() {
         std::fs::write(golden_path, &rendered).unwrap();
     }
     let golden = std::fs::read_to_string(golden_path)
-        .expect("golden file missing; run with JANUS_BLESS=copal-files to create");
+        .expect("golden file missing; run with KAYAK_BLESS=copal-files to create");
     // Whole, not trimmed: see the note in tests/common::check_golden.
     assert_eq!(
         rendered, golden,
-        "generated OpenAPI drifted from golden; JANUS_BLESS=copal-files to re-bless deliberately",
+        "generated OpenAPI drifted from golden; KAYAK_BLESS=copal-files to re-bless deliberately",
     );
 }
 
@@ -427,7 +427,7 @@ fn chosen_names_are_gated_against_surrealdb_reserved_words() {
     // GraphQL overrides are gated for grammar, __, root names, and
     // reserved words.
     let mut resource = files_resource();
-    resource.graphql = Some(janus::GraphqlNames {
+    resource.graphql = Some(kayak::GraphqlNames {
         type_name: Some("Query".into()),
         list_field: Some("__files".into()),
         get_field: Some("select".into()),
@@ -458,9 +458,9 @@ fn chosen_names_are_gated_against_surrealdb_reserved_words() {
     );
 
     // The reserved gate is exported for schema layers to reuse.
-    assert!(janus::is_reserved("SELECT"));
-    assert!(janus::is_reserved("$auth"));
-    assert!(!janus::is_reserved("tenant_id"));
+    assert!(kayak::is_reserved("SELECT"));
+    assert!(kayak::is_reserved("$auth"));
+    assert!(!kayak::is_reserved("tenant_id"));
 }
 
 /// Two resources cannot share a name.
@@ -510,12 +510,12 @@ fn a_crafted_field_value_does_not_panic_the_cell() {
     ] {
         let json = serde_json::Value::String(value.clone());
         // Rendering at all is the assertion.
-        let _ = janus::runtime::cell("created_at", Some(&json));
+        let _ = kayak::runtime::cell("created_at", Some(&json));
     }
 
     // The ordinary value still shortens the way it did.
     let ordinary = serde_json::Value::String("2026-08-05T19:29:23.394140700Z".to_owned());
-    let rendered = janus::runtime::cell("created_at", Some(&ordinary)).into_string();
+    let rendered = kayak::runtime::cell("created_at", Some(&ordinary)).into_string();
     assert!(
         rendered.contains("2026-08-05 19:29:23"),
         "the shortened form survives: {rendered}",

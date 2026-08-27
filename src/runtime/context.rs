@@ -10,11 +10,11 @@ use std::sync::Arc;
 /// identity), and resolvers read it. Values are `Arc`-shared, so
 /// cloning the context is cheap and clones observe the same values.
 #[derive(Default, Clone)]
-pub struct JanusContext {
+pub struct KayakContext {
     values: BTreeMap<TypeId, Arc<dyn Any + Send + Sync>>,
 }
 
-impl JanusContext {
+impl KayakContext {
     pub fn new() -> Self {
         Self::default()
     }
@@ -25,7 +25,7 @@ impl JanusContext {
         self
     }
 
-    /// Builder-style [`JanusContext::insert`].
+    /// Builder-style [`KayakContext::insert`].
     pub fn with<T: Any + Send + Sync>(mut self, value: T) -> Self {
         self.insert(value);
         self
@@ -39,9 +39,9 @@ impl JanusContext {
     }
 }
 
-impl std::fmt::Debug for JanusContext {
+impl std::fmt::Debug for KayakContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JanusContext")
+        f.debug_struct("KayakContext")
             .field("values", &self.values.len())
             .finish()
     }
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn typed_values_round_trip_and_clones_share() {
-        let mut ctx = JanusContext::new();
+        let mut ctx = KayakContext::new();
         ctx.insert(Tenant("acme".into()));
         let cloned = ctx.clone();
         assert_eq!(cloned.get::<Tenant>(), Some(&Tenant("acme".into())));

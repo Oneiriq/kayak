@@ -13,8 +13,8 @@ use crate::runtime::args::{
     validate_action, validate_list, validate_query, validate_sub_list, validate_watch, ActionArgs,
     GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
 };
-use crate::runtime::context::JanusContext;
-use crate::runtime::error::JanusError;
+use crate::runtime::context::KayakContext;
+use crate::runtime::error::KayakError;
 use crate::runtime::guards::Guards;
 use crate::runtime::middleware::{
     Middleware, Next, Operation, OperationKind, Outcome, Payload, Terminal,
@@ -74,24 +74,24 @@ pub struct Dispatcher {
 /// A resolver the completeness gate proved was registered at build.
 ///
 /// Reaching the `None` arm means the gate and the dispatcher disagree
-/// about what this contract exposes, which is a janus bug rather than
+/// about what this contract exposes, which is a kayak bug rather than
 /// anything the caller did. It answers 500 rather than panicking
 /// because this runs inside a request: a panic here takes down every
 /// other in-flight request on the same task, and tells the operator a
 /// line number where the error tells them which operation is
 /// unserved.
-fn registered<T: Clone>(slot: Option<&T>, kind: &str, name: &str) -> Result<T, JanusError> {
+fn registered<T: Clone>(slot: Option<&T>, kind: &str, name: &str) -> Result<T, KayakError> {
     slot.cloned().ok_or_else(|| {
-        JanusError::Internal(format!(
+        KayakError::Internal(format!(
             "no {kind} resolver registered for {name}:              the completeness gate and the dispatcher disagree"
         ))
     })
 }
 
 /// The name an operation carries for the thing it addresses.
-fn named(slot: Option<&String>, what: &str) -> Result<String, JanusError> {
+fn named(slot: Option<&String>, what: &str) -> Result<String, KayakError> {
     slot.cloned().ok_or_else(|| {
-        JanusError::Internal(format!("an operation of this kind carries no {what} name"))
+        KayakError::Internal(format!("an operation of this kind carries no {what} name"))
     })
 }
 
@@ -282,21 +282,21 @@ impl Dispatcher {
         &self.contract
     }
 
-    fn resource(&self, name: &str) -> Result<&Resource, JanusError> {
+    fn resource(&self, name: &str) -> Result<&Resource, KayakError> {
         self.contract
             .resources
             .iter()
             .find(|r| r.name == name)
-            .ok_or_else(|| JanusError::BadRequest(format!("unknown resource {name}")))
+            .ok_or_else(|| KayakError::BadRequest(format!("unknown resource {name}")))
     }
 
-    fn action_of<'a>(resource: &'a Resource, name: &str) -> Result<&'a Action, JanusError> {
+    fn action_of<'a>(resource: &'a Resource, name: &str) -> Result<&'a Action, KayakError> {
         resource
             .actions
             .iter()
             .find(|a| a.name == name)
             .ok_or_else(|| {
-                JanusError::BadRequest(format!(
+                KayakError::BadRequest(format!(
                     "unknown action {name} on resource {}",
                     resource.name,
                 ))
@@ -403,7 +403,7 @@ impl Dispatcher {
                             Err(error) => Err(error),
                         }
                     }
-                    _ => Err(JanusError::Internal(
+                    _ => Err(KayakError::Internal(
                         "payload does not match operation kind".into(),
                     )),
                 }?;
@@ -421,9 +421,9 @@ impl Dispatcher {
     pub async fn list(
         &self,
         resource: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         mut args: ListArgs,
-    ) -> Result<ListOutput, JanusError> {
+    ) -> Result<ListOutput, KayakError> {
         validate_list(self.resource(resource)?, &mut args)?;
         let operation = Operation {
             resource: resource.to_owned(),
@@ -437,7 +437,7 @@ impl Dispatcher {
             .await?
         {
             Outcome::List(output) => Ok(output),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
@@ -447,9 +447,9 @@ impl Dispatcher {
     pub async fn get(
         &self,
         resource: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         args: GetArgs,
-    ) -> Result<Option<serde_json::Value>, JanusError> {
+    ) -> Result<Option<serde_json::Value>, KayakError> {
         self.resource(resource)?;
         let operation = Operation {
             resource: resource.to_owned(),
@@ -459,7 +459,7 @@ impl Dispatcher {
         };
         match self.chain().run(operation, ctx, Payload::Get(args)).await? {
             Outcome::Get(row) => Ok(row),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
@@ -469,15 +469,15 @@ impl Dispatcher {
     pub async fn query(
         &self,
         name: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         mut args: QueryArgs,
-    ) -> Result<serde_json::Value, JanusError> {
+    ) -> Result<serde_json::Value, KayakError> {
         let declared = self
             .contract
             .queries
             .iter()
             .find(|q| q.name == name)
-            .ok_or_else(|| JanusError::BadRequest(format!("no query {name}")))?;
+            .ok_or_else(|| KayakError::BadRequest(format!("no query {name}")))?;
         validate_query(declared, &mut args)?;
         let operation = Operation {
             resource: name.to_owned(),
@@ -491,7 +491,7 @@ impl Dispatcher {
             .await?
         {
             Outcome::Query(value) => Ok(value),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
@@ -502,9 +502,9 @@ impl Dispatcher {
         &self,
         resource: &str,
         action: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         mut args: ActionArgs,
-    ) -> Result<Option<serde_json::Value>, JanusError> {
+    ) -> Result<Option<serde_json::Value>, KayakError> {
         let declared = Self::action_of(self.resource(resource)?, action)?;
         validate_action(declared, &mut args)?;
         let operation = Operation {
@@ -519,19 +519,19 @@ impl Dispatcher {
             .await?
         {
             Outcome::Action(value) => Ok(value),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
     }
 
-    fn sub_of<'a>(resource: &'a Resource, name: &str) -> Result<&'a SubResource, JanusError> {
+    fn sub_of<'a>(resource: &'a Resource, name: &str) -> Result<&'a SubResource, KayakError> {
         resource
             .sub_resources
             .iter()
             .find(|s| s.name == name)
             .ok_or_else(|| {
-                JanusError::BadRequest(format!(
+                KayakError::BadRequest(format!(
                     "unknown sub-resource {name} on resource {}",
                     resource.name,
                 ))
@@ -545,9 +545,9 @@ impl Dispatcher {
         &self,
         resource: &str,
         sub: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         mut args: SubListArgs,
-    ) -> Result<ListOutput, JanusError> {
+    ) -> Result<ListOutput, KayakError> {
         let declared = Self::sub_of(self.resource(resource)?, sub)?;
         validate_sub_list(declared, &mut args)?;
         let operation = Operation {
@@ -562,7 +562,7 @@ impl Dispatcher {
             .await?
         {
             Outcome::List(output) => Ok(output),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
@@ -573,9 +573,9 @@ impl Dispatcher {
     pub async fn watch(
         &self,
         resource: &str,
-        ctx: JanusContext,
+        ctx: KayakContext,
         args: WatchArgs,
-    ) -> Result<RowStream, JanusError> {
+    ) -> Result<RowStream, KayakError> {
         validate_watch(self.resource(resource)?, &args)?;
         let operation = Operation {
             resource: resource.to_owned(),
@@ -589,7 +589,7 @@ impl Dispatcher {
             .await?
         {
             Outcome::Watch(stream) => Ok(stream),
-            _ => Err(JanusError::Internal(
+            _ => Err(KayakError::Internal(
                 "resolver returned a mismatched outcome".into(),
             )),
         }
@@ -624,7 +624,7 @@ struct SlottedStream {
 }
 
 impl futures_core::Stream for SlottedStream {
-    type Item = Result<serde_json::Value, JanusError>;
+    type Item = Result<serde_json::Value, KayakError>;
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -638,9 +638,9 @@ impl futures_core::Stream for SlottedStream {
 /// subscription is what frees a slot.
 fn acquire_watch_slot(
     contract: &Contract,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
     counts: &Arc<std::sync::Mutex<std::collections::HashMap<String, u32>>>,
-) -> Result<Option<WatchSlot>, JanusError> {
+) -> Result<Option<WatchSlot>, KayakError> {
     let Some(ceiling) = contract.limits.and_then(|l| l.max_watches_per_principal) else {
         return Ok(None);
     };
@@ -650,10 +650,10 @@ fn acquire_watch_slot(
         .unwrap_or_else(|| "anonymous".to_owned());
     let mut counts_map = counts
         .lock()
-        .map_err(|_| JanusError::Internal("watch ledger poisoned".into()))?;
+        .map_err(|_| KayakError::Internal("watch ledger poisoned".into()))?;
     let open = counts_map.entry(subject.clone()).or_insert(0);
     if *open >= ceiling {
-        return Err(JanusError::TooManyRequests(format!(
+        return Err(KayakError::TooManyRequests(format!(
             "watch ceiling of {ceiling} reached; close a subscription to open another",
         )));
     }
@@ -722,7 +722,7 @@ fn guarded_for(
 fn hidden_fields(
     contract: &Contract,
     operation: &Operation,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
     guards: &Guards,
 ) -> Vec<(String, String)> {
     crate::runtime::guards::hidden_in(operation_fields(contract, operation), guards, ctx)
@@ -738,7 +738,7 @@ fn hidden_fields(
 fn refuse_hidden_narrowing(
     hidden: &[(String, String)],
     payload: &Payload,
-) -> Result<(), JanusError> {
+) -> Result<(), KayakError> {
     if hidden.is_empty() {
         return Ok(());
     }
@@ -751,14 +751,14 @@ fn refuse_hidden_narrowing(
     };
     for column in filters.keys() {
         if hidden_column(column) {
-            return Err(JanusError::Forbidden(format!(
+            return Err(KayakError::Forbidden(format!(
                 "filtering on {column} requires permission to see it",
             )));
         }
     }
     if let Some((column, _)) = sort {
         if hidden_column(column) {
-            return Err(JanusError::Forbidden(format!(
+            return Err(KayakError::Forbidden(format!(
                 "sorting on {column} requires permission to see it",
             )));
         }
@@ -773,7 +773,7 @@ fn refuse_hidden_narrowing(
 fn project_guarded(
     outcome: Outcome,
     guarded: Vec<crate::runtime::guards::GuardedField>,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
 ) -> Outcome {
     if guarded.is_empty() {
         return outcome;
@@ -812,9 +812,9 @@ fn project_guarded(
             }
             impl<S> futures_core::Stream for Projected<S>
             where
-                S: futures_core::Stream<Item = Result<serde_json::Value, JanusError>> + Unpin,
+                S: futures_core::Stream<Item = Result<serde_json::Value, KayakError>> + Unpin,
             {
-                type Item = Result<serde_json::Value, JanusError>;
+                type Item = Result<serde_json::Value, KayakError>;
                 fn poll_next(
                     self: std::pin::Pin<&mut Self>,
                     cx: &mut std::task::Context<'_>,
@@ -844,10 +844,10 @@ fn project_guarded(
 async fn charge_rate(
     contract: &Contract,
     operation: &Operation,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
     store: Option<&dyn RateStore>,
     payload: &Payload,
-) -> Result<(), JanusError> {
+) -> Result<(), KayakError> {
     let Some(store) = store else { return Ok(()) };
     let class_name = if operation.kind == OperationKind::Query {
         contract
@@ -863,7 +863,7 @@ async fn charge_rate(
             return Ok(());
         };
         let Some(class) = contract.rate_classes.iter().find(|c| c.name == class_name) else {
-            return Err(JanusError::Internal(format!(
+            return Err(KayakError::Internal(format!(
                 "rate class {class_name} is not defined",
             )));
         };
@@ -875,7 +875,7 @@ async fn charge_rate(
         return if store.charge(&bucket, 1, class.units_per_minute).await? {
             Ok(())
         } else {
-            Err(JanusError::TooManyRequests(format!(
+            Err(KayakError::TooManyRequests(format!(
                 "rate class {class_name} exhausted; retry next minute",
             )))
         };
@@ -907,7 +907,7 @@ async fn charge_rate(
     let Some(class) = contract.rate_classes.iter().find(|c| c.name == class_name) else {
         // Validation refuses this shape at generation; a runtime that
         // reaches it anyway fails closed rather than metering nobody.
-        return Err(JanusError::Internal(format!(
+        return Err(KayakError::Internal(format!(
             "rate class {class_name} is not defined",
         )));
     };
@@ -927,7 +927,7 @@ async fn charge_rate(
     if store.charge(&bucket, units, class.units_per_minute).await? {
         Ok(())
     } else {
-        Err(JanusError::TooManyRequests(format!(
+        Err(KayakError::TooManyRequests(format!(
             "rate class {class_name} exhausted; retry next minute",
         )))
     }
@@ -973,21 +973,21 @@ fn required_scopes<'a>(contract: &'a Contract, operation: &Operation) -> &'a [St
 fn enforce_scopes(
     contract: &Contract,
     operation: &Operation,
-    ctx: &JanusContext,
-) -> Result<(), JanusError> {
+    ctx: &KayakContext,
+) -> Result<(), KayakError> {
     let required = required_scopes(contract, operation);
     if required.is_empty() {
         return Ok(());
     }
     let Some(principal) = ctx.get::<Principal>() else {
-        return Err(JanusError::Unauthorized(format!(
+        return Err(KayakError::Unauthorized(format!(
             "scope {} requires an identified caller",
             required.join(", "),
         )));
     };
     for scope in required {
         if !principal.has(scope) {
-            return Err(JanusError::Forbidden(format!("scope {scope} required")));
+            return Err(KayakError::Forbidden(format!("scope {scope} required")));
         }
     }
     Ok(())

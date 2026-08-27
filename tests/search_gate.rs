@@ -11,7 +11,7 @@
 //! test binary is its own crate; nothing here is shared, and nothing
 //! here needs to be.
 
-use janus::{
+use kayak::{
     generate_openapi, validate, ActionField, Contract, FieldExposure, Query, Resource,
     SearchBacking, SearchKind, TypeRef, Violation,
 };
@@ -160,7 +160,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
 
     // Refusing is half the job. An author who reads "not covered by any
     // index" against a table that visibly has one goes looking for the
-    // bug in janus, so the message names the index they were looking at
+    // bug in kayak, so the message names the index they were looking at
     // and what it turned out to be.
     let text = violations
         .iter()

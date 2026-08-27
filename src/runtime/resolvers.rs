@@ -1,6 +1,6 @@
 //! The resolver registry: where a service plugs its own data access in.
 //!
-//! Janus never talks to a database. A resolver is any async closure the
+//! Kayak never talks to a database. A resolver is any async closure the
 //! service registers (over surql-rs repositories or another
 //! service), and the dispatcher guarantees it only ever sees
 //! contract-validated arguments.
@@ -15,8 +15,8 @@ use futures_core::Stream;
 use crate::runtime::args::{
     ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
 };
-use crate::runtime::context::JanusContext;
-use crate::runtime::error::JanusError;
+use crate::runtime::context::KayakContext;
+use crate::runtime::error::KayakError;
 
 /// The boxed future every resolver and middleware returns.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -25,49 +25,49 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// get produce, arriving until the subscriber drops the stream. An
 /// `Err` item ends the subscription with that error; a resolver that
 /// loses its source should yield one rather than closing silently.
-pub type RowStream = Pin<Box<dyn Stream<Item = Result<serde_json::Value, JanusError>> + Send>>;
+pub type RowStream = Pin<Box<dyn Stream<Item = Result<serde_json::Value, KayakError>> + Send>>;
 
 pub(crate) type ListResolver = Arc<
-    dyn Fn(JanusContext, ListArgs) -> BoxFuture<'static, Result<ListOutput, JanusError>>
+    dyn Fn(KayakContext, ListArgs) -> BoxFuture<'static, Result<ListOutput, KayakError>>
         + Send
         + Sync,
 >;
 pub(crate) type GetResolver = Arc<
     dyn Fn(
-            JanusContext,
+            KayakContext,
             GetArgs,
-        ) -> BoxFuture<'static, Result<Option<serde_json::Value>, JanusError>>
+        ) -> BoxFuture<'static, Result<Option<serde_json::Value>, KayakError>>
         + Send
         + Sync,
 >;
 /// A contract query's resolver: parameters in, JSON answer out.
 pub(crate) type QueryResolver = Arc<
     dyn Fn(
-            JanusContext,
+            KayakContext,
             QueryArgs,
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<serde_json::Value, JanusError>> + Send>,
+            Box<dyn std::future::Future<Output = Result<serde_json::Value, KayakError>> + Send>,
         > + Send
         + Sync,
 >;
 
 pub(crate) type ActionResolver = Arc<
     dyn Fn(
-            JanusContext,
+            KayakContext,
             ActionArgs,
-        ) -> BoxFuture<'static, Result<Option<serde_json::Value>, JanusError>>
+        ) -> BoxFuture<'static, Result<Option<serde_json::Value>, KayakError>>
         + Send
         + Sync,
 >;
 
 pub(crate) type SubListResolver = Arc<
-    dyn Fn(JanusContext, SubListArgs) -> BoxFuture<'static, Result<ListOutput, JanusError>>
+    dyn Fn(KayakContext, SubListArgs) -> BoxFuture<'static, Result<ListOutput, KayakError>>
         + Send
         + Sync,
 >;
 
 pub(crate) type WatchResolver = Arc<
-    dyn Fn(JanusContext, WatchArgs) -> BoxFuture<'static, Result<RowStream, JanusError>>
+    dyn Fn(KayakContext, WatchArgs) -> BoxFuture<'static, Result<RowStream, KayakError>>
         + Send
         + Sync,
 >;
@@ -93,8 +93,8 @@ impl Resolvers {
     /// wire shape.
     pub fn list<F, Fut>(mut self, resource: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, ListArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ListOutput, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, ListArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ListOutput, KayakError>> + Send + 'static,
     {
         self.list.insert(
             resource.to_owned(),
@@ -107,8 +107,8 @@ impl Resolvers {
     /// means not found (protocols render null / 404).
     pub fn get<F, Fut>(mut self, resource: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, GetArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<serde_json::Value>, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, GetArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<serde_json::Value>, KayakError>> + Send + 'static,
     {
         self.get.insert(
             resource.to_owned(),
@@ -123,8 +123,8 @@ impl Resolvers {
     /// value for `Json`, `None` for `None`).
     pub fn action<F, Fut>(mut self, resource: &str, action: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, ActionArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Option<serde_json::Value>, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, ActionArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<serde_json::Value>, KayakError>> + Send + 'static,
     {
         self.action.insert(
             (resource.to_owned(), action.to_owned()),
@@ -138,8 +138,8 @@ impl Resolvers {
     /// declaration, and returns the answer.
     pub fn query<F, Fut>(mut self, name: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, QueryArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<serde_json::Value, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, QueryArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<serde_json::Value, KayakError>> + Send + 'static,
     {
         self.query.insert(
             name.to_owned(),
@@ -153,8 +153,8 @@ impl Resolvers {
     /// arguments, and returns one page in wire shape.
     pub fn sub_list<F, Fut>(mut self, resource: &str, sub: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, SubListArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ListOutput, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, SubListArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ListOutput, KayakError>> + Send + 'static,
     {
         self.sub_list.insert(
             (resource.to_owned(), sub.to_owned()),
@@ -174,8 +174,8 @@ impl Resolvers {
     /// itself, per row.
     pub fn watch<F, Fut>(mut self, resource: &str, f: F) -> Self
     where
-        F: Fn(JanusContext, WatchArgs) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<RowStream, JanusError>> + Send + 'static,
+        F: Fn(KayakContext, WatchArgs) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<RowStream, KayakError>> + Send + 'static,
     {
         self.watch.insert(
             resource.to_owned(),

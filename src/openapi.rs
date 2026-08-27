@@ -34,7 +34,7 @@ pub enum GenerateError {
     /// A name that validation resolves could not be resolved while
     /// generating.
     ///
-    /// Reaching this means the two disagree, which is a bug in janus
+    /// Reaching this means the two disagree, which is a bug in kayak
     /// rather than in the contract -- validation runs first and refuses
     /// exactly these. It is an error and not a panic because a library
     /// that is wrong about its own invariant should say so to its
@@ -52,7 +52,7 @@ pub enum GenerateError {
 /// has already admitted. A contract that addresses instances of a
 /// resource whose rows carry no identity is refused before generation
 /// starts, so `None` cannot reach an addressed context; failing here
-/// means janus disagrees with its own validator.
+/// means kayak disagrees with its own validator.
 pub(crate) fn addressed_identity(resource: &Resource) -> Result<&str, GenerateError> {
     resource
         .wire_identity()

@@ -6,8 +6,8 @@
 //! this states the changes that are breaking by definition, applies
 //! each to a contract, and insists each is reported.
 
-use janus::diff::diff;
-use janus::{
+use kayak::diff::diff;
+use kayak::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, Query, RateClass, Resource,
     SearchBacking, SearchKind, SubResource, TypeRef,
 };
@@ -23,7 +23,7 @@ fn base() -> Contract {
             name: "reads".into(),
             units_per_minute: 1_000,
         }],
-        auth: janus::AuthScheme::Bearer,
+        auth: kayak::AuthScheme::Bearer,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),
@@ -217,7 +217,7 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "a ceiling appeared",
             Box::new(|c: &mut Contract| {
-                c.limits = Some(janus::ContractLimits {
+                c.limits = Some(kayak::ContractLimits {
                     max_depth: Some(3),
                     max_complexity: None,
                     max_watches_per_principal: None,
@@ -270,17 +270,17 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "the identity is renamed",
             Box::new(|c: &mut Contract| {
-                c.resources[0].identity = janus::Identity::Column("path".into())
+                c.resources[0].identity = kayak::Identity::Column("path".into())
             }),
         ),
         (
             "the rows lost their identity",
-            Box::new(|c: &mut Contract| c.resources[0].identity = janus::Identity::Absent),
+            Box::new(|c: &mut Contract| c.resources[0].identity = kayak::Identity::Absent),
         ),
         (
             "a sub-collection's rows lost their identity",
             Box::new(|c: &mut Contract| {
-                c.resources[0].sub_resources[0].identity = janus::Identity::Absent
+                c.resources[0].sub_resources[0].identity = kayak::Identity::Absent
             }),
         ),
         // A capability the query stops performing is a capability its
@@ -336,7 +336,7 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "authentication switched to another scheme",
             Box::new(|c: &mut Contract| {
-                c.auth = janus::AuthScheme::Header {
+                c.auth = kayak::AuthScheme::Header {
                     name: "x-api-key".into(),
                     credential: "api_key".into(),
                 }
@@ -344,7 +344,7 @@ fn taking_something_away() -> Vec<Mutation> {
         ),
         (
             "authentication is gone",
-            Box::new(|c: &mut Contract| c.auth = janus::AuthScheme::None),
+            Box::new(|c: &mut Contract| c.auth = kayak::AuthScheme::None),
         ),
     ]
 }
@@ -357,7 +357,7 @@ fn every_change_that_takes_something_away_is_breaking() {
         let mut after = base();
         apply(&mut after);
         let changes = diff(&before, &after);
-        if !changes.iter().any(janus::diff::Change::is_breaking) {
+        if !changes.iter().any(kayak::diff::Change::is_breaking) {
             missed.push(format!("{what}  ->  reported {changes:?}"));
         }
     }
@@ -379,7 +379,7 @@ fn a_contract_has_no_quarrel_with_itself() {
     // Spelling the default out loud is not a change: identities are
     // compared on the wire, where `id` and silence are the same name.
     let mut spelled = base();
-    spelled.resources[0].identity = janus::Identity::Column("id".into());
+    spelled.resources[0].identity = kayak::Identity::Column("id".into());
     assert_eq!(diff(&base(), &spelled), vec![]);
 }
 
@@ -390,7 +390,7 @@ fn additions_are_compatible() {
     let mut after = base();
     // Rows that gained a name where they had none: additive, the way
     // a new field is. Everything a caller read is still there.
-    before.resources[0].identity = janus::Identity::Absent;
+    before.resources[0].identity = kayak::Identity::Absent;
     after.resources[0].filterable.push("path".into());
     after.resources[0].max_page_size = 500;
     after.rate_classes[0].units_per_minute = 10_000;
@@ -416,7 +416,7 @@ fn additions_are_compatible() {
     let breaking: Vec<_> = changes
         .iter()
         .filter(|c| c.is_breaking())
-        .map(janus::diff::Change::message)
+        .map(kayak::diff::Change::message)
         .collect();
     assert!(
         breaking.is_empty(),
@@ -446,10 +446,10 @@ fn a_strengthened_backing_promise_is_compatible() {
     let breaking: Vec<_> = changes
         .iter()
         .filter(|c| c.is_breaking())
-        .map(janus::diff::Change::message)
+        .map(kayak::diff::Change::message)
         .collect();
     assert!(breaking.is_empty(), "read as breaking: {breaking:?}");
-    let said: Vec<_> = changes.iter().map(janus::diff::Change::message).collect();
+    let said: Vec<_> = changes.iter().map(kayak::diff::Change::message).collect();
     assert!(
         said.iter().any(|m| m.contains("pins its width at 768")),
         "{said:?}",

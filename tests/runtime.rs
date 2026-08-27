@@ -7,13 +7,13 @@
 use std::sync::{Arc, Mutex};
 
 use async_graphql::futures_util::{stream, StreamExt as _};
-use janus::runtime::graphql::build_schema;
-use janus::runtime::{
-    Dispatcher, Guards, JanusContext, JanusError, ListArgs, ListOutput, MemoryRateStore,
+use kayak::runtime::graphql::build_schema;
+use kayak::runtime::{
+    Dispatcher, Guards, KayakContext, KayakError, ListArgs, ListOutput, MemoryRateStore,
     Middleware, Next, Operation, Outcome, Payload, Principal, Resolvers, RowStream, SortDirection,
     SubListArgs, WatchArgs,
 };
-use janus::{
+use kayak::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, GraphqlNames, Query, Resource,
     SubResource, TypeRef,
 };
@@ -163,13 +163,13 @@ impl Middleware for RequireTenant {
     fn handle<'a>(
         &'a self,
         operation: Operation,
-        ctx: JanusContext,
+        ctx: KayakContext,
         payload: Payload,
         next: Next,
-    ) -> janus::runtime::BoxFuture<'a, Result<Outcome, JanusError>> {
+    ) -> kayak::runtime::BoxFuture<'a, Result<Outcome, KayakError>> {
         Box::pin(async move {
             if ctx.get::<Tenant>().is_none() {
-                return Err(JanusError::Unauthorized("tenant required".into()));
+                return Err(KayakError::Unauthorized("tenant required".into()));
             }
             next.run(operation, ctx, payload).await
         })
@@ -183,10 +183,10 @@ impl Middleware for Recorder {
     fn handle<'a>(
         &'a self,
         operation: Operation,
-        ctx: JanusContext,
+        ctx: KayakContext,
         payload: Payload,
         next: Next,
-    ) -> janus::runtime::BoxFuture<'a, Result<Outcome, JanusError>> {
+    ) -> kayak::runtime::BoxFuture<'a, Result<Outcome, KayakError>> {
         Box::pin(async move {
             let label = format!(
                 "{}:{}",
@@ -353,7 +353,7 @@ fn watched_contract() -> Contract {
 }
 
 fn tenant_request(query: &str) -> async_graphql::Request {
-    async_graphql::Request::new(query).data(JanusContext::new().with(Tenant("acme".into())))
+    async_graphql::Request::new(query).data(KayakContext::new().with(Tenant("acme".into())))
 }
 
 #[tokio::test]
@@ -490,11 +490,11 @@ async fn graphql_name_overrides_are_served_and_breaking_to_change() {
 
     // Renaming any GraphQL name out from under deployed clients is
     // breaking; effective names are what the differ compares.
-    let changes = janus::diff(&contract(), &renamed);
+    let changes = kayak::diff(&contract(), &renamed);
     let breaking: Vec<&str> = changes
         .iter()
         .filter(|c| c.is_breaking())
-        .map(janus::Change::message)
+        .map(kayak::Change::message)
         .collect();
     let joined = breaking.join("\n");
     assert!(
@@ -535,7 +535,7 @@ async fn dynamic_schema_agrees_with_generated_sdl() {
         assert!(live.contains(line), "live schema missing {line:?}:\n{live}");
     }
     // And the static artifact carries the same shapes.
-    let generated = janus::generate_sdl(&contract(), &[file_table()]).unwrap();
+    let generated = kayak::generate_sdl(&contract(), &[file_table()]).unwrap();
     for line in ["enum FileSort {", "file(id: ID!): File", "scalar DateTime"] {
         assert!(generated.contains(line), "generated SDL missing {line:?}");
     }
@@ -636,7 +636,7 @@ async fn the_subscription_root_appears_only_for_watchable_resources() {
     );
 
     // And the checked-in artifact prints the same root.
-    let generated = janus::generate_sdl(&watched_contract(), &[file_table()]).unwrap();
+    let generated = kayak::generate_sdl(&watched_contract(), &[file_table()]).unwrap();
     assert!(
         generated.contains("  fileChanged(state: String): File!"),
         "{generated}",
@@ -739,7 +739,7 @@ async fn sub_collections_reach_every_generated_surface() {
     let declared = contract_with_versions();
     let tables = [file_table(), version_table()];
 
-    let sdl = janus::generate_sdl(&declared, &tables).unwrap();
+    let sdl = kayak::generate_sdl(&declared, &tables).unwrap();
     assert!(
         sdl.contains(
             "  versions(limit: Int = 50, cursor: String, sort: FileVersionSort): FileVersionPage!"
@@ -752,7 +752,7 @@ async fn sub_collections_reach_every_generated_surface() {
     // carry a `versions` collection.
     assert!(!sdl.contains("type Version {"), "{sdl}");
 
-    let doc = janus::generate_openapi(&declared, &tables).unwrap();
+    let doc = kayak::generate_openapi(&declared, &tables).unwrap();
     let listing = &doc["paths"]["/v1/files/{id}/versions"]["get"];
     assert_eq!(listing["operationId"], "list_versions_files");
     assert_eq!(
@@ -761,16 +761,16 @@ async fn sub_collections_reach_every_generated_surface() {
     );
 
     let artifacts =
-        janus::generate::generate_all(&declared, &tables, janus::generate::TARGETS).unwrap();
+        kayak::generate::generate_all(&declared, &tables, kayak::generate::TARGETS).unwrap();
     assert!(artifacts["client.rs"].contains("pub async fn list_versions_files"));
     assert!(artifacts["client.ts"].contains("listVersionsFiles(id: string"));
     assert!(artifacts["client.py"].contains("def list_versions_files(self, id: str"));
     assert!(artifacts["client.go"].contains("func (c *Client) ListVersionsFiles(id string"));
 
     // Adding one is additive; taking it away is not.
-    let changes = janus::diff(&contract(), &declared);
+    let changes = kayak::diff(&contract(), &declared);
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
-    let changes = janus::diff(&declared, &contract());
+    let changes = kayak::diff(&declared, &contract());
     assert!(
         changes
             .iter()
@@ -789,7 +789,7 @@ async fn declared_limits_bound_what_the_served_schema_accepts() {
 
     // A depth ceiling refuses the same operation before any resolver.
     let mut capped = contract();
-    capped.limits = Some(janus::ContractLimits {
+    capped.limits = Some(kayak::ContractLimits {
         max_depth: Some(2),
         max_complexity: None,
         max_watches_per_principal: None,
@@ -804,7 +804,7 @@ async fn declared_limits_bound_what_the_served_schema_accepts() {
 
     // A complexity ceiling refuses alias amplification the same way.
     let mut narrow = contract();
-    narrow.limits = Some(janus::ContractLimits {
+    narrow.limits = Some(kayak::ContractLimits {
         max_depth: None,
         max_complexity: Some(3),
         max_watches_per_principal: None,
@@ -819,11 +819,11 @@ async fn declared_limits_bound_what_the_served_schema_accepts() {
 
 #[test]
 fn consumption_refusals_carry_their_own_statuses() {
-    let too_large = JanusError::PayloadTooLarge("4 GiB".into());
+    let too_large = KayakError::PayloadTooLarge("4 GiB".into());
     assert_eq!(too_large.status(), 413);
     assert_eq!(too_large.code(), "payload_too_large");
 
-    let metered = JanusError::TooManyRequests("rate class exceeded".into());
+    let metered = KayakError::TooManyRequests("rate class exceeded".into());
     assert_eq!(metered.status(), 429);
     assert_eq!(metered.code(), "too_many_requests");
 }
@@ -842,7 +842,7 @@ fn scoped_contract() -> Contract {
 fn scoped_request(query: &str, scopes: &[&str]) -> async_graphql::Request {
     let principal = Principal::new("key-01", scopes.iter().map(|s| s.to_string()));
     async_graphql::Request::new(query).data(
-        JanusContext::new()
+        KayakContext::new()
             .with(Tenant("acme".into()))
             .with(principal),
     )
@@ -961,11 +961,11 @@ fn scope_tightening_is_breaking_and_visible() {
     let open = contract();
     let scoped = scoped_contract();
 
-    let changes = janus::diff(&open, &scoped);
+    let changes = kayak::diff(&open, &scoped);
     let breaking: Vec<&str> = changes
         .iter()
         .filter(|c| c.is_breaking())
-        .map(janus::Change::message)
+        .map(kayak::Change::message)
         .collect();
     let joined = breaking.join(
         "
@@ -980,11 +980,11 @@ fn scope_tightening_is_breaking_and_visible() {
         "{joined}",
     );
     // Loosening refuses nothing.
-    let changes = janus::diff(&scoped, &open);
+    let changes = kayak::diff(&scoped, &open);
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
 
     // The document says what the dispatcher will enforce.
-    let doc = janus::generate_openapi(&scoped, &[file_table(), version_table()]).unwrap();
+    let doc = kayak::generate_openapi(&scoped, &[file_table(), version_table()]).unwrap();
     assert_eq!(
         doc["paths"]["/v1/files"]["get"]["x-requires-scopes"][0],
         "files_read",
@@ -1002,7 +1002,7 @@ fn scope_tightening_is_breaking_and_visible() {
 /// ten-row page fits twice and a third exhausts it.
 fn metered_contract() -> Contract {
     let mut contract = contract();
-    contract.rate_classes = vec![janus::RateClass {
+    contract.rate_classes = vec![kayak::RateClass {
         name: "reads".into(),
         units_per_minute: 25,
     }];
@@ -1071,7 +1071,7 @@ async fn a_metered_read_spends_its_row_limit_and_exhausts() {
     // A different principal has its own bucket and still passes.
     let principal = Principal::new("key-02", std::iter::empty());
     let other = async_graphql::Request::new(query).data(
-        JanusContext::new()
+        KayakContext::new()
             .with(Tenant("acme".into()))
             .with(principal),
     );
@@ -1106,7 +1106,7 @@ fn rate_movement_diffs_and_undefined_classes_refuse() {
     let metered = metered_contract();
 
     // Attaching a class to unmetered reads introduces refusals.
-    let changes = janus::diff(&open, &metered);
+    let changes = kayak::diff(&open, &metered);
     assert!(
         changes
             .iter()
@@ -1116,23 +1116,23 @@ fn rate_movement_diffs_and_undefined_classes_refuse() {
     // Shrinking a budget is breaking; growing it refuses nothing.
     let mut shrunk = metered_contract();
     shrunk.rate_classes[0].units_per_minute = 10;
-    let changes = janus::diff(&metered, &shrunk);
+    let changes = kayak::diff(&metered, &shrunk);
     assert!(
         changes
             .iter()
             .any(|c| c.is_breaking() && c.message().contains("budget lowered 25 -> 10")),
         "{changes:?}",
     );
-    let changes = janus::diff(&shrunk, &metered);
+    let changes = kayak::diff(&shrunk, &metered);
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
-    let changes = janus::diff(&metered, &open);
+    let changes = kayak::diff(&metered, &open);
     assert!(changes.iter().all(|c| !c.is_breaking()), "{changes:?}");
 
     // A reference to a class the contract never defines refuses at
     // validation, by name.
     let mut dangling = contract();
     dangling.resources[0].rate_class = Some("phantom".into());
-    let violations = janus::validate(&dangling, &[file_table()]);
+    let violations = kayak::validate(&dangling, &[file_table()]);
     assert!(
         violations
             .iter()
@@ -1390,7 +1390,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
     let guarded = guarded_contract();
 
     // SDL and the served schema drop the bang on guarded fields.
-    let sdl = janus::generate_sdl(&guarded, &tables).unwrap();
+    let sdl = kayak::generate_sdl(&guarded, &tables).unwrap();
     assert!(
         sdl.contains(
             "  state: String
@@ -1415,7 +1415,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
     );
 
     // OpenAPI: guarded fields leave required and carry the policy.
-    let doc = janus::generate_openapi(&guarded, &tables).unwrap();
+    let doc = kayak::generate_openapi(&guarded, &tables).unwrap();
     let schema = &doc["components"]["schemas"]["File"];
     assert_eq!(schema["properties"]["state"]["x-guard"], "audit_only");
     let required: Vec<&str> = schema["required"]
@@ -1429,7 +1429,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
 
     // Clients render the guarded field optional in every language.
     let artifacts =
-        janus::generate::generate_all(&guarded, &tables, janus::generate::TARGETS).unwrap();
+        kayak::generate::generate_all(&guarded, &tables, kayak::generate::TARGETS).unwrap();
     assert!(artifacts["client.rs"].contains("pub state: Option<String>,"));
     assert!(artifacts["client.ts"].contains("state?: string"));
     assert!(artifacts["client.py"].contains("state: str | None = None"));
@@ -1443,7 +1443,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
     // engine policy derives from both levels.
     let mut open = contract_with_versions();
     open.resources[0].watchable = true;
-    let changes = janus::diff(&open, &guarded);
+    let changes = kayak::diff(&open, &guarded);
     assert!(
         changes.iter().any(|c| c.is_breaking()
             && c.message()
@@ -1456,7 +1456,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
                 .contains("files.versions: field digest now guarded by audit_only")),
         "{changes:?}",
     );
-    let changes = janus::diff(&guarded, &open);
+    let changes = kayak::diff(&guarded, &open);
     assert!(
         changes.iter().any(|c| c.is_breaking()
             && c.message()
@@ -1473,7 +1473,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
     // Swapping the policy behind a field changes who sees it.
     let mut swapped = guarded_contract();
     swapped.resources[0].fields[1] = FieldExposure::column("state").with_guard("owner_only");
-    let changes = janus::diff(&guarded, &swapped);
+    let changes = kayak::diff(&guarded, &swapped);
     assert!(
         changes.iter().any(|c| c.is_breaking()
             && c.message()
@@ -1485,12 +1485,12 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
 #[test]
 fn a_hand_written_face_computes_the_same_hidden_set() {
     let contract = guarded_contract();
-    let guards = Guards::new().guard("audit_only", |ctx: &JanusContext, _row| {
+    let guards = Guards::new().guard("audit_only", |ctx: &KayakContext, _row| {
         ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
     });
 
-    let denied = JanusContext::new().with(Principal::new("k1", std::iter::empty()));
-    let hidden = janus::runtime::hidden_fields(&contract, "files", None, &guards, &denied);
+    let denied = KayakContext::new().with(Principal::new("k1", std::iter::empty()));
+    let hidden = kayak::runtime::hidden_fields(&contract, "files", None, &guards, &denied);
     let names: Vec<&str> = hidden.iter().map(|h| h.api_name.as_str()).collect();
     assert_eq!(names, vec!["state", "created_at"], "{hidden:?}");
 
@@ -1500,23 +1500,23 @@ fn a_hand_written_face_computes_the_same_hidden_set() {
         "id": "01A", "path": "a.txt", "state": "ready",
         "created_at": "2026-07-30T00:00:00Z",
     });
-    janus::runtime::strip_hidden(&mut row, &hidden);
+    kayak::runtime::strip_hidden(&mut row, &hidden);
     assert_eq!(row, serde_json::json!({ "id": "01A", "path": "a.txt" }),);
 
     // Sub-collections resolve through the parent, and an allowed
     // caller hides nothing.
-    let sub = janus::runtime::hidden_fields(&contract, "files", Some("versions"), &guards, &denied);
+    let sub = kayak::runtime::hidden_fields(&contract, "files", Some("versions"), &guards, &denied);
     assert_eq!(sub.len(), 1);
     assert_eq!(sub[0].api_name, "digest");
-    let allowed = JanusContext::new().with(Principal::new("k2", ["audit".to_owned()]));
-    assert!(janus::runtime::hidden_fields(&contract, "files", None, &guards, &allowed).is_empty());
+    let allowed = KayakContext::new().with(Principal::new("k2", ["audit".to_owned()]));
+    assert!(kayak::runtime::hidden_fields(&contract, "files", None, &guards, &allowed).is_empty());
 }
 
 #[tokio::test]
 async fn the_watch_ceiling_holds_and_slots_free_on_drop() {
     let mut contract = contract_with_versions();
     contract.resources[0].watchable = true;
-    contract.limits = Some(janus::ContractLimits {
+    contract.limits = Some(kayak::ContractLimits {
         max_depth: None,
         max_complexity: None,
         max_watches_per_principal: Some(1),
@@ -1548,7 +1548,7 @@ async fn the_watch_ceiling_holds_and_slots_free_on_drop() {
     assert_eq!(code.as_deref(), Some("\"too_many_requests\""));
 
     let other = async_graphql::Request::new(query).data(
-        JanusContext::new()
+        KayakContext::new()
             .with(Tenant("acme".into()))
             .with(Principal::new("key-two", std::iter::empty())),
     );
@@ -1765,7 +1765,7 @@ async fn ownership_guards_project_row_by_row() {
 
     let alice = |query: &str| {
         async_graphql::Request::new(query.to_owned()).data(
-            JanusContext::new()
+            KayakContext::new()
                 .with(Tenant("acme".into()))
                 .with(Principal::new("alice", ["read".to_owned()])),
         )
@@ -1794,12 +1794,12 @@ async fn ownership_guards_project_row_by_row() {
     );
 }
 
-fn tenant_ctx() -> JanusContext {
-    JanusContext::new().with(Tenant("acme".into()))
+fn tenant_ctx() -> KayakContext {
+    KayakContext::new().with(Tenant("acme".into()))
 }
 
-fn rest(fixture: &Fixture) -> janus::runtime::RestRouter {
-    janus::runtime::RestRouter::new(fixture.dispatcher.clone())
+fn rest(fixture: &Fixture) -> kayak::runtime::RestRouter {
+    kayak::runtime::RestRouter::new(fixture.dispatcher.clone())
 }
 
 /// The REST face routes what the contract declares, through the same
@@ -1882,7 +1882,7 @@ async fn rest_refuses_with_status_shaped_answers() {
     assert_eq!(wrong_method.status, 405);
 
     let anonymous = router
-        .handle("GET", "/v1/files", "", None, JanusContext::new())
+        .handle("GET", "/v1/files", "", None, KayakContext::new())
         .await;
     assert_eq!(anonymous.status, 401, "{:?}", anonymous.body);
 
@@ -1919,7 +1919,7 @@ async fn rest_serves_contract_queries_with_typed_parameters() {
 #[cfg(feature = "console")]
 mod console_pages {
     use super::*;
-    use janus::runtime::{ConsoleConfig, ConsoleRouter, FormOutcome};
+    use kayak::runtime::{ConsoleConfig, ConsoleRouter, FormOutcome};
 
     fn console(fixture: &Fixture) -> ConsoleRouter {
         ConsoleRouter::new(
@@ -2047,7 +2047,7 @@ mod console_pages {
             .submit(
                 "/r/files/01A/a/issue_url",
                 &[("ttl_secs".to_owned(), "60".to_owned())],
-                JanusContext::new(),
+                KayakContext::new(),
             )
             .await;
         match refused {
@@ -2185,7 +2185,7 @@ mod console_pages {
         assert_eq!(page.status, 200, "{}", page.html);
 
         // The type a caller reads to know what a listing returns, cut
-        // out of the SDL janus itself generates. Asserted on the block
+        // out of the SDL kayak itself generates. Asserted on the block
         // itself: the field names also appear in the mapping table
         // above, so a page-wide `contains` would pass on that.
         let start = page
@@ -2245,7 +2245,7 @@ mod console_pages {
     async fn the_schema_section_is_the_whole_sdl() {
         let contract = contract_with_versions();
         let schema = vec![file_table(), version_table()];
-        let sdl = janus::sdl::generate_sdl(&contract, &schema).expect("the SDL generates");
+        let sdl = kayak::sdl::generate_sdl(&contract, &schema).expect("the SDL generates");
         let heads: Vec<&str> = sdl
             .lines()
             .filter(|line| {

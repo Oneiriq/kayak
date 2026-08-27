@@ -14,12 +14,12 @@
 //! wire name is the identity, described once with the column's real
 //! type, rather than a collision with a synthesised copy.
 
-use janus::clients::{
+use kayak::clients::{
     generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
     generate_client_ts,
 };
-use janus::validate::{validate, Violation};
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
+use kayak::validate::{validate, Violation};
+use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
 use surql::schema::{string_field, table_schema, TableDefinition, TableMode};
 
 fn table(columns: &[&str]) -> TableDefinition {
@@ -37,7 +37,7 @@ fn contract_exposing(columns: &[&str]) -> Contract {
         api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![],
-        auth: janus::AuthScheme::None,
+        auth: kayak::AuthScheme::None,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),

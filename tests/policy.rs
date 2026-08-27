@@ -2,13 +2,13 @@
 //!
 //! Copal derived its SurrealDB `PERMISSIONS` clauses from the contract
 //! by hand in `crates/copal-server/src/engine.rs` (`fn engine_policy`);
-//! this module moved that derivation into janus. The tests here hold
+//! this module moved that derivation into kayak. The tests here hold
 //! the derived clause STRINGS byte-identical to what copal's own code
 //! produces for the same inputs, so copal's switch to
-//! `janus::derive_policy` reviews as pure deletion: same tables, same
+//! `kayak::derive_policy` reviews as pure deletion: same tables, same
 //! columns, same clauses, in the same order.
 
-use janus::{derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, Resource, SubResource};
+use kayak::{derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, Resource, SubResource};
 
 /// A resource carrying only what the policy face reads: table, field
 /// exposures, read scopes, sub-resources. Everything else defaulted,
@@ -40,7 +40,7 @@ fn resource(name: &str, table: &str) -> Resource {
 /// (`crates/copal-server/src/contract/`): four resources, all
 /// requiring the `read` scope, two carrying a sub-resource, and one
 /// guarded field — `file_version.created_by` under `owner_or_admin`.
-fn copal_shaped() -> janus::Contract {
+fn copal_shaped() -> kayak::Contract {
     let mut files = resource("files", "file");
     files.reads_require = vec!["read".into()];
     files.sub_resources = vec![SubResource {
@@ -83,7 +83,7 @@ fn copal_shaped() -> janus::Contract {
     let mut runs = resource("runs", "workflow_run");
     runs.reads_require = vec!["read".into()];
 
-    janus::Contract {
+    kayak::Contract {
         name: "copal".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
@@ -167,7 +167,7 @@ fn the_default_vocabulary_matches_copals_other_forms() {
     let mut audited = resource("audits", "audit_log");
     audited.reads_require = vec!["read".into(), "audit".into()];
     audited.fields = vec![FieldExposure::column("actor").with_guard("admin_only")];
-    let contract = janus::Contract {
+    let contract = kayak::Contract {
         resources: vec![audited],
         ..copal_shaped()
     };
@@ -212,7 +212,7 @@ fn an_unknown_guard_refuses_rather_than_ships_half_a_policy() {
 #[test]
 fn the_engine_policy_target_renders_the_artifact() {
     let artifacts =
-        janus::generate::generate_all(&copal_shaped(), &[], &["engine-policy"]).unwrap();
+        kayak::generate::generate_all(&copal_shaped(), &[], &["engine-policy"]).unwrap();
     assert_eq!(
         artifacts["policy.json"],
         r#"{
@@ -262,7 +262,7 @@ fn the_engine_policy_target_renders_the_artifact() {
 fn the_target_refuses_a_guard_outside_the_default_vocabulary() {
     let mut contract = copal_shaped();
     contract.resources[0].fields = vec![FieldExposure::column("digest").with_guard("finance_only")];
-    let error = janus::generate::generate_all(&contract, &[], &["engine-policy"]).unwrap_err();
+    let error = kayak::generate::generate_all(&contract, &[], &["engine-policy"]).unwrap_err();
     assert!(
         error.to_string().contains("finance_only"),
         "the refusal names the guard: {error}",

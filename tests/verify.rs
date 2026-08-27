@@ -10,8 +10,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use janus::verify::{probes, verify_contract};
-use janus::{Contract, FieldExposure, Query, Resource, SearchBacking, SearchKind, SubResource};
+use kayak::verify::{probes, verify_contract};
+use kayak::{Contract, FieldExposure, Query, Resource, SearchBacking, SearchKind, SubResource};
 use surql::connection::ConnectionConfig;
 use surql::DatabaseClient;
 
@@ -19,7 +19,7 @@ static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 async fn memory_client() -> DatabaseClient {
     let seq = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let name = format!("janus_verify_{seq}");
+    let name = format!("kayak_verify_{seq}");
     let cfg = ConnectionConfig::builder()
         .url("mem://")
         .namespace(name.clone())

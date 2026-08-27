@@ -15,7 +15,7 @@
 //! contract.
 //!
 //! So they return errors. The variant says plainly that reaching it is
-//! a janus bug rather than a contract's fault, which is the honest
+//! a kayak bug rather than a contract's fault, which is the honest
 //! thing to tell whoever sees it.
 
 use surql::schema::{FieldDefinition, TableDefinition};

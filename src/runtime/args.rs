@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::ir::{Action, Resource, TypeRef};
-use crate::runtime::error::JanusError;
+use crate::runtime::error::KayakError;
 
 /// Direction for a declared sort.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,18 +75,18 @@ pub struct ListOutput {
 }
 
 /// Clamp and check list arguments against the resource's declarations.
-pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<(), JanusError> {
+pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<(), KayakError> {
     args.limit = args.limit.clamp(1, resource.max_page_size);
     for column in args.filters.keys() {
         if !resource.filterable.iter().any(|c| c == column) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "filtering on {column} is not allowed",
             )));
         }
     }
     if let Some((column, _)) = &args.sort {
         if !resource.sortable.iter().any(|c| c == column) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "sorting on {column} is not allowed",
             )));
         }
@@ -99,9 +99,9 @@ pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<
 pub(crate) fn validate_sub_list(
     sub: &crate::ir::SubResource,
     args: &mut SubListArgs,
-) -> Result<(), JanusError> {
+) -> Result<(), KayakError> {
     if args.parent_id.is_empty() {
-        return Err(JanusError::BadRequest(format!(
+        return Err(KayakError::BadRequest(format!(
             "{} is reached through a parent id",
             sub.name,
         )));
@@ -109,14 +109,14 @@ pub(crate) fn validate_sub_list(
     args.limit = args.limit.clamp(1, sub.max_page_size);
     for column in args.filters.keys() {
         if !sub.filterable.iter().any(|c| c == column) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "filtering on {column} is not allowed",
             )));
         }
     }
     if let Some((column, _)) = &args.sort {
         if !sub.sortable.iter().any(|c| c == column) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "sorting on {column} is not allowed",
             )));
         }
@@ -128,16 +128,16 @@ pub(crate) fn validate_sub_list(
 /// resource that never declared itself watchable refuses here, so a
 /// protocol layer that offers the field by mistake cannot open a
 /// stream.
-pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<(), JanusError> {
+pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<(), KayakError> {
     if !resource.watchable {
-        return Err(JanusError::BadRequest(format!(
+        return Err(KayakError::BadRequest(format!(
             "{} cannot be watched",
             resource.name,
         )));
     }
     for column in args.filters.keys() {
         if !resource.filterable.iter().any(|c| c == column) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "filtering on {column} is not allowed",
             )));
         }
@@ -154,7 +154,7 @@ pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<()
 fn check_options(
     field: &crate::ir::ActionField,
     value: &serde_json::Value,
-) -> Result<(), JanusError> {
+) -> Result<(), KayakError> {
     if field.options.is_empty() {
         return Ok(());
     }
@@ -173,7 +173,7 @@ fn check_options(
     };
     for part in &parts {
         if !field.options.iter().any(|option| option == part) {
-            return Err(JanusError::BadRequest(format!(
+            return Err(KayakError::BadRequest(format!(
                 "input {} takes {} of {}",
                 field.name,
                 if field.multiple { "any" } else { "one" },
@@ -195,12 +195,12 @@ fn check_options(
 pub(crate) fn validate_query(
     query: &crate::ir::Query,
     args: &mut QueryArgs,
-) -> Result<(), JanusError> {
+) -> Result<(), KayakError> {
     let mut checked = serde_json::Map::new();
     for field in &query.input {
         match args.input.get(&field.name) {
             None | Some(serde_json::Value::Null) if field.required => {
-                return Err(JanusError::BadRequest(format!(
+                return Err(KayakError::BadRequest(format!(
                     "input {} is required",
                     field.name,
                 )));
@@ -214,7 +214,7 @@ pub(crate) fn validate_query(
                     TypeRef::Json => true,
                 };
                 if !ok {
-                    return Err(JanusError::BadRequest(format!(
+                    return Err(KayakError::BadRequest(format!(
                         "input {} has the wrong type",
                         field.name,
                     )));
@@ -228,16 +228,16 @@ pub(crate) fn validate_query(
     // who thinks a filter applies deserves to hear that it does not.
     for name in args.input.keys() {
         if !query.input.iter().any(|f| &f.name == name) {
-            return Err(JanusError::BadRequest(format!("no input named {name}")));
+            return Err(KayakError::BadRequest(format!("no input named {name}")));
         }
     }
     args.input = checked;
     Ok(())
 }
 
-pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<(), JanusError> {
+pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<(), KayakError> {
     if action.takes_id() && args.id.is_none() {
-        return Err(JanusError::BadRequest(format!(
+        return Err(KayakError::BadRequest(format!(
             "action {} targets an instance and requires an id",
             action.name,
         )));
@@ -247,7 +247,7 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
     for field in &action.input {
         match args.input.get(&field.name) {
             None | Some(serde_json::Value::Null) if field.required => {
-                return Err(JanusError::BadRequest(format!(
+                return Err(KayakError::BadRequest(format!(
                     "input {} is required",
                     field.name,
                 )));
@@ -261,7 +261,7 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
                     TypeRef::Json => true,
                 };
                 if !ok {
-                    return Err(JanusError::BadRequest(format!(
+                    return Err(KayakError::BadRequest(format!(
                         "input {} must be a {}",
                         field.name,
                         match field.kind {

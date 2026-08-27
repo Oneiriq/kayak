@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::runtime::error::JanusError;
+use crate::runtime::error::KayakError;
 use crate::runtime::resolvers::BoxFuture;
 
 /// A consumption ledger. `charge` adds `units` against `bucket` for
@@ -33,7 +33,7 @@ pub trait RateStore: Send + Sync {
         bucket: &'a str,
         units: u64,
         per_minute: u64,
-    ) -> BoxFuture<'a, Result<bool, JanusError>>;
+    ) -> BoxFuture<'a, Result<bool, KayakError>>;
 }
 
 /// A single-process ledger over fixed one-minute windows.
@@ -67,13 +67,13 @@ impl RateStore for MemoryRateStore {
         bucket: &'a str,
         units: u64,
         per_minute: u64,
-    ) -> BoxFuture<'a, Result<bool, JanusError>> {
+    ) -> BoxFuture<'a, Result<bool, KayakError>> {
         Box::pin(async move {
             let minute = Self::minute();
             let mut windows = self
                 .windows
                 .lock()
-                .map_err(|_| JanusError::Internal("rate ledger poisoned".into()))?;
+                .map_err(|_| KayakError::Internal("rate ledger poisoned".into()))?;
             let entry = windows.entry(bucket.to_owned()).or_insert((minute, 0));
             if entry.0 != minute {
                 *entry = (minute, 0);

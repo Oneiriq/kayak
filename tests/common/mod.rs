@@ -28,14 +28,14 @@ pub const BLESSABLE: &[&str] = &[
 
 /// Whether this run may rewrite the golden for `artifact`.
 ///
-/// `JANUS_BLESS` takes the artifacts to re-bless, so a bless is an
+/// `KAYAK_BLESS` takes the artifacts to re-bless, so a bless is an
 /// assertion about what you meant to change rather than a blanket
 /// permission:
 ///
 /// ```text
-/// JANUS_BLESS=client-go              one
-/// JANUS_BLESS=client-go,openapi      several
-/// JANUS_BLESS=1                      all of them (or `all`)
+/// KAYAK_BLESS=client-go              one
+/// KAYAK_BLESS=client-go,openapi      several
+/// KAYAK_BLESS=1                      all of them (or `all`)
 /// ```
 ///
 /// Blessing everything is still the right move after a change that
@@ -47,7 +47,7 @@ pub const BLESSABLE: &[&str] = &[
 /// On a name that is not an artifact, via [`wants`].
 #[must_use]
 pub fn blessed(artifact: &str) -> bool {
-    wants(std::env::var("JANUS_BLESS").ok().as_deref(), artifact)
+    wants(std::env::var("KAYAK_BLESS").ok().as_deref(), artifact)
 }
 
 /// The decision itself, taken apart from the environment so it can be
@@ -56,7 +56,7 @@ pub fn blessed(artifact: &str) -> bool {
 ///
 /// # Panics
 /// On a name that is not an artifact. This is the point of the
-/// function: `JANUS_BLESS=golang` is a plausible thing to type, Go is
+/// function: `KAYAK_BLESS=golang` is a plausible thing to type, Go is
 /// `client-go` here, and silently blessing nothing would read as
 /// success and send you off believing a golden was updated.
 #[must_use]
@@ -74,7 +74,7 @@ pub fn wants(requested: Option<&str>, artifact: &str) -> bool {
         .filter(|name| !name.is_empty())
         .collect();
     // Validate the WHOLE list, not just the name being asked about, or
-    // `JANUS_BLESS=client-go,typo` would pass unremarked on the lookup
+    // `KAYAK_BLESS=client-go,typo` would pass unremarked on the lookup
     // that happens to be for client-go.
     let unknown: Vec<&str> = names
         .iter()
@@ -83,7 +83,7 @@ pub fn wants(requested: Option<&str>, artifact: &str) -> bool {
         .collect();
     assert!(
         unknown.is_empty(),
-        "JANUS_BLESS names {} -- no such artifact. Valid: {}, or 1 / all",
+        "KAYAK_BLESS names {} -- no such artifact. Valid: {}, or 1 / all",
         unknown.join(", "),
         BLESSABLE.join(", "),
     );
@@ -105,7 +105,7 @@ pub fn check_golden(filename: &str, content: &str) {
         std::fs::write(&golden_path, content).unwrap();
     }
     let golden = std::fs::read_to_string(&golden_path)
-        .unwrap_or_else(|_| panic!("{golden_path} missing; JANUS_BLESS={artifact} to create"));
+        .unwrap_or_else(|_| panic!("{golden_path} missing; KAYAK_BLESS={artifact} to create"));
     // Compared whole, not trimmed. A golden is a byte-for-byte record
     // of what a generator emits, and trailing bytes are exactly where
     // a generator drifts without anyone noticing: a file that gains or
@@ -113,7 +113,7 @@ pub fn check_golden(filename: &str, content: &str) {
     // and was invisible here.
     assert_eq!(
         content, golden,
-        "{filename} drifted from its golden; JANUS_BLESS={artifact} to re-bless deliberately",
+        "{filename} drifted from its golden; KAYAK_BLESS={artifact} to re-bless deliberately",
     );
 }
 

@@ -11,9 +11,9 @@
 //! whose prefix is its own column. The friend table in
 //! polyconsole-social is the shape that motivated it.
 
-use janus::diff::{diff, Change};
-use janus::validate::validate;
-use janus::{Contract, FieldExposure, Resource, ResourceFaces};
+use kayak::diff::{diff, Change};
+use kayak::validate::validate;
+use kayak::{Contract, FieldExposure, Resource, ResourceFaces};
 use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
 
 /// The friend table: one row per unordered pair, `state` alongside.
@@ -45,7 +45,7 @@ fn contract(either: &[&str], filterable: &[&str]) -> Contract {
         api_prefix: String::new(),
         limits: None,
         rate_classes: vec![],
-        auth: janus::AuthScheme::None,
+        auth: kayak::AuthScheme::None,
         resources: vec![Resource {
             name: "friends".into(),
             table: "friend".into(),

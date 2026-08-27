@@ -9,7 +9,7 @@
 //! so the console refuses exactly where the API refuses.
 //!
 //! The renderer is transport-free and asset-free: the host hands in
-//! a path, a query string, and a seeded [`JanusContext`], and
+//! a path, a query string, and a seeded [`KayakContext`], and
 //! receives HTML. There is no JavaScript and no external asset;
 //! forms are plain form posts and pages are plain documents, so the
 //! console works wherever a browser reaches the host, air-gapped
@@ -23,9 +23,9 @@ use serde_json::Value;
 use crate::ir::{Action, ActionField, Resource, TypeRef};
 use crate::naming::{camel, singular};
 use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirection, SubListArgs};
-use crate::runtime::context::JanusContext;
+use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
-use crate::runtime::error::JanusError;
+use crate::runtime::error::KayakError;
 use crate::runtime::wire::percent_decode as decode;
 use surql::schema::TableDefinition;
 
@@ -88,7 +88,7 @@ const THEME_ICON: &str = r#"<svg viewBox="0 0 16 16" width="15" height="15" aria
 /// is one they will mistype. Both are additive: with scripting off the
 /// list is still complete and the text is still selectable.
 const REFERENCE_SCRIPT: &str = r#"
-function janusFilter(box) {
+function kayakFilter(box) {
   var want = box.value.trim().toLowerCase();
   var list = box.parentElement.querySelector('nav.filterable');
   var shown = 0;
@@ -124,7 +124,7 @@ document.addEventListener('click', function (event) {
 /// which is worse than not offering the choice.
 const THEME_SCRIPT: &str = r#"
 (function () {
-  var KEY = 'janus-theme';
+  var KEY = 'kayak-theme';
   var root = document.documentElement;
   function apply(mode) {
     if (mode) { root.setAttribute('data-theme', mode); }
@@ -133,7 +133,7 @@ const THEME_SCRIPT: &str = r#"
   apply(localStorage.getItem(KEY));
   // system -> light -> dark -> system, so a reader can always get
   // back to following the machine.
-  window.janusTheme = function () {
+  window.kayakTheme = function () {
     var next = { '': 'light', light: 'dark', dark: '' }[
       root.getAttribute('data-theme') || ''
     ];
@@ -540,7 +540,7 @@ impl ConsoleRouter {
 
     /// Render one GET page. `path` is relative to the mount (leading
     /// slash optional), `query` the raw query string without `?`.
-    pub async fn page(&self, path: &str, query: &str, ctx: JanusContext) -> ConsoleAnswer {
+    pub async fn page(&self, path: &str, query: &str, ctx: KayakContext) -> ConsoleAnswer {
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let pairs = parse_query(query);
         match parts.as_slice() {
@@ -560,7 +560,7 @@ impl ConsoleRouter {
         &self,
         path: &str,
         form: &[(String, String)],
-        ctx: JanusContext,
+        ctx: KayakContext,
     ) -> FormOutcome {
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let (resource, id, action) = match parts.as_slice() {
@@ -650,7 +650,7 @@ impl ConsoleRouter {
     /// resource whose listing refuses says so on its own card and
     /// leaves the rest of the page standing, because an overview that
     /// blanks on one failure is worse than one that reports it.
-    async fn overview(&self, ctx: JanusContext) -> ConsoleAnswer {
+    async fn overview(&self, ctx: KayakContext) -> ConsoleAnswer {
         let contract = self.dispatcher.contract().clone();
         let mut cards = Vec::new();
         for resource in &contract.resources {
@@ -723,7 +723,7 @@ impl ConsoleRouter {
 
     /// The contract, as the surface it becomes.
     ///
-    /// A service built this way declares its shape once and janus
+    /// A service built this way declares its shape once and kayak
     /// lands it on REST, GraphQL, and MCP by rules nobody should have
     /// to hold in their head. Reading the OpenAPI document tells you
     /// the REST half; reading the SDL tells you the GraphQL half; the
@@ -768,7 +768,7 @@ impl ConsoleRouter {
             @if !defs.is_empty() {
                 div.rail-heading { "Types" }
                 input.filter type="search" placeholder="Filter types"
-                    oninput="janusFilter(this)" aria-label="Filter the types";
+                    oninput="kayakFilter(this)" aria-label="Filter the types";
                 nav.filterable {
                     @for def in &defs {
                         a href=(format!("#t-{}", def.name)) title=(def.name) {
@@ -1070,7 +1070,7 @@ impl ConsoleRouter {
         &self,
         name: &str,
         pairs: &[(String, String)],
-        ctx: JanusContext,
+        ctx: KayakContext,
     ) -> ConsoleAnswer {
         let Some(resource) = self.resource(name) else {
             return self.error_page(404, "no such declared resource");
@@ -1246,7 +1246,7 @@ impl ConsoleRouter {
         name: &str,
         id: &str,
         pairs: &[(String, String)],
-        ctx: JanusContext,
+        ctx: KayakContext,
     ) -> ConsoleAnswer {
         let Some(resource) = self.resource(name) else {
             return self.error_page(404, "no such declared resource");
@@ -1323,7 +1323,7 @@ impl ConsoleRouter {
         &self,
         name: &str,
         pairs: &[(String, String)],
-        ctx: JanusContext,
+        ctx: KayakContext,
     ) -> ConsoleAnswer {
         let Some(query) = self
             .dispatcher
@@ -1336,7 +1336,7 @@ impl ConsoleRouter {
             return self.error_page(404, "no such declared query");
         };
         let filled = pairs.iter().any(|(_, v)| !v.is_empty());
-        let mut result: Option<Result<Value, JanusError>> = None;
+        let mut result: Option<Result<Value, KayakError>> = None;
         if filled {
             let mut input = serde_json::Map::new();
             for (key, raw) in pairs {
@@ -1455,14 +1455,14 @@ impl ConsoleRouter {
         self.shell(200, action, body)
     }
 
-    fn refusal_page(&self, error: &JanusError) -> ConsoleAnswer {
+    fn refusal_page(&self, error: &KayakError) -> ConsoleAnswer {
         let status = match error {
-            JanusError::BadRequest(_) => 400,
-            JanusError::Unauthorized(_) => 401,
-            JanusError::Forbidden(_) => 403,
-            JanusError::NotFound => 404,
-            JanusError::Conflict(_) => 409,
-            JanusError::TooManyRequests(_) => 429,
+            KayakError::BadRequest(_) => 400,
+            KayakError::Unauthorized(_) => 401,
+            KayakError::Forbidden(_) => 403,
+            KayakError::NotFound => 404,
+            KayakError::Conflict(_) => 409,
+            KayakError::TooManyRequests(_) => 429,
             _ => 500,
         };
         self.error_page(status, &error.to_string())
@@ -1558,7 +1558,7 @@ impl ConsoleRouter {
         let footer = html! {
             span { (contract.name) " v" (contract.version) }
             a href=(format!("{base}/reference")) { "Reference" }
-            span.dim { "Generated from the contract by janus" }
+            span.dim { "Generated from the contract by kayak" }
         };
         let html = document(
             Page {
@@ -1788,7 +1788,7 @@ pub fn document(page: Page<'_>, rail: Markup, content: Markup, footer: Markup) -
             body {
                 header {
                     span.title { a href=(page.home) { (page.brand) } }
-                    button.icon type="button" onclick="janusTheme()"
+                    button.icon type="button" onclick="kayakTheme()"
                         title="Appearance: follow the system, or force light or dark"
                         aria-label="Appearance" {
                         (PreEscaped(THEME_ICON))

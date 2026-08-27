@@ -4,7 +4,7 @@
 //! this particular caller may do with it: an API key with a read
 //! scope, a service account with write, an operator with admin. The
 //! protocol layer or an auth middleware seeds one into the
-//! [`JanusContext`](crate::runtime::JanusContext); the dispatcher
+//! [`KayakContext`](crate::runtime::KayakContext); the dispatcher
 //! checks it against the scopes the contract declares, after the
 //! middleware chain and before the resolver, so an auth layer that
 //! resolves identity mid-chain still counts.

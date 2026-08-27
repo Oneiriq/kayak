@@ -1,10 +1,10 @@
-//! The janus CLI.
+//! The kayak CLI.
 //!
 //! ```text
-//! janus scaffold --schema schema.json --out contract.json
-//! janus generate --contract contract.json --schema schema.json \
+//! kayak scaffold --schema schema.json --out contract.json
+//! kayak generate --contract contract.json --schema schema.json \
 //!     --out generated [--targets openapi,sdl,client-rs,...]
-//! janus diff old-contract.json new-contract.json
+//! kayak diff old-contract.json new-contract.json
 //! ```
 //!
 //! Contracts and schemas travel as data: the contract is the serialized
@@ -32,10 +32,10 @@
 
 use std::process::ExitCode;
 
-use janus::diff::{diff, Change};
-use janus::generate::{generate_all, TARGETS};
-use janus::scaffold::scaffold;
-use janus::Contract;
+use kayak::diff::{diff, Change};
+use kayak::generate::{generate_all, TARGETS};
+use kayak::scaffold::scaffold;
+use kayak::Contract;
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -46,12 +46,12 @@ fn main() -> ExitCode {
         Some("verify") => run_verify(&arguments[1..]),
         _ => {
             eprintln!(
-                "usage:\n  janus scaffold --schema <file> [--out <file>] [--name <name>] \
+                "usage:\n  kayak scaffold --schema <file> [--out <file>] [--name <name>] \
                  [--version <semver>] [--pinned <columns>]\n  \
-                 janus generate --contract <file-or-dir> --schema <file> --out <dir> \
-                 [--targets {},client-rs-blocking,engine-policy]\n  janus diff <old-contract> \
+                 kayak generate --contract <file-or-dir> --schema <file> --out <dir> \
+                 [--targets {},client-rs-blocking,engine-policy]\n  kayak diff <old-contract> \
                  <new-contract>\n  \
-                 janus verify --contract <file-or-dir> --db <url> --namespace <ns> \
+                 kayak verify --contract <file-or-dir> --db <url> --namespace <ns> \
                  --database <db> [--user <name> --pass <secret>]\n\n  a \
                  contract is one .json file, or a directory holding contract.json beside \
                  resources/*.json and queries/*.json\n  engine-policy is opt-in: it renders with \
@@ -140,7 +140,7 @@ fn run_scaffold(arguments: &[String]) -> ExitCode {
     // A scaffold derives claims it can prove, and a name it cannot fix:
     // a table the wire format will not accept as an identifier is the
     // editing this reports rather than hides.
-    for violation in janus::validate(&made.contract, &schema) {
+    for violation in kayak::validate(&made.contract, &schema) {
         eprintln!("needs an edit: {violation}");
     }
     let filters: usize = made
@@ -275,7 +275,7 @@ fn run_verify(arguments: &[String]) -> ExitCode {
             .connect()
             .await
             .map_err(|e| format!("connect {url}: {e}"))?;
-        janus::verify::verify_contract(&client, &contract)
+        kayak::verify::verify_contract(&client, &contract)
             .await
             .map_err(|e| e.to_string())
     });
@@ -302,7 +302,7 @@ fn run_verify(arguments: &[String]) -> ExitCode {
 #[cfg(not(feature = "verify"))]
 fn run_verify(_arguments: &[String]) -> ExitCode {
     eprintln!(
-        "this janus binary was built without the `verify` feature; \
+        "this kayak binary was built without the `verify` feature; \
          rebuild with --features verify to ask a live planner"
     );
     ExitCode::from(2)
@@ -367,7 +367,7 @@ fn text_of(text: &str) -> &str {
 ///
 /// One entity per file is what lets a reader open `resources/files.json`
 /// and know that everything in front of them is that entity. The
-/// assembled contract is what janus validates and generates from,
+/// assembled contract is what kayak validates and generates from,
 /// because the checks that matter span it: a rate class a resource
 /// names, a query that collides with another query.
 fn read_contract(path: &str) -> Result<Contract, String> {

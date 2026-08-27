@@ -1,10 +1,17 @@
-# Janus
+# Kayak
 
-One contract, every face. Janus is the contract layer for SurrealDB-backed
+Steer, don't drift. Kayak is the contract layer for SurrealDB-backed
 APIs: a serializable intermediate representation authored over `surql-rs`
 schema definitions, validated against the schema's real indexes at build
 time, and compiled into every API surface. The surfaces cannot drift from
 each other or from the database, because they are the same object.
+
+The name is the job. An API ecosystem left alone drifts the way anything
+on water does: the database moves, a handler follows, a client lags, a
+document lies. A kayak sits low in the same current and holds its line
+anyway. One paddler, one hull, every stroke visible -- which is the
+whole design: one small checked-in contract, and every face of the API
+follows its course or the build refuses.
 
 ```text
 contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
@@ -16,6 +23,8 @@ contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
         |-- openapi.json      OpenAPI 3.1 (page envelopes, action paths)
         |-- schema.graphql    SDL (types, sort enums, Query, Mutation,
         |                     Subscription)
+        |-- mcp-tools.json    MCP manifest (tools with typed inputs,
+        |                     scope + rate annotations)
         |-- client.rs         reqwest + serde
         |-- client.ts         fetch, zero dependencies
         |-- client.py         standard library only
@@ -24,7 +33,9 @@ contract (IR, checked in)  +  schema (surql-rs TableDefinitions)
         |                      queries)
         |
         |-- runtime           the contract, executed: resolvers,
-                              middleware, live GraphQL
+        |                     middleware, live GraphQL
+        |-- console           the operator surface, rendered from the
+                              same declarations (zero JavaScript)
 ```
 
 Nothing is exposed by default. Fields are allowlisted and renameable,
@@ -52,7 +63,7 @@ contract marks watchable gains a Subscription field over a stream resolver
 the service registers; the chain runs once, when the subscription opens. GraphQL name
 overrides (type and field names, per resource and per action) are validated
 against the GraphQL grammar and the SurrealDB v3 reserved-word list, which
-is exported as `janus::is_reserved`. Renaming any effective GraphQL name is
+is exported as `kayak::is_reserved`. Renaming any effective GraphQL name is
 a breaking change to the differ.
 
 See [docs/](docs/README.md) for the contract reference, the runtime guide,
@@ -61,11 +72,11 @@ and the generator workflow.
 ## CLI
 
 ```
-janus scaffold --schema schema.json --out contract.json [--name svc] \
+kayak scaffold --schema schema.json --out contract.json [--name svc] \
     [--version 0.1.0] [--pinned tenant_id]
-janus generate --contract contract.json --schema schema.json \
+kayak generate --contract contract.json --schema schema.json \
     --out generated [--targets openapi,sdl,client-rs,client-ts,client-py,client-go]
-janus diff old-contract.json new-contract.json   # exits non-zero on breaking changes
+kayak diff old-contract.json new-contract.json   # exits non-zero on breaking changes
 ```
 
 Contracts and schemas travel as data; the schema file is a serialized
@@ -117,9 +128,9 @@ Re-blessing a golden is an explicit step that names what you meant to
 change:
 
 ```
-JANUS_BLESS=client-go cargo test          one artifact
-JANUS_BLESS=client-go,openapi cargo test  several
-JANUS_BLESS=1 cargo test                  all of them
+KAYAK_BLESS=client-go cargo test          one artifact
+KAYAK_BLESS=client-go,openapi cargo test  several
+KAYAK_BLESS=1 cargo test                  all of them
 ```
 
 An unrecognised name fails rather than blessing nothing quietly, so a

@@ -1,12 +1,12 @@
-//! The janus binary end to end: generate from contract+schema files,
+//! The kayak binary end to end: generate from contract+schema files,
 //! diff with CI-able exit codes, and, where the toolchains exist,
 //! syntax-check the generated Python and Go clients with the real
 //! compilers rather than trusting the goldens alone.
 
 use std::process::Command;
 
-use janus::generate::TARGETS;
-use janus::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
+use kayak::generate::TARGETS;
+use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, TypeRef};
 use surql::schema::{
     datetime_field, index, int_field, string_field, table_schema, TableDefinition, TableMode,
 };
@@ -153,7 +153,7 @@ fn a_scaffolded_contract_generates_without_edits() {
     )
     .unwrap();
 
-    let scaffolded = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let scaffolded = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "scaffold",
             "--schema",
@@ -176,7 +176,7 @@ fn a_scaffolded_contract_generates_without_edits() {
         "a scaffold that does not validate is not a starting point: {notes}",
     );
 
-    let generated = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let generated = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "generate",
             "--contract",
@@ -201,7 +201,7 @@ fn a_scaffolded_contract_generates_without_edits() {
 /// how CI tells that apart from a contract that could not be built.
 #[test]
 fn scaffold_without_a_schema_is_a_usage_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args(["scaffold"])
         .output()
         .unwrap();
@@ -213,7 +213,7 @@ fn scaffold_without_a_schema_is_a_usage_error() {
 /// without it, are both a 2 rather than a connection attempt.
 #[test]
 fn verify_without_flags_is_a_usage_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args(["verify"])
         .output()
         .unwrap();
@@ -239,7 +239,7 @@ fn generate_and_diff_through_the_binary() {
 
     // Generate every target, naming the opt-in blocking client so the
     // real toolchain below sees both Rust flavours.
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "generate",
             "--contract",
@@ -328,7 +328,7 @@ fn generate_and_diff_through_the_binary() {
     }
 
     // Diff: identical contracts exit 0.
-    let same = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let same = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "diff",
             contract_path.to_str().unwrap(),
@@ -343,7 +343,7 @@ fn generate_and_diff_through_the_binary() {
     broken.resources[0].sortable.clear();
     let broken_path = dir.path().join("broken.json");
     std::fs::write(&broken_path, serde_json::to_string_pretty(&broken).unwrap()).unwrap();
-    let breaking = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let breaking = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "diff",
             contract_path.to_str().unwrap(),
@@ -419,7 +419,7 @@ fn a_directory_of_entities_generates_what_one_file_generates() {
     });
 
     let generate = |contract: &std::path::Path, out: &std::path::Path| {
-        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
             .args([
                 "generate",
                 "--contract",
@@ -496,7 +496,7 @@ fn file_names_decide_the_order_and_not_the_contract() {
     assert!(whole.queries.len() > 1, "the fixture has an order to lose");
 
     let out = dir.path().join("out");
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "generate",
             "--contract",
@@ -516,7 +516,7 @@ fn file_names_decide_the_order_and_not_the_contract() {
     );
 
     // The contract is the same contract either way.
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args(["diff", from_file.to_str().unwrap(), plain.to_str().unwrap()])
         .output()
         .unwrap();
@@ -550,7 +550,7 @@ fn a_directory_contract_refuses_what_it_cannot_read() {
     let whole = contract();
 
     let refusal = |at: &std::path::Path| -> String {
-        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
             .args([
                 "generate",
                 "--contract",
@@ -653,7 +653,7 @@ fn a_byte_order_mark_does_not_hide_a_contract() {
 
     for (label, at) in [("one file", &marked), ("a directory", &split)] {
         let out = dir.path().join(format!("out-{}", label.replace(' ', "-")));
-        let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
             .args([
                 "generate",
                 "--contract",
@@ -694,7 +694,7 @@ fn two_files_cannot_declare_the_same_resource() {
     let first = split.join("resources").join("files.json");
     std::fs::copy(&first, split.join("resources").join("also-files.json")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_janus"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "generate",
             "--contract",

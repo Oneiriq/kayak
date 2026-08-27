@@ -4,7 +4,7 @@
 /// these to their own wire forms (HTTP status codes, GraphQL error
 /// extensions); resolvers never think in protocol terms.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum JanusError {
+pub enum KayakError {
     /// The request is malformed or violates the contract.
     #[error("{0}")]
     BadRequest(String),
@@ -26,7 +26,7 @@ pub enum JanusError {
     Conflict(String),
 
     /// The request body exceeds a declared ceiling. Distinct from
-    /// [`JanusError::BadRequest`] because a client retries an
+    /// [`KayakError::BadRequest`] because a client retries an
     /// oversized payload differently from a malformed one: it shrinks
     /// the body instead of fixing it.
     #[error("{0}")]
@@ -42,7 +42,7 @@ pub enum JanusError {
     Internal(String),
 }
 
-impl JanusError {
+impl KayakError {
     /// The HTTP status this error maps to.
     pub fn status(&self) -> u16 {
         match self {

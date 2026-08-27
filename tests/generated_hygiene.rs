@@ -5,8 +5,8 @@
 //! the file does not use is not cosmetic -- it is the generator
 //! handing over something that fails a build the consumer controls.
 
-use janus::clients::{generate_client_rs, generate_client_rs_blocking};
-use janus::{Contract, FieldExposure, Resource};
+use kayak::clients::{generate_client_rs, generate_client_rs_blocking};
+use kayak::{Contract, FieldExposure, Resource};
 use surql::schema::{object_field, string_field, table_schema, TableDefinition, TableMode};
 
 fn table(open: bool) -> TableDefinition {
@@ -32,7 +32,7 @@ fn contract(open: bool) -> Contract {
         api_prefix: "/v1".into(),
         limits: None,
         rate_classes: vec![],
-        auth: janus::AuthScheme::None,
+        auth: kayak::AuthScheme::None,
         resources: vec![Resource {
             name: "files".into(),
             table: "file".into(),

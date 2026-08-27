@@ -31,7 +31,7 @@
 //! one and verification composes only the HNSW form.
 //!
 //! The module rides the `verify` cargo feature because it is the one
-//! part of janus that needs a database client, and janus deliberately
+//! part of kayak that needs a database client, and kayak deliberately
 //! carries none: generation and diffing must stay runnable in CI jobs
 //! and build scripts that have no database and no TLS stack. The
 //! feature follows the `runtime`/`graphql`/`console` precedent: the
@@ -339,7 +339,7 @@ fn query_probes(query: &Query, out: &mut Vec<Probe>) {
     for backing in &query.backing {
         let surql = match backing.kind {
             SearchKind::Lexical => format!(
-                "SELECT * FROM {} WHERE {} @@ 'janus-probe' EXPLAIN",
+                "SELECT * FROM {} WHERE {} @@ 'kayak-probe' EXPLAIN",
                 backing.table, backing.column,
             ),
             SearchKind::Vector => format!(
@@ -372,7 +372,7 @@ fn query_probes(query: &Query, out: &mut Vec<Probe>) {
 /// without executing and the planner chooses on predicate shape, not
 /// on whether a row matches.
 fn probe_value(option: Option<&str>) -> String {
-    let value = option.unwrap_or("janus-probe");
+    let value = option.unwrap_or("kayak-probe");
     format!("'{}'", value.replace('\'', "\\'"))
 }
 
@@ -548,7 +548,7 @@ mod tests {
         // value, and the resource's own page ceiling as the LIMIT.
         assert_eq!(
             filter.surql,
-            "SELECT * FROM file WHERE tenant_id = 'janus-probe' AND state = 'ready' \
+            "SELECT * FROM file WHERE tenant_id = 'kayak-probe' AND state = 'ready' \
              LIMIT 100 EXPLAIN",
         );
         let sort = composed
@@ -557,7 +557,7 @@ mod tests {
             .expect("the sort claim is probed");
         assert_eq!(
             sort.surql,
-            "SELECT * FROM file WHERE tenant_id = 'janus-probe' \
+            "SELECT * FROM file WHERE tenant_id = 'kayak-probe' \
              ORDER BY created_at LIMIT 100 EXPLAIN",
         );
         // The sub-resource's parent key is bound the way the server
@@ -568,8 +568,8 @@ mod tests {
             .expect("the sub-resource claim is probed");
         assert_eq!(
             sub.surql,
-            "SELECT * FROM file_version WHERE file = 'janus-probe' AND \
-             tenant_id = 'janus-probe' ORDER BY created_at LIMIT 50 EXPLAIN",
+            "SELECT * FROM file_version WHERE file = 'kayak-probe' AND \
+             tenant_id = 'kayak-probe' ORDER BY created_at LIMIT 50 EXPLAIN",
         );
     }
 
@@ -616,7 +616,7 @@ mod tests {
             .expect("the lexical backing is probed");
         assert_eq!(
             lexical.surql,
-            "SELECT * FROM text_chunk WHERE body @@ 'janus-probe' EXPLAIN",
+            "SELECT * FROM text_chunk WHERE body @@ 'kayak-probe' EXPLAIN",
         );
         assert_eq!(
             lexical.expects,

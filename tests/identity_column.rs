@@ -23,9 +23,9 @@
 //! synthesises nothing while refusing every face that needs to address
 //! an instance.
 
-use janus::generate::generate_all;
-use janus::validate::validate;
-use janus::{AuthScheme, Contract, FieldExposure, Identity, Resource, ResourceFaces};
+use kayak::generate::generate_all;
+use kayak::validate::validate;
+use kayak::{AuthScheme, Contract, FieldExposure, Identity, Resource, ResourceFaces};
 use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
 
 /// A table keyed by `user` rather than `id`: one presence row per
@@ -86,7 +86,7 @@ fn a_resource_that_names_no_identity_still_carries_id() {
     let contract = contract(Identity::Id);
     assert!(validate(&contract, &schema).is_empty());
 
-    let artifacts = generate_all(&contract, &schema, janus::generate::TARGETS).expect("generates");
+    let artifacts = generate_all(&contract, &schema, kayak::generate::TARGETS).expect("generates");
     let openapi = artifacts
         .get("openapi.json")
         .expect("an OpenAPI document is generated");
@@ -109,7 +109,7 @@ fn a_named_identity_reaches_every_artifact() {
         validate(&contract, &schema),
     );
 
-    let artifacts = generate_all(&contract, &schema, janus::generate::TARGETS).expect("generates");
+    let artifacts = generate_all(&contract, &schema, kayak::generate::TARGETS).expect("generates");
     for (name, body) in &artifacts {
         // The query surfaces and the engine policy do not describe a
         // resource's fields, so they have no identity to carry.
@@ -198,7 +198,7 @@ fn rows_that_carry_no_identity_get_no_synthesised_field() {
     let violations = validate(&contract, &schema);
     assert!(violations.is_empty(), "{violations:?}");
 
-    let artifacts = generate_all(&contract, &schema, janus::generate::TARGETS).expect("generates");
+    let artifacts = generate_all(&contract, &schema, kayak::generate::TARGETS).expect("generates");
 
     let openapi = artifacts.get("openapi.json").expect("an OpenAPI document");
     let doc: serde_json::Value = serde_json::from_str(openapi).expect("valid JSON");

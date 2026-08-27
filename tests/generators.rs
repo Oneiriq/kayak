@@ -1,19 +1,19 @@
 //! Every generator over one action-bearing contract, golden-tested.
 //!
-//! `JANUS_BLESS=client-go cargo test` re-blesses one golden, a comma
-//! separated list re-blesses several, and `JANUS_BLESS=1` re-blesses
+//! `KAYAK_BLESS=client-go cargo test` re-blesses one golden, a comma
+//! separated list re-blesses several, and `KAYAK_BLESS=1` re-blesses
 //! all of them. Anything else that changes an artifact is drift and
 //! fails. See `tests/common` for why a bless names its target.
 
 mod common;
 
-use janus::clients::{
+use kayak::clients::{
     generate_client_go, generate_client_py, generate_client_rs, generate_client_rs_blocking,
     generate_client_ts,
 };
-use janus::diff::{diff, Change};
-use janus::generate::{generate_all, TARGETS};
-use janus::{
+use kayak::diff::{diff, Change};
+use kayak::generate::{generate_all, TARGETS};
+use kayak::{
     Action, ActionField, ActionOutput, Contract, FieldExposure, Query, Resource, SearchBacking,
     SearchKind, SubResource, TypeRef,
 };
@@ -84,7 +84,7 @@ fn contract() -> Contract {
         // generators. Stating it here must reproduce the goldens byte for
         // byte -- that equality is the proof the mechanism is faithful to
         // the behaviour it replaced.
-        auth: janus::AuthScheme::Header {
+        auth: kayak::AuthScheme::Header {
             name: "x-copal-tenant".into(),
             credential: "tenant".into(),
         },
@@ -252,7 +252,7 @@ fn the_blocking_client_matches_its_golden() {
 
 #[test]
 fn sdl_carries_types_sorts_and_mutations() {
-    let sdl = janus::generate_sdl(&contract(), &schema()).unwrap();
+    let sdl = kayak::generate_sdl(&contract(), &schema()).unwrap();
     assert!(sdl.contains("type File {"), "{sdl}");
     assert!(
         sdl.contains("size: Int\n"),
@@ -280,7 +280,7 @@ fn sdl_carries_types_sorts_and_mutations() {
 
 #[test]
 fn openapi_carries_action_paths() {
-    let doc = janus::generate_openapi(&contract(), &schema()).unwrap();
+    let doc = kayak::generate_openapi(&contract(), &schema()).unwrap();
     let issue = &doc["paths"]["/v1/files/{id}/url"]["post"];
     assert_eq!(issue["operationId"], "issue_url_files");
     assert_eq!(
@@ -362,7 +362,7 @@ fn action_validation_fires() {
         requires: vec![],
         rate_class: None,
     });
-    let violations = janus::validate(&bad, &schema());
+    let violations = kayak::validate(&bad, &schema());
     let text = violations
         .iter()
         .map(ToString::to_string)
@@ -451,7 +451,7 @@ fn differ_classifies_changes() {
     );
 
     let mut renamed_watch = opened.clone();
-    renamed_watch.resources[0].graphql = Some(janus::GraphqlNames {
+    renamed_watch.resources[0].graphql = Some(kayak::GraphqlNames {
         watch_field: Some("fileTouched".into()),
         ..Default::default()
     });
@@ -489,17 +489,17 @@ fn differ_classifies_changes() {
 fn limits_are_visible_and_their_tightening_is_breaking() {
     let open = contract();
     let mut capped = contract();
-    capped.limits = Some(janus::ContractLimits {
+    capped.limits = Some(kayak::ContractLimits {
         max_depth: Some(10),
         max_complexity: Some(500),
         max_watches_per_principal: None,
     });
 
     // The document carries what the served schema will enforce.
-    let doc = janus::generate_openapi(&capped, &schema()).unwrap();
+    let doc = kayak::generate_openapi(&capped, &schema()).unwrap();
     assert_eq!(doc["x-limits"]["max_depth"], 10);
     assert_eq!(doc["x-limits"]["max_complexity"], 500);
-    let bare = janus::generate_openapi(&open, &schema()).unwrap();
+    let bare = kayak::generate_openapi(&open, &schema()).unwrap();
     assert!(bare.get("x-limits").is_none(), "no ceilings, no extension");
 
     // Introducing a ceiling refuses operations that used to run.
@@ -515,7 +515,7 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
     // Lowering is breaking; raising is compatible; removing is
     // compatible.
     let mut lowered = capped.clone();
-    lowered.limits = Some(janus::ContractLimits {
+    lowered.limits = Some(kayak::ContractLimits {
         max_depth: Some(8),
         max_complexity: Some(500),
         max_watches_per_principal: None,
@@ -538,17 +538,17 @@ fn limits_are_visible_and_their_tightening_is_breaking() {
 #[test]
 fn content_faces_are_documented_and_governed() {
     let mut with_content = contract();
-    with_content.resources[0].content = Some(janus::ContentFaces {
+    with_content.resources[0].content = Some(kayak::ContentFaces {
         upload: true,
         download: true,
     });
-    let document = janus::generate_openapi(&with_content, &schema()).unwrap();
+    let document = kayak::generate_openapi(&with_content, &schema()).unwrap();
     let content = &document["paths"]["/v1/files/{id}/content"];
     assert!(content["put"]["requestBody"]["content"]["application/octet-stream"].is_object());
     assert!(content["get"]["responses"]["200"]["content"]["application/octet-stream"].is_object());
 
     let mut without = with_content.clone();
-    without.resources[0].content = Some(janus::ContentFaces {
+    without.resources[0].content = Some(kayak::ContentFaces {
         upload: false,
         download: true,
     });
@@ -598,7 +598,7 @@ fn python_client_indentation_survives_sub_resources() {
             built(datetime_field("created_at")),
         ])
         .with_indexes([index("idx_revisions", ["tenant_id", "doc", "created_at"])]);
-    let python = janus::clients::generate_client_py(
+    let python = kayak::clients::generate_client_py(
         &contract,
         &[file_table(), chunk_table(), revision_table],
     )
@@ -808,7 +808,7 @@ fn a_closed_set_reaches_the_documents() {
     let schema = schema();
 
     let openapi =
-        serde_json::to_string(&janus::openapi::generate_openapi(&contract, &schema).unwrap())
+        serde_json::to_string(&kayak::openapi::generate_openapi(&contract, &schema).unwrap())
             .unwrap();
     // Named against the parameter, since an unrelated `enum` elsewhere
     // in the document would otherwise satisfy this.
@@ -817,7 +817,7 @@ fn a_closed_set_reaches_the_documents() {
         "the mode parameter carries the set: {openapi}",
     );
 
-    let mcp = serde_json::to_string(&janus::mcp::generate_mcp_tools(&contract).unwrap()).unwrap();
+    let mcp = serde_json::to_string(&kayak::mcp::generate_mcp_tools(&contract).unwrap()).unwrap();
     assert!(
         mcp.contains("\"enum\""),
         "the manifest carries it too: {mcp}"
@@ -916,13 +916,13 @@ fn a_backing_changes_no_wire_surface() {
     }
 
     // And what the metadata faces say, exactly.
-    let doc = janus::generate_openapi(&contract(), &schema()).unwrap();
+    let doc = kayak::generate_openapi(&contract(), &schema()).unwrap();
     assert_eq!(
         doc["paths"]["/v1/search"]["get"]["description"],
         "Search backing: lexical via idx_chunk_body over text_chunk.body; \
          vector via idx_chunk_embedding over text_chunk.embedding where configured.",
     );
-    let mcp = janus::generate_mcp_tools(&contract()).unwrap();
+    let mcp = kayak::generate_mcp_tools(&contract()).unwrap();
     let search = mcp["tools"]
         .as_array()
         .unwrap()
@@ -976,7 +976,7 @@ fn filter_options_answer_to_the_filterable_list() {
     contract.resources[0]
         .filter_options
         .insert("content_type".into(), vec!["text/plain".into()]);
-    let violations = janus::validate(&contract, &schema());
+    let violations = kayak::validate(&contract, &schema());
     assert!(
         violations
             .iter()
@@ -990,20 +990,20 @@ fn filter_options_answer_to_the_filterable_list() {
     ok.resources[0]
         .filter_options
         .insert("state".into(), vec!["ready".into(), "failed".into()]);
-    assert_eq!(janus::validate(&ok, &schema()), vec![]);
+    assert_eq!(kayak::validate(&ok, &schema()), vec![]);
 }
 
 /// The credential a client sends is the one the contract declared.
 ///
 /// Until `Contract.auth` existed, `x-copal-tenant` was hardcoded in
-/// eight places across the four generators, so janus produced clients for
+/// eight places across the four generators, so kayak produced clients for
 /// copal rather than for contracts: a service authenticating with a bearer
 /// token got one that sent somebody else's header and no credential at all.
 /// The fixture declares copal's header explicitly now, and the goldens did
 /// not move by a byte -- so this checks the other two schemes instead.
 #[test]
 fn the_client_sends_the_credential_the_contract_declares() {
-    let rust = |auth: janus::AuthScheme| {
+    let rust = |auth: kayak::AuthScheme| {
         let mut c = contract();
         c.auth = auth;
         generate_client_rs(&c, &schema()).expect("generates")
@@ -1011,7 +1011,7 @@ fn the_client_sends_the_credential_the_contract_declares() {
 
     // Bearer: the constructor takes a token and every request carries it
     // in the standard header, with the scheme prefix.
-    let bearer = rust(janus::AuthScheme::Bearer);
+    let bearer = rust(kayak::AuthScheme::Bearer);
     assert!(
         bearer.contains("pub fn new(base_url: impl Into<String>, token: impl Into<String>)"),
         "{bearer}"
@@ -1024,7 +1024,7 @@ fn the_client_sends_the_credential_the_contract_declares() {
     assert!(!bearer.contains("tenant"), "no stale credential name");
 
     // None: no credential to carry, so no field, no parameter, no header.
-    let open = rust(janus::AuthScheme::None);
+    let open = rust(kayak::AuthScheme::None);
     assert!(
         open.contains("pub fn new(base_url: impl Into<String>) -> Self"),
         "{open}"
@@ -1037,7 +1037,7 @@ fn the_client_sends_the_credential_the_contract_declares() {
 
     // A header scheme names the credential after the service's own word
     // for it, not after the header.
-    let keyed = rust(janus::AuthScheme::Header {
+    let keyed = rust(kayak::AuthScheme::Header {
         name: "x-api-key".into(),
         credential: "api_key".into(),
     });
@@ -1059,9 +1059,9 @@ fn the_client_sends_the_credential_the_contract_declares() {
     // own idiom. Checked together because the bug being prevented was one
     // generator drifting from the rest.
     let bearer_of =
-        |gen: fn(&Contract, &[TableDefinition]) -> Result<String, janus::GenerateError>| {
+        |gen: fn(&Contract, &[TableDefinition]) -> Result<String, kayak::GenerateError>| {
             let mut c = contract();
-            c.auth = janus::AuthScheme::Bearer;
+            c.auth = kayak::AuthScheme::Bearer;
             gen(&c, &schema()).expect("generates")
         };
     let ts = bearer_of(generate_client_ts);
@@ -1101,7 +1101,7 @@ fn the_client_sends_the_credential_the_contract_declares() {
     // credential can now BE the widest.
     let wide = {
         let mut c = contract();
-        c.auth = janus::AuthScheme::Header {
+        c.auth = kayak::AuthScheme::Header {
             name: "x-api-key".into(),
             credential: "authorization_key".into(),
         };
@@ -1139,13 +1139,13 @@ fn the_client_sends_the_credential_the_contract_declares() {
 /// is what keeps the document and the SDKs from disagreeing.
 #[test]
 fn the_openapi_document_declares_the_security_scheme() {
-    let doc = |auth: janus::AuthScheme| {
+    let doc = |auth: kayak::AuthScheme| {
         let mut c = contract();
         c.auth = auth;
-        janus::generate_openapi(&c, &schema()).expect("generates")
+        kayak::generate_openapi(&c, &schema()).expect("generates")
     };
 
-    let bearer = doc(janus::AuthScheme::Bearer);
+    let bearer = doc(kayak::AuthScheme::Bearer);
     assert_eq!(
         bearer["components"]["securitySchemes"]["bearer"],
         serde_json::json!({ "type": "http", "scheme": "bearer" }),
@@ -1156,7 +1156,7 @@ fn the_openapi_document_declares_the_security_scheme() {
         "and it is required of the whole API, not merely defined",
     );
 
-    let keyed = doc(janus::AuthScheme::Header {
+    let keyed = doc(kayak::AuthScheme::Header {
         name: "x-api-key".into(),
         credential: "api_key".into(),
     });
@@ -1167,7 +1167,7 @@ fn the_openapi_document_declares_the_security_scheme() {
 
     // An open API says nothing rather than declaring an empty scheme,
     // which a reader would have to interpret.
-    let open = doc(janus::AuthScheme::None);
+    let open = doc(kayak::AuthScheme::None);
     assert!(open["components"]["securitySchemes"].is_null(), "{open}");
     assert!(open["security"].is_null(), "{open}");
 }

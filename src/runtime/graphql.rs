@@ -8,7 +8,7 @@
 //!
 //! Rows travel as `serde_json::Value`s: resolvers return wire-shaped
 //! JSON, object fields pluck their key from the parent value. The
-//! per-request [`JanusContext`] rides on the request data
+//! per-request [`KayakContext`] rides on the request data
 //! (`Request::new(query).data(ctx)`); a missing context is an EMPTY
 //! context, so context-requiring middleware still rejects.
 
@@ -24,9 +24,9 @@ use surql::schema::{FieldType, TableDefinition};
 
 use crate::ir::{ActionOutput, TypeRef};
 use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, SortDirection, SubListArgs, WatchArgs};
-use crate::runtime::context::JanusContext;
+use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
-use crate::runtime::error::JanusError;
+use crate::runtime::error::KayakError;
 use crate::validate::{validate, Violation};
 
 /// Why the schema could not be built.
@@ -38,7 +38,7 @@ pub enum GraphqlBuildError {
     Schema(String),
     /// A name validation resolves could not be resolved while building
     /// the schema. Reaching it means validation and the builder
-    /// disagree, which is a janus bug -- reported rather than panicked
+    /// disagree, which is a kayak bug -- reported rather than panicked
     /// so a server can refuse to start instead of dying mid-request.
     #[error("internal: {what} {name:?} passed validation but could not be resolved")]
     Unresolved { what: &'static str, name: String },
@@ -486,7 +486,7 @@ pub fn schema_builder(
                                 FieldValue::value(GqlValue::from_json(json)?)
                             }
                             (_, None) => {
-                                return Err(to_graphql_error(JanusError::Internal(
+                                return Err(to_graphql_error(KayakError::Internal(
                                     "action resolver returned no value for a value-bearing output"
                                         .into(),
                                 )));
@@ -644,8 +644,8 @@ pub fn schema_builder(
 /// The per-request context, or empty when the caller injected none;
 /// context-requiring middleware then rejects, which is the safe
 /// default.
-fn request_context(ctx: &async_graphql::dynamic::ResolverContext<'_>) -> JanusContext {
-    ctx.data_opt::<JanusContext>().cloned().unwrap_or_default()
+fn request_context(ctx: &async_graphql::dynamic::ResolverContext<'_>) -> KayakContext {
+    ctx.data_opt::<KayakContext>().cloned().unwrap_or_default()
 }
 
 /// Downcast the parent value to the JSON row every object resolver
@@ -685,7 +685,7 @@ fn parse_sort(name: &str, sortable: &[String]) -> async_graphql::Result<(String,
 }
 
 /// Carry the runtime error's stable code into GraphQL error extensions.
-fn to_graphql_error(error: JanusError) -> async_graphql::Error {
+fn to_graphql_error(error: KayakError) -> async_graphql::Error {
     let mut out = async_graphql::Error::new(error.to_string());
     let mut extensions = async_graphql::ErrorExtensionValues::default();
     extensions.set("code", error.code());

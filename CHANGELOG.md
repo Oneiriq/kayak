@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Janus has not cut a release yet. Everything below is the road to 0.1.0.
+Kayak has not cut a release yet. Everything below is the road to 0.1.0.
 
 ## [Unreleased]
 
@@ -25,14 +25,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   index behind it is refused, naming the branch. Changing the set is
   breaking both ways: narrowing hides rows, widening discloses them.
 
-- **The dispatcher reports rather than panics, and janus has no
+- **The dispatcher reports rather than panics, and kayak has no
   production `unwrap` left.** Eight sites relied on the build-time
   completeness gate having registered a resolver, and asserted it at
   request time. A panic there takes down every other in-flight request
   on the same task and tells an operator a line number, where a 500
   tells them which operation is unserved. Both now answer
-  `JanusError::Internal` naming the operation, and say plainly that
-  reaching it means the gate and the dispatcher disagree -- a janus
+  `KayakError::Internal` naming the operation, and say plainly that
+  reaching it means the gate and the dispatcher disagree -- a kayak
   bug, not the caller's.
 
 - **A resource with no face needs no fields.** Requiring an exposure
@@ -63,14 +63,14 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
   Turning the listing off refuses `filterable`, `sortable`,
   `filter_options` and `watchable` — each is a claim about an endpoint
-  that does not exist, and janus refuses claims that cannot be true
+  that does not exist, and kayak refuses claims that cannot be true
   rather than letting them reach the artifacts as promises. A resource
   exposing nothing at all is refused outright. Withdrawing a face is
   breaking; restoring one is not.
 
 - **A contract says where its routes live.** `/v1` was hardcoded in
   four client generators and the OpenAPI emitter, which quietly made
-  janus a generator for services that had already chosen janus's
+  kayak a generator for services that had already chosen kayak's
   version prefix. A service serving `/accounts` could not adopt a
   generated client that called `/v1/accounts`, and moving its routes to
   suit the generator breaks whatever is already shipped against them —
@@ -176,10 +176,10 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Changed
 
-- **Re-blessing a golden names the golden.** `JANUS_BLESS` took any
+- **Re-blessing a golden names the golden.** `KAYAK_BLESS` took any
   value and re-blessed all eight goldens at once, so reaching for it to
   read one generator's diff silently rewrote the other seven. It now
-  takes the artifacts to bless — `JANUS_BLESS=client-go`, a comma
+  takes the artifacts to bless — `KAYAK_BLESS=client-go`, a comma
   separated list, or `1`/`all` for the blanket form a change touching
   every face still wants. An unrecognised name fails rather than
   blessing nothing quietly: `golang` is a plausible thing to type when
@@ -329,7 +329,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   one of them read as covered, so an equality filter on a BM25-indexed
   body passed validation and scanned the table, and an `ORDER BY` down
   an HNSW index passed validation and is not a thing the engine will
-  do. That is the exact failure janus exists to prevent, admitted by
+  do. That is the exact failure kayak exists to prevent, admitted by
   the thing that prevents it.
 
   The scaffold had the rule right all along and filtered on index
@@ -345,7 +345,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   `Violation::WrongIndexType` is the refusal, and it names the index
   rather than denying that one exists. An author looking straight at
   `DEFINE INDEX idx_chunk_body ... FULLTEXT` and told the column was
-  "not covered by any index" goes hunting for the bug in janus; the
+  "not covered by any index" goes hunting for the bug in kayak; the
   message now reads "filterable column body is indexed on text_chunk,
   but only by the FULLTEXT index idx_chunk_body, which serves neither
   an equality filter nor an ORDER BY". A column a standard index does
@@ -362,7 +362,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
-- **`janus verify --db`: ask the planner itself.** Static validation
+- **`kayak verify --db`: ask the planner itself.** Static validation
   proves an index exists for every filter and sort claim; it cannot
   prove the planner uses it. An index can cover the right columns in
   an order the composed listing cannot seek, and an engine upgrade
@@ -374,7 +374,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   filter bound, the claimed sort ordered, always with a LIMIT), runs
   each through `EXPLAIN` against a live database, and fails naming
   the claim whenever the plan iterates the table. Library API
-  (`janus::verify::{probes, verify_contract}`) and CLI, exiting
+  (`kayak::verify::{probes, verify_contract}`) and CLI, exiting
   non-zero so it gates in CI beside `diff`.
 
   The plan vocabulary is probed, not guessed: on SurrealDB 3.x an
@@ -388,7 +388,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   worst failure mode is the vocabulary drifting under it and turning
   every verification silently green.
 
-  Janus deliberately carries no database client, so the whole module
+  Kayak deliberately carries no database client, so the whole module
   rides a new `verify` cargo feature the way async-graphql rides
   `graphql`: the client arrives only for consumers that opt in, CI
   runs `--all-features` so the gated half stays compiled and tested,
@@ -404,7 +404,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   in its server, which is the drift this library exists to prevent:
   tighten a scope in the contract, forget to re-derive, and the API
   refuses what the engine still serves, with nothing naming the
-  divergence. `janus::derive_policy` is that derivation moved home.
+  divergence. `kayak::derive_policy` is that derivation moved home.
   `reads_require` becomes a select conjunct on the resource's table
   and every sub-resource table, since a sub-collection is read under
   its parent's requirement; a field guard becomes a column redaction,
@@ -437,7 +437,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   default run over a face nobody asked for.
 
 - **A reference page: the contract, as the surface it becomes.** A
-  service declares its shape once and janus lands it on REST,
+  service declares its shape once and kayak lands it on REST,
   GraphQL, and MCP by rules nobody should have to hold in their head.
   The OpenAPI document gives the REST half, the SDL gives the GraphQL
   half, and until now nothing put them side by side.
@@ -670,8 +670,8 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 
 ### Added
 
-- **`janus scaffold`, for services that already have a database.**
-  Janus refused to do anything without a contract, and writing the
+- **`kayak scaffold`, for services that already have a database.**
+  Kayak refused to do anything without a contract, and writing the
   first one meant transcribing every column and checking every filter
   and sort against an index by hand, which is the step that stopped
   adoption before it started. `scaffold --schema` reads the schema and
@@ -796,7 +796,7 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
 - **Watchable resources and the subscription seam.** A resource may declare
   itself `watchable`, which adds a GraphQL Subscription field over a stream
   resolver the service registers. REST, OpenAPI, and the four generated clients
-  are untouched: Janus generates no long-lived HTTP operations. Declaration and
+  are untouched: Kayak generates no long-lived HTTP operations. Declaration and
   registration are checked in both directions at build, so a watchable resource
   without a resolver refuses by name, and so does a resolver for a resource the
   contract never opened. Watchers narrow the stream with the same `filterable`
@@ -820,8 +820,8 @@ Janus has not cut a release yet. Everything below is the road to 0.1.0.
   index can serve is a generation error naming the column.
 - **Name gating.** Chosen names are checked against the GraphQL grammar, the
   `__` introspection prefix, root type names, cross-resource type collisions,
-  and the SurrealDB v3 reserved-word list, exported as `janus::is_reserved`.
-- **IR-level diffing.** `janus diff old.json new.json` classifies every change
+  and the SurrealDB v3 reserved-word list, exported as `kayak::is_reserved`.
+- **IR-level diffing.** `kayak diff old.json new.json` classifies every change
   and exits non-zero on a breaking one, which makes the gate one line of CI.
 
 ### Fixed

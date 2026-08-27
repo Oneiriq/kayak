@@ -14,8 +14,8 @@ use std::sync::Arc;
 use crate::runtime::args::{
     ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
 };
-use crate::runtime::context::JanusContext;
-use crate::runtime::error::JanusError;
+use crate::runtime::context::KayakContext;
+use crate::runtime::error::KayakError;
 use crate::runtime::resolvers::{BoxFuture, RowStream};
 
 /// Which kind of operation is being dispatched.
@@ -92,14 +92,14 @@ pub trait Middleware: Send + Sync {
     fn handle<'a>(
         &'a self,
         operation: Operation,
-        ctx: JanusContext,
+        ctx: KayakContext,
         payload: Payload,
         next: Next,
-    ) -> BoxFuture<'a, Result<Outcome, JanusError>>;
+    ) -> BoxFuture<'a, Result<Outcome, KayakError>>;
 }
 
 pub(crate) type Terminal = Arc<
-    dyn Fn(Operation, JanusContext, Payload) -> BoxFuture<'static, Result<Outcome, JanusError>>
+    dyn Fn(Operation, KayakContext, Payload) -> BoxFuture<'static, Result<Outcome, KayakError>>
         + Send
         + Sync,
 >;
@@ -117,9 +117,9 @@ impl Next {
     pub fn run(
         mut self,
         operation: Operation,
-        ctx: JanusContext,
+        ctx: KayakContext,
         payload: Payload,
-    ) -> BoxFuture<'static, Result<Outcome, JanusError>> {
+    ) -> BoxFuture<'static, Result<Outcome, KayakError>> {
         match self.chain.get(self.index).cloned() {
             Some(layer) => {
                 self.index += 1;

@@ -1,4 +1,4 @@
-//! Janus: one contract, every face.
+//! Kayak: one contract, every face.
 //!
 //! A serializable contract IR authored over `surql-rs` schema
 //! definitions, validated against the schema's real indexes, and

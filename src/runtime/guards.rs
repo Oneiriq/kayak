@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::ir::{Contract, FieldExposure};
-use crate::runtime::context::JanusContext;
+use crate::runtime::context::KayakContext;
 
 /// One visibility decision: does this caller see this field on this
 /// row? The row is absent when the question is asked before any row
@@ -27,7 +27,7 @@ use crate::runtime::context::JanusContext;
 /// there for everyone but admins, which refuses narrowing by a
 /// column the caller only partially sees.
 pub(crate) type FieldGuard =
-    Arc<dyn Fn(&JanusContext, Option<&serde_json::Value>) -> bool + Send + Sync>;
+    Arc<dyn Fn(&KayakContext, Option<&serde_json::Value>) -> bool + Send + Sync>;
 
 /// Registered guards, keyed by the name the contract references.
 #[derive(Default, Clone)]
@@ -46,7 +46,7 @@ impl Guards {
     /// a row-dependent guard answers for all rows at once.
     pub fn guard<F>(mut self, name: &str, decide: F) -> Self
     where
-        F: Fn(&JanusContext, Option<&serde_json::Value>) -> bool + Send + Sync + 'static,
+        F: Fn(&KayakContext, Option<&serde_json::Value>) -> bool + Send + Sync + 'static,
     {
         self.map.insert(name.to_owned(), Arc::new(decide));
         self
@@ -77,7 +77,7 @@ pub struct HiddenField {
 pub fn hidden_in(
     fields: &[FieldExposure],
     guards: &Guards,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
 ) -> Vec<HiddenField> {
     fields
         .iter()
@@ -147,7 +147,7 @@ pub fn guarded_fields(
 /// field the decision denies for THIS row is removed. The row omits
 /// the keys rather than nulling them, exactly as the dispatcher
 /// projects.
-pub fn strip_guarded(row: &mut serde_json::Value, guarded: &[GuardedField], ctx: &JanusContext) {
+pub fn strip_guarded(row: &mut serde_json::Value, guarded: &[GuardedField], ctx: &KayakContext) {
     if guarded.is_empty() {
         return;
     }
@@ -174,7 +174,7 @@ pub fn hidden_fields(
     resource: &str,
     sub: Option<&str>,
     guards: &Guards,
-    ctx: &JanusContext,
+    ctx: &KayakContext,
 ) -> Vec<HiddenField> {
     let Some(resource) = contract.resources.iter().find(|r| r.name == resource) else {
         return Vec::new();

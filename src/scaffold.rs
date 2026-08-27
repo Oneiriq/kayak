@@ -13,7 +13,7 @@
 //! follows is about API shape rather than about repairing claims.
 //!
 //! Two things it will not guess. Actions are behavior and live in the
-//! service, so a scaffolded resource has none — and queries are the
+//! service, so a scaffolded resource has none -- and queries are the
 //! same kind of thing, so it writes none of those either, which is why
 //! a scaffold never writes a declared search or a backing: what a
 //! query searches is a fact about the resolver, and a vector index in
@@ -22,7 +22,7 @@
 //! names suggest they hold a secret are left out, because a tool that
 //! writes API surface should never be the reason a hash reaches a
 //! client; the caller is told which ones were skipped and can expose
-//! them deliberately.
+//! them explicitly.
 //!
 //! Where it has a choice it claims less. The differ calls a removed
 //! filter or sort breaking and an added one compatible, so a claim the
@@ -47,7 +47,7 @@ use crate::ir::{Contract, FieldExposure, Resource};
 pub struct Scaffold {
     pub contract: Contract,
     /// Columns left unexposed because their names suggest a secret,
-    /// as `table.column`. Expose any of them deliberately.
+    /// as `table.column`. Expose any of them explicitly.
     pub withheld: Vec<String>,
     /// Tables left out because no index leads with any of their pinned
     /// columns. The server binds the pins on every read, so every
@@ -321,7 +321,7 @@ mod tests {
         // A sort reaches only what the pinned prefix covers. `state`
         // sits behind tenant_id alone and qualifies; `created_at` sits
         // behind `state` as well, and nothing makes a caller bind it,
-        // so the scaffold leaves that one to be added deliberately.
+        // so the scaffold leaves that one to be added by hand.
         assert!(resource.sortable.contains(&"state".to_owned()));
         assert!(resource.sortable.contains(&"path".to_owned()));
         assert!(

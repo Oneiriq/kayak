@@ -305,7 +305,7 @@ fn searching(backing: Vec<SearchBacking>) -> Contract {
 /// `text_chunk.embedding` through `idx_chunk_embedding` (the fused
 /// implementation in `crates/copal-store/src/repo/text.rs`, the
 /// indexes in `crates/copal-store/src/schema/text.rs`), fused in the
-/// resolver — so nothing stopped a schema change from dropping
+/// resolver -- so nothing stopped a schema change from dropping
 /// `idx_chunk_body` while the contract went on promising search.
 /// Declared as two backings, the same surface validates clean against
 /// the copal-shaped table, and `file_text` beside it shows a backing
@@ -351,7 +351,7 @@ fn copal_search_declared_with_its_backing_validates_clean() {
 /// The mirror image of `a_claim_resting_on_a_search_or_vector_index_is_refused`:
 /// there a filter rested on search machinery that cannot narrow, here
 /// a search rests on machinery that cannot search, and the refusal
-/// teaches the same way — name the index the author was looking at,
+/// teaches the same way -- name the index the author was looking at,
 /// say what it turned out to be, say what the claim needs.
 #[test]
 fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
@@ -537,7 +537,7 @@ fn a_backing_that_resolves_nothing_is_named() {
 /// found wanting. This one catches an absence, and an absence is what
 /// unindexed search looks like from the outside: driftnet's chunk
 /// search and antumbra's recall paths both ran for months over
-/// columns nothing could answer a neighbour query on, and no contract
+/// columns nothing could answer a neighbor query on, and no contract
 /// anywhere could have said so, because saying nothing about search
 /// and needing nothing were the same declaration. They stop being the
 /// same here.
@@ -650,7 +650,7 @@ fn a_vector_backing_answers_for_its_width() {
 /// Copal's HNSW index over `text_chunk.embedding` exists only where an
 /// embedding model is configured, applied at startup at that model's
 /// width. Declared outright it would be false everywhere else, so it
-/// was declared nowhere — and a search nothing in the contract
+/// was declared nowhere -- and a search nothing in the contract
 /// mentions is exactly what this rulebook exists to end. Optional is
 /// the third answer: the index may be absent, and an index that is
 /// there answers for its column, its kind, and its width like any

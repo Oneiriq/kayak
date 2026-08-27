@@ -2,9 +2,9 @@
 //! `file` table (built inline: Kayak takes schema definitions as input
 //! and depends on no consumer).
 //!
-//! What an index can ANSWER — a filter or a sort resting on search
+//! What an index can ANSWER -- a filter or a sort resting on search
 //! machinery, a search resting on a b-tree, a declared search resting
-//! on nothing — lives next door in `search_gate.rs`.
+//! on nothing -- lives next door in `search_gate.rs`.
 
 mod common;
 
@@ -383,7 +383,7 @@ fn generated_openapi_matches_the_golden_document() {
     // Whole, not trimmed: see the note in tests/common::check_golden.
     assert_eq!(
         rendered, golden,
-        "generated OpenAPI drifted from golden; KAYAK_BLESS=copal-files to re-bless deliberately",
+        "generated OpenAPI drifted from golden; KAYAK_BLESS=copal-files if the change is intended",
     );
 }
 

@@ -236,8 +236,8 @@ pub fn generate_openapi(
         // the parameters, and the answer stay exactly what they were,
         // and the declaration lands in the operation description,
         // which is where a reader of the document learns what a call
-        // costs. A width is left out — it is a fact about the vectors
-        // the resolver sends, not about anything a caller can do — but
+        // costs. A width is left out -- it is a fact about the vectors
+        // the resolver sends, not about anything a caller can do -- but
         // an optional backing is said out loud, because "this
         // deployment may not have it" is the one thing here that
         // changes what a caller should expect back.

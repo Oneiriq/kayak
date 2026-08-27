@@ -380,7 +380,7 @@ fn go_struct(
     // unless the resource exposes it as a field, in which case the loop
     // below emits it once, with its real type.
     if let Some(identity) = identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id)) {
-        // `ID`, not `Id`: Go spells initialisms in full caps, which is
+        // `ID`, not `Id`: Go spells initializms in full caps, which is
         // what the emitter said before it could be asked for any other
         // identity and what every golden expects. Anything else
         // pascal-cases like the fields below it.

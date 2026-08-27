@@ -5,7 +5,7 @@
 //! word, special parameter, or special field. Collisions are legal in
 //! SurrealDB itself (idents can be escaped), but a contract that leans
 //! on escaping is a contract that breaks the moment a query is written
-//! by hand. The gate is deliberately conservative.
+//! by hand. The gate is conservative on purpose.
 //!
 //! The list is curated from the SurrealDB v3 grammar: statement and
 //! clause keywords, word operators, literals, special `$` parameters

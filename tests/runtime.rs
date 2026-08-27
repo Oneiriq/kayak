@@ -1437,7 +1437,7 @@ fn guarded_renders_nullable_everywhere_and_diffs_as_breaking() {
 
     // A guard moving in either direction is breaking: guarding an
     // open field takes values from deployed callers, and unguarding
-    // shows the column to callers the guard refused — on the API
+    // shows the column to callers the guard refused -- on the API
     // faces and in the derived engine PERMISSIONS alike. The
     // sub-collection's guard answers the same rules, because the
     // engine policy derives from both levels.

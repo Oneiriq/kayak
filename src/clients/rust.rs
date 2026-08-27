@@ -1,4 +1,4 @@
-//! The Rust client generator, in both flavours.
+//! The Rust client generator, in both flavors.
 //!
 //! Rust is the one language here with two calling conventions, so it
 //! is the one language that emits two clients. Everything a client
@@ -239,7 +239,7 @@ fn generate(
         }
     });
     // The tail every request shares. Spliced rather than repeated so
-    // the two flavours cannot disagree about error handling either.
+    // the two flavors cannot disagree about error handling either.
     let sent = format!("{awaited}?.error_for_status()?");
     let received = format!(".json(){awaited}?");
 

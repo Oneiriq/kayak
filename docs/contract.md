@@ -1,10 +1,10 @@
 # Authoring a contract
 
-A contract is data: a serializable object describing what an API exposes over
-which tables. It never restates the database schema. Resources reference
-tables and columns by name, and validation resolves those references against
-the authoritative `surql-rs` definitions, so a contract cannot drift from the
-schema without failing generation.
+A contract is data: a serializable object describing what an API exposes
+over which tables. It never restates the database schema. Resources
+reference tables and columns by name, and validation resolves those
+references against the authoritative `surql-rs` definitions, so a
+contract can't drift from the schema without failing generation.
 
 ## The shape
 
@@ -35,14 +35,14 @@ Contract {
 }
 ```
 
-Nothing is exposed by default. A column absent from `fields` does not exist
-on any surface. Renames apply everywhere at once, from the wire name to every generated
-client.
+Nothing is exposed by default. A column absent from `fields` does not
+exist on any surface. Renames apply everywhere at once, from the wire
+name to every generated client.
 
 ## Pinning to one of several columns
 
 `pinned` is an AND: every column is equality-bound and credited as an
-index prefix. A symmetric relationship cannot be said that way. A
+index prefix. A symmetric relationship can't be expressed that way. A
 friendship stored as one row per unordered pair holds its two accounts
 in `a` and `b`, and the caller is *either* of them:
 
@@ -54,12 +54,12 @@ filterable: vec!["state".into()],
 
 The engine answers that as a union of one index seek per branch, so
 **every** alternative must head an index whose remaining columns serve
-the filter and sort claims — here `(a, state)` and `(b, state)`. A
-branch with no index behind it drags the whole read back to a scan, and
-is refused, naming the branch so the author knows which index is
-missing.
+the filter and sort claims; here that means `(a, state)` and
+`(b, state)`. A branch with no index behind it drags the whole read back
+to a scan, so validation refuses it and names the branch, which tells
+the author which index is missing.
 
-Fewer than two alternatives is refused, as is a column that is both
+Fewer than two alternatives is refused, and so is a column that is both
 pinned and an alternative. Changing the set is breaking in both
 directions: narrowing hides rows a caller used to see, widening shows
 rows they did not.
@@ -77,20 +77,21 @@ faces: ResourceFaces::NONE,      // a place for actions to live
 ```
 
 `GET_ONLY` is the shape a social service needs: `GET /accounts/{id}` is
-served and `GET /accounts` must never be, because enumerating every user
-is the thing it is careful not to do. `NONE` is a domain that is all
-verbs — an RPC-shaped resource whose table has no browsable collection.
+served and `GET /accounts` never is, because enumerating every user is
+the thing the service is careful never to allow. `NONE` fits a domain
+that is all verbs: an RPC-shaped resource whose table has no browsable
+collection.
 
 Actions and sub-resources are independent of both flags, which is what
-makes `NONE` useful rather than empty.
+makes `NONE` useful instead of empty.
 
 Turning the listing off refuses `filterable`, `sortable`,
-`filter_options` and `watchable`, because each is a claim about an
-endpoint that no longer exists. A resource with no face, no action and
+`filter_options`, and `watchable`, because each is a claim about an
+endpoint that no longer exists. A resource with no face, no action, and
 no sub-resource is refused outright: it generates nothing.
 
-Withdrawing a face is breaking — an endpoint, a GraphQL field and a
-client method all disappear. Adding one back is compatible.
+Withdrawing a face is breaking, since an endpoint, a GraphQL field, and
+a client method all disappear. Adding one back is compatible.
 
 ## Where the routes live
 
@@ -110,11 +111,12 @@ Queries are unaffected: they declare absolute paths (`"/me"`,
 `"/v1/search"`) and always have, which is why a query could describe a
 service's real route before a resource could.
 
-Moving the prefix is breaking in both directions — every resource route
+Moving the prefix is breaking in both directions: every resource route
 moves at once, and every deployed client calls a path that is no longer
-served. That is the point of declaring it rather than hardcoding it: a
-service already serving `/accounts` adopts a generated client by saying
-so, instead of moving its routes and breaking whatever is shipped.
+served. Declaring the prefix instead of hardcoding it exists for
+adoption. A service already serving `/accounts` can take on a generated
+client by saying so, without moving its routes and breaking whatever is
+already shipped.
 
 ## Authentication
 
@@ -140,11 +142,11 @@ header above gets `Client::new(url, tenant)`, and an open one gets
 `credential`.
 
 Changing the scheme is breaking in every direction, including relaxing
-it — a client generated against a contract that sends a credential does
-not stop compiling when the server stops requiring one, but every caller
-holding the old client is now sending a header the contract no longer
-describes, and the differ says so rather than letting that pass as a
-compatible loosening.
+it. A client generated against a contract that sends a credential
+doesn't stop compiling when the server stops requiring one, but every
+caller holding the old client is now sending a header the contract no
+longer describes, so the differ flags the relaxation instead of letting
+it pass as a compatible loosening.
 
 ## Pinned, filterable, sortable
 
@@ -152,42 +154,43 @@ compatible loosening.
 input reaches a query: tenant scoping, soft-delete filters. They are never
 API parameters. They exist so index validation can credit them.
 
-Because the pins ride every read, they carry an index requirement of their
-own, and it belongs to the set rather than to any single pin: some standard
-or unique index must lead with a bound column, or the plain listing, nothing
-filtered and nothing sorted, scans the whole table with the pins as its only
-predicate. One leading bound column is enough; the engine seeks its range
-and checks the remaining pins inside it. A sub-resource counts its
-`parent_key` among the bound columns, which is how a table like a delivery
-log, indexed by endpoint and never by tenant, is fine as a sub-collection
-and refused as a top-level resource: the same rows, reached two ways, cost
-two different things.
+Because the pins apply to every read, they carry an index requirement of
+their own, and it belongs to the set rather than to any single pin: some
+standard or unique index must lead with a bound column, or the plain
+listing (nothing filtered, nothing sorted) scans the whole table with
+the pins as its only predicate. One leading bound column is enough; the
+engine seeks its range and checks the remaining pins inside it. A
+sub-resource counts its `parent_key` among the bound columns, which is
+how a table like a delivery log, indexed by endpoint and never by
+tenant, is fine as a sub-collection and refused as a top-level resource:
+the same rows, reached two ways, cost two different things.
 
-`filterable` columns become query parameters and GraphQL arguments. Each must
-appear in at least one index on the table, because an unindexed filter works
-in the demo and becomes a table scan in production.
+`filterable` columns become query parameters and GraphQL arguments. Each
+must appear in at least one index on the table, because an unindexed
+filter works in the demo and becomes a table scan in production.
 
-`sortable` columns become sort options. The rule: some index must hold the
-column at a position where every earlier column is pinned or filterable. An
-index serves an ORDER BY only from a prefix whose head is equality-bound.
-Given `(tenant_id, state, created_at)` with `tenant_id` pinned and `state`
-filterable, `created_at` is a valid sort. Declaring a sort no index can serve
-is a generation error naming the column.
+`sortable` columns become sort options. The rule: some index must hold
+the column at a position where every earlier column is pinned or
+filterable. An index serves an ORDER BY only from a prefix whose head is
+equality-bound. Given `(tenant_id, state, created_at)` with `tenant_id`
+pinned and `state` filterable, `created_at` is a valid sort. Declaring a
+sort no index can serve is a generation error naming the column.
 
-Only a standard or unique index counts toward either rule. `DEFINE INDEX`
-also spells FULLTEXT, HNSW, and MTREE, and none of the three narrows an
-equality or supplies an order: a column covered only by one of them is, for a
-filter or a sort, uncovered. Claiming it is a generation error that names the
-index and its type, because "not covered by any index" against a table that
-visibly has one sends the reader hunting the wrong bug. A column may of
-course carry both, and a BM25 index beside a standard one is the ordinary way
-to make a column searchable and filterable at once.
+Only a standard or unique index counts toward either rule.
+`DEFINE INDEX` also spells FULLTEXT, HNSW, and MTREE, and none of the
+three narrows an equality or supplies an order: a column covered only by
+one of them is, for a filter or a sort, uncovered. Claiming it is a
+generation error that names the index and its type, because a bare "not
+covered by any index" against a table that visibly has one would send
+the reader hunting the wrong bug. A column may of course carry both, and
+a BM25 index beside a standard one is the ordinary way to make a column
+searchable and filterable at once.
 
 ## Actions
 
 Actions model verbs beyond list and get: uploads, deletions, signed URLs,
-workflow starts. The contract describes the wire shape; the server binds the
-behavior.
+workflow starts. The contract describes the wire shape; the server binds
+the behavior.
 
 ```rust
 Action {
@@ -206,16 +209,16 @@ Action {
 }
 ```
 
-A literal `{id}` in the path marks an instance action and becomes a required
-id parameter on every surface: the OpenAPI path, the mutation argument, each
-client method signature.
+A literal `{id}` in the path marks an instance action and becomes a
+required id parameter on every surface: the OpenAPI path, the mutation
+argument, each client method signature.
 
 ## Sub-resources
 
-A collection that belongs to one instance of a parent is a sub-resource: a
-file's versions, an endpoint's deliveries. It lists and pages like a resource
-and has no id-addressable form of its own, because everything about it is
-reached through the parent.
+A collection that belongs to one instance of a parent is a sub-resource:
+a file's versions, an endpoint's deliveries. It lists and pages like a
+resource and has no id-addressable form of its own, because everything
+about it is reached through the parent.
 
 ```rust
 sub_resources: vec![SubResource {
@@ -233,21 +236,22 @@ sub_resources: vec![SubResource {
 ```
 
 `GET /v1/files/{id}/versions` on REST, `file(id) { versions { items { ... } } }`
-on GraphQL, and a `list_versions_files` method on each generated client. The
-same index rules apply to the sub table, with `parent_key` credited as
-equality-bound, so a sort of `created_at` needs an index holding it after
-`file`.
+on GraphQL, and a `list_versions_files` method on each generated client.
+The same index rules apply to the sub table, with `parent_key` credited
+as equality-bound, so a sort of `created_at` needs an index holding it
+after `file`.
 
-The GraphQL type name composes with the parent (`FileVersion`), so two parents
-may each carry a `versions` collection without colliding. Filters and page
-ceilings belong to the sub-resource. Declaring `sortable` on `files` says
-nothing about what `versions` may sort on.
+The GraphQL type name composes with the parent (`FileVersion`), so two
+parents may each carry a `versions` collection without colliding.
+Filters and page ceilings belong to the sub-resource. Declaring
+`sortable` on `files` says nothing about what `versions` may sort on.
 
 ## Queries
 
-A query is a read that answers a question rather than paging a collection.
-Search is the shape that motivated them: relevance is not a sort column and a
-query string is not a filter, so a listing cannot express one.
+A query is a read that answers a question instead of paging a
+collection. Search is the shape that motivated them: relevance isn't a
+sort column and a query string isn't a filter, so a listing can't
+express one.
 
 ```rust
 queries: vec![Query {
@@ -267,21 +271,21 @@ queries: vec![Query {
 }],
 ```
 
-Queries render as REST `GET`s, GraphQL query fields, client methods, and MCP
-tools, and carry the same scope and rate declarations every other operation
-carries. The answer is JSON, because its shape belongs to the resolver rather
-than to a projected table. The differ treats them like actions: removing one,
-renaming its field, moving its path, tightening its scopes, or gaining a
-required input all read as breaking.
+Queries render as REST `GET`s, GraphQL query fields, client methods, and
+MCP tools, and carry the same scope and rate declarations every other
+operation carries. The answer is JSON, because its shape belongs to the
+resolver rather than to a projected table. The differ treats them like
+actions: removing one, renaming its field, moving its path, tightening
+its scopes, or gaining a required input all read as breaking.
 
 ### Search backings
 
-A listing declares its cost exhaustively — every filter and sort claim is
-index-validated — while a query, the one read whose cost is most surprising,
-would otherwise be an opaque box: typed inputs, a path, and nothing about the
-machinery behind it. Nothing would stop a schema change from dropping the
-FULLTEXT index while the contract went on promising search. A backing names
-that machinery:
+A listing declares its cost exhaustively, since every filter and sort
+claim is index-validated. A query, the one read whose cost is most
+surprising, would otherwise be an opaque box: typed inputs, a path, and
+nothing about the machinery behind it. Nothing would stop a schema
+change from dropping the FULLTEXT index while the contract went on
+promising search. A backing names that machinery:
 
 ```rust
 backing: vec![
@@ -304,107 +308,113 @@ backing: vec![
 ],
 ```
 
-A fused search — BM25 candidates and vector neighbours rescored together —
-is two backings on one query; the fusion itself is resolver behavior, not
-contract. `backing` is optional and empty by default: a query without one
-claims no search machinery, which is what every existing contract declares,
-and old contracts deserialize unchanged.
+A fused search (BM25 candidates and vector neighbors rescored together)
+is two backings on one query; the fusion itself is resolver behavior and
+stays out of the contract. `backing` is optional and empty by default: a
+query without one claims no search machinery, which is what every
+existing contract declares, and old contracts deserialize unchanged.
 
-Validation holds a backing to the mirror image of the listing index rules.
-The named table, column, and index must exist; the index must hold the
-column; and it must be the kind's own machinery — FULLTEXT for a lexical
-backing, HNSW, MTREE, or DISKANN for a vector one. A backing resting on a plain b-tree
-is refused the same way a filter resting on a FULLTEXT index is, with the
-violation naming the index and what it turned out to be, because "the plain
-index idx_chunk_tenant cannot answer it" is a diagnosis where a bare refusal
-is a hunt.
+Validation holds a backing to the mirror image of the listing index
+rules. The named table, column, and index must exist; the index must
+hold the column; and it must be the kind's own machinery: FULLTEXT for a
+lexical backing; HNSW, MTREE, or DISKANN for a vector one. A backing
+resting on a plain b-tree is refused the same way a filter resting on a
+FULLTEXT index is, with the violation naming the index and what it
+turned out to be, because "the plain index idx_chunk_tenant cannot
+answer it" points at the fix, while a bare refusal starts a hunt.
 
-Which of the three vector machineries answers is the schema's business. The
-contract asks for nearest neighbours through an index; moving a column from
-HNSW to DISKANN is a capacity decision, and the contract does not have to be
-rewritten for it.
+Which of the three vector machineries answers is the schema's business.
+The contract asks for nearest neighbors through an index; moving a
+column from HNSW to DISKANN is a capacity decision, and the contract
+doesn't have to be rewritten for it.
 
 ### The width
 
-`dimension` pins what the search sends, and validation holds it against the
-index's own `DIMENSION`. A vector of the wrong width is not a slower search,
-it is a different one, and the width changes whenever the embedding model
-does — so a model swap that outran its schema becomes a generation failure
-instead of a quiet change in what comes back. Leave it `None` where the
-deployment chooses the width; state it wherever the schema does. A lexical
-backing has no width, and stating one there is refused rather than compared
-against a FULLTEXT index that was never going to have one.
+`dimension` pins what the search sends, and validation holds it against
+the index's own `DIMENSION`. A vector of the wrong width doesn't run
+slower; it answers a different question. And the width changes whenever
+the embedding model does, so a model swap that outran its schema becomes
+a generation failure instead of a quiet change in what comes back. Leave
+it `None` where the deployment chooses the width; state it wherever the
+schema does. A lexical backing has no width, and stating one there is
+refused instead of being compared against a FULLTEXT index that was
+never going to have one.
 
 ### Machinery a deployment configures
 
-`optional: true` says the deployment is free not to provide this index. Copal
-is the case that needed it: its HNSW index over `text_chunk.embedding` is
-applied at startup, and only where an embedding model is configured, at that
-model's width. Declared outright the claim would be false in every deployment
-without one — so it was declared nowhere, and a search the contract never
-mentions is exactly the silence these rules exist to end.
+`optional: true` says the deployment is free not to provide this index.
+Copal is the case that needed it: its HNSW index over
+`text_chunk.embedding` is applied at startup, and only where an
+embedding model is configured, at that model's width. Declared outright,
+the claim would be false in every deployment without one. So before this
+flag the backing simply went undeclared, and a real search the contract
+never mentioned is exactly the silence these rules exist to close.
 
-Optional relaxes one rule and no others: the index may be absent. An index
-that IS there holds the column, is the kind's own machinery, and matches the
-declared width like any other. May be absent, never may be wrong. `verify
---db` reads it the same way: the probe runs, and a plan that missed the index
-is excused on exactly one fact — that this database does not define it.
+Optional relaxes one rule and no others: the index may be absent. An
+index that is present must hold the column, be the kind's own machinery,
+and match the declared width, like any other. `verify --db` reads it the
+same way: the probe runs, and a plan that missed the index is excused on
+exactly one fact, that this database does not define it.
 
 ### The declared search
 
-A backing says what answers a search. `searches` says the search happens:
+A backing says what answers a search. `searches` says the search
+happens:
 
 ```rust
 searches: vec![SearchKind::Lexical, SearchKind::Vector],
 ```
 
 Every kind named there must have a backing of that kind behind it, or
-generation fails naming the query and the kind. This is the one rule in the
-toolchain that catches an ABSENCE rather than a mistake, and absence is the
-shape unindexed search actually has: nobody writes down that the neighbour
-query has no index, they write the resolver and move on. Before this field
-there was no way to make the promise, so there was no way to break it — a
-query that declared no backing and a query that needed none were the same
-document.
+generation fails naming the query and the kind. This rule is unusual in
+that it catches an absence instead of a mistake, and absence is how
+unindexed search actually ships: nobody writes down that the neighbor
+query has no index. They write the resolver and move on. Before this
+field there was no way to make the promise, so there was no way to break
+it; a query that declared no backing and a query that needed none were
+the same document.
 
-What it cannot do is make anyone declare. That is the standing limit of a
-declaration language, the same one that lets a listing simply not claim a
-filterable column, and it is why `verify --db` exists beside the static gate.
-What the declaration buys is that once made, it is load-bearing: dropping the
-index becomes a build failure, the differ calls losing the capability
-breaking, and the artifacts say which machinery a caller is relying on.
+What it can't do is make anyone declare. That is the standing limit of a
+declaration language, the same one that lets a listing simply not claim
+a filterable column, and it is why `verify --db` exists beside the
+static gate. What the declaration buys is that once made, it is
+load-bearing: dropping the index becomes a build failure, the differ
+calls losing the capability breaking, and the artifacts say which
+machinery a caller is relying on.
 
-`searches` is empty by default and old contracts deserialize unchanged. A
-backing whose kind is not declared is permitted — the machinery is validated
-either way — so adopting the field is incremental rather than a flag day.
+`searches` is empty by default and old contracts deserialize unchanged.
+A backing whose kind is not declared is permitted, and the machinery is
+validated either way, so adopting the field is incremental rather than a
+flag day.
 
 ### What it moves
 
-The backing is capacity metadata, not wire shape. REST paths, the SDL, and
-client signatures do not change when one is declared; the declaration
-surfaces where metadata already surfaces — the MCP tool's annotations, beside
-scope and rate, and the OpenAPI operation description, where an optional
-backing reads "where configured" because that is the one part of this a
-caller should expect to feel. `searches` renders nowhere of its own: what a
-query performs is implied by the backings that answer for it, and those
-already render.
+The backing is capacity metadata; it doesn't change the wire shape. REST
+paths, the SDL, and client signatures stay the same when one is
+declared. The declaration surfaces where metadata already surfaces: in
+the MCP tool's annotations, beside scope and rate, and in the OpenAPI
+operation description, where an optional backing reads "where
+configured", because that is the one part of this a caller should expect
+to feel. `searches` renders nowhere of its own: what a query performs is
+implied by the backings that answer for it, and those already render.
 
-The differ reads a removed backing, or any of the four members that say where
-the machinery is re-pointed (table, column, index, kind), as breaking, and a
-backing added to an existing query as compatible: it promises more about the
-same wire surface. The width and the optional flag move under a fixed
-identity, so they read as one change each rather than a loss and a gain — a
-width that changes or disappears and a backing that becomes optional are
-breaking; a width that appears and a backing that becomes required are not.
-Losing a declared search is breaking; gaining one is compatible.
+The differ reads a removed backing, or any of the four members that say
+where the machinery is (table, column, index, kind), as breaking, and a
+backing added to an existing query as compatible: it promises more about
+the same wire surface. The width and the optional flag move under a
+fixed identity, so each reads as one change instead of a loss plus a
+gain. A width that changes or disappears is breaking, and so is a
+backing that becomes optional; a width that appears and a backing that
+becomes required of every deployment are compatible. Losing a declared
+search is breaking; gaining one is compatible.
 
-`verify --db` probes each backing through its own operator — `@@` for
-lexical, the `<|k,EF|>` KNN form for vector — and holds the plan to the
-NAMED index, which is stricter than not scanning: a search served by some
-other index than the declared one is drift too. One boundary is the
-engine's: SurrealDB 3.x has removed MTREE, so while validation accepts an
-MTREE-typed definition for a vector backing, a live 3.x database cannot hold
-one and verification composes only the HNSW form.
+`verify --db` probes each backing through its own operator (`@@` for
+lexical, the `<|k,EF|>` KNN form for vector) and holds the plan to the
+named index, which is stricter than merely not scanning: a search served
+by an index other than the declared one is drift too. One boundary is
+the engine's: SurrealDB 3.x has removed MTREE, so while validation
+accepts an MTREE-typed definition for a vector backing, a live 3.x
+database can't hold one and verification composes only the HNSW form.
 
 ## Field guards
 
@@ -416,24 +426,23 @@ FieldExposure::column("digest").with_guard("audit_only"),
 
 The service registers the decision and the dispatcher applies it as
 projection on every row a resolver returns, on every face including
-subscriptions, so a guarded value cannot leave through a forgotten
-path. Rows OMIT denied fields; a read is never an error. A guarded
-field renders nullable on every generated surface, since a field the
-dispatcher may omit cannot promise to be present, and its OpenAPI
+subscriptions, so a guarded value can't leave through a forgotten path.
+Rows omit denied fields; a read is never an error. A guarded field
+renders nullable on every generated surface, since a field the
+dispatcher may omit can't promise to be present, and its OpenAPI
 property carries `x-guard` naming the policy.
 
-A caller who cannot see a column cannot narrow by it either:
-filtering or sorting on a hidden column refuses, because narrowing by
-a value is reading it.
+A caller who can't see a column can't narrow by it either: filtering or
+sorting on a hidden column refuses, because narrowing by a value is
+reading it.
 
-A guard moving in ANY direction is breaking. Guarding an open field
-takes values away from deployed callers and swapping guards changes
-which callers those are; removing a guard refuses nobody, but it
-takes away the redaction itself — the column becomes visible to every
-caller the guard used to deny, on the API faces and in the derived
-engine policy alike (see generators.md). Wider disclosure is not
-additive for whoever the guard protected, so the differ names it and
-review decides.
+A guard moving in any direction is breaking. Guarding an open field
+takes values away from deployed callers, and swapping guards changes
+which callers those are. Removing a guard refuses nobody, but it removes
+the redaction itself: the column becomes visible to every caller the
+guard used to deny, on the API faces and in the derived engine policy
+alike (see generators.md). Wider disclosure is not additive for whoever
+the guard protected, so the differ names it and review decides.
 
 ## Rate classes
 
@@ -486,22 +495,23 @@ engine tightens both layers with one edit (see generators.md).
 `watchable: true` opens the resource to subscribers.
 `limits.max_watches_per_principal` caps how many subscriptions one
 caller may hold open at once; over the ceiling refuses with the
-retryable code, and closing a subscription frees the slot. It adds a GraphQL
-Subscription field and requires the service to register a watch resolver;
-nothing about REST changes, because Kayak generates no long-lived HTTP
-operations.
+retryable code, and closing a subscription frees the slot. It adds a
+GraphQL Subscription field and requires the service to register a watch
+resolver; nothing about REST changes, because Kayak generates no
+long-lived HTTP operations.
 
-Watchers narrow the stream with the same `filterable` columns list callers
-use, so a resource has one filter vocabulary whichever operation reads it.
-A column watchers should filter on therefore needs an index, like any other
-filter. There is no limit or cursor: a stream is not a page.
+Watchers narrow the stream with the same `filterable` columns list
+callers use, so a resource has one filter vocabulary whichever operation
+reads it. A column watchers should filter on therefore needs an index,
+like any other filter. Streams take no limit or cursor; paging doesn't
+apply to them.
 
 ## GraphQL name overrides
 
-GraphQL names are part of a deployed schema's identity, since fragments name
-types and queries name fields. When the derived defaults (type `File`, query
-fields `files` and `file`, mutation `fileIssueUrl`, subscription
-`fileChanged`) need to differ, override them per resource:
+GraphQL names are part of a deployed schema's identity, since fragments
+name types and queries name fields. When the derived defaults (type
+`File`, query fields `files` and `file`, mutation `fileIssueUrl`,
+subscription `fileChanged`) need to differ, override them per resource:
 
 ```rust
 graphql: Some(GraphqlNames {
@@ -512,48 +522,51 @@ graphql: Some(GraphqlNames {
 }),
 ```
 
-Overrides touch the GraphQL surface only. REST paths and generated clients
-keep the resource name. Every override is validated: GraphQL name grammar,
-no `__` prefix, no collision with a root type, no collision across resources
-on the effective type name, and no collision with a SurrealDB v3 reserved
-name. The reserved-word list is exported as `kayak::is_reserved` for schema
-layers to reuse. Field renames pass through the same reserved gate.
+Overrides touch the GraphQL surface only. REST paths and generated
+clients keep the resource name. Every override is validated: GraphQL
+name grammar, no `__` prefix, no collision with a root type, no
+collision across resources on the effective type name, and no collision
+with a SurrealDB v3 reserved name. The reserved-word list is exported as
+`kayak::is_reserved` for schema layers to reuse. Field renames pass
+through the same reserved gate.
 
 ## Validation
 
-`kayak::validate(&contract, &schema)` returns a list of violations; empty
-means valid. Generation refuses invalid contracts with every violation named.
-The checks: tables and columns exist, renames do not collide, filters are
-indexed by an index that can narrow one, sorts are reachable through such an
-index's prefix, the server-bound columns lead some index so the plain
-listing seeks rather than scans, search backings rest on the kind of index
-that can answer them at the width they claim, every declared search has a
-backing behind it, action definitions are well-formed, chosen names are
-valid for every surface they reach.
+`kayak::validate(&contract, &schema)` returns a list of violations;
+empty means valid. Generation refuses invalid contracts with every
+violation named. The checks: tables and columns exist, renames do not
+collide, filters are indexed by an index that can narrow one, sorts are
+reachable through such an index's prefix, the server-bound columns lead
+some index so the plain listing seeks rather than scans, search backings
+rest on the kind of index that can answer them at the width they claim,
+every declared search has a backing behind it, action definitions are
+well-formed, chosen names are valid for every surface they reach.
 
 Run the gate in the owning service's tests against the real schema
-definitions. Schema drift then fails a test naming the offending column before anything
-ships.
+definitions. Schema drift then fails a test naming the offending column
+before anything ships.
 
 ### Verifying against a live planner
 
-Static validation proves an index exists; it cannot prove the planner
-uses it. Behind the `verify` cargo feature (kayak deliberately
-carries no database client, so the client rides this gate the way
-async-graphql rides `graphql`), `kayak::verify::verify_contract`
-composes one representative listing per filter claim and per sort
-claim — pins as equality binds, the claimed filter bound, the claimed
-sort ordered, always with a LIMIT — and one probe per search backing
-through its own operator, runs each through `EXPLAIN` against a live
-database, and returns every claim the planner does not serve, named
-the way validation names its violations: a listing claim fails when
-its plan iterates the table, a backing when its plan does not reach
-the named index — unless the backing is optional and this database
-does not define that index, which is the one excuse on offer and it
-costs one extra round trip, spent only on an optional backing that
-already came back unserved. `kayak::verify::probes` exposes the composed queries
-without running them, so what will be asked is inspectable before the
-asker points at production. The same check runs from the CLI:
+Static validation proves an index exists; it can't prove the planner
+uses it. That check lives behind the `verify` cargo feature, since kayak
+carries no database client of its own and the client rides this feature
+gate the way async-graphql rides `graphql`.
+
+`kayak::verify::verify_contract` composes one representative listing per
+filter claim and per sort claim (pins as equality binds, the claimed
+filter bound, the claimed sort ordered, always with a LIMIT) and one
+probe per search backing through its own operator. It runs each through
+`EXPLAIN` against a live database and returns every claim the planner
+does not serve, named the way validation names its violations. A listing
+claim fails when its plan iterates the table. A backing fails when its
+plan does not reach the named index, unless the backing is optional and
+this database does not define that index, which is the one excuse on
+offer; checking it costs one extra round trip, spent only on an optional
+backing that already came back unserved. `kayak::verify::probes` exposes
+the composed queries without running them, so you can inspect what will
+be asked before pointing the asker at production. The same check runs
+from the CLI:
 
 ```
 kayak verify --contract contract.json --db ws://localhost:8000 \
@@ -567,17 +580,18 @@ gates in CI beside `diff`.
 
 `kayak::diff(&old, &new)` compares two contracts at the IR level and
 classifies every change. Breaking: a removed resource, field, filter, or
-sort; a field re-pointed to a different column under the same wire name; a
-lowered page ceiling; a moved action; a changed output; an input that became
-required or changed type; any effective GraphQL rename; a resource that
-stopped being watchable; a removed sub-resource, or one that lost a field,
-filter, sort, or page headroom; a removed search backing, or any of the four
-members that place one re-pointed; a backing that stopped pinning its width
-or pinned a different one; a backing that became optional; a search the query
-no longer performs. Compatible: additions, a resource that became watchable,
-a new sub-resource, a backing added to an existing query, a width newly
-pinned, a backing now required of every deployment, a search newly performed,
-and removal of an optional input.
+sort; a field re-pointed to a different column under the same wire name;
+a lowered page ceiling; a moved action; a changed output; an input that
+became required or changed type; any effective GraphQL rename; a
+resource that stopped being watchable; a removed sub-resource, or one
+that lost a field, filter, sort, or page headroom; a removed search
+backing, or any of the four members that place one re-pointed; a backing
+that stopped pinning its width or pinned a different one; a backing that
+became optional; a search the query no longer performs. Compatible:
+additions, a resource that became watchable, a new sub-resource, a
+backing added to an existing query, a width newly pinned, a backing now
+required of every deployment, a search newly performed, and removal of
+an optional input.
 
-The CLI exits non-zero on breaking changes (`kayak diff old.json new.json`),
-which makes the gate one line of CI.
+The CLI exits non-zero on breaking changes
+(`kayak diff old.json new.json`), which makes the gate one line of CI.

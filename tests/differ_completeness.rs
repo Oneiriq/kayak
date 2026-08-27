@@ -231,7 +231,7 @@ fn taking_something_away() -> Vec<Mutation> {
         // Guards move in four ways and every one changes who sees the
         // field, so every one has to come back breaking: adding takes
         // values from callers, swapping changes which callers, and
-        // REMOVING takes away the redaction itself — the column shows
+        // REMOVING takes away the redaction itself -- the column shows
         // to callers the guard refused, on the API faces and in the
         // derived engine PERMISSIONS alike.
         (
@@ -289,8 +289,8 @@ fn taking_something_away() -> Vec<Mutation> {
             "a query stopped searching semantically",
             Box::new(|c: &mut Contract| c.queries[0].searches.retain(|k| *k != SearchKind::Vector)),
         ),
-        // A backing has no name of its own: WHERE the machinery is —
-        // table, column, index, kind — is its identity, so each of the
+        // A backing has no name of its own: WHERE the machinery is --
+        // table, column, index, kind -- is its identity, so each of the
         // four is re-pointed separately here and every re-point must
         // come back breaking, or a schema change could move the
         // machinery out from under a promised search with the gate
@@ -430,7 +430,7 @@ fn additions_are_compatible() {
 ///
 /// This is the case matching by identity exists for. Compared member
 /// by member, a width appearing or an optional backing becoming
-/// guaranteed reads as the old backing gone and a new one arrived —
+/// guaranteed reads as the old backing gone and a new one arrived --
 /// breaking, on a change that took nothing from anybody, which is the
 /// kind of false alarm that teaches people to wave the gate through.
 #[test]

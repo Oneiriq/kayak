@@ -2,7 +2,7 @@
 //!
 //! SurrealDB spells five kinds of index with one `DEFINE INDEX`, and
 //! only two of them have a b-tree behind them. FULLTEXT answers `@@`
-//! against an analyzer's terms; HNSW and MTREE answer nearest-neighbour
+//! against an analyzer's terms; HNSW and MTREE answer nearest-neighbor
 //! over a vector. None of the three narrows an equality or supplies an
 //! order, so a column they cover is, as far as a filter or an ORDER BY
 //! is concerned, uncovered.
@@ -19,7 +19,7 @@
 //! first two: where a filter claim needs an index with a b-tree and is
 //! misled by a FULLTEXT one, a lexical backing needs the FULLTEXT one
 //! and is misled by the b-tree. Both directions of the mistake are one
-//! question — what can this index actually answer — so both predicates
+//! question -- what can this index actually answer -- so both predicates
 //! live here, beside each other, read by every reader.
 
 use surql::schema::{IndexDefinition, IndexType, TableDefinition};

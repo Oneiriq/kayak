@@ -39,7 +39,7 @@ pub struct Contract {
     /// that had chosen kayak's version prefix before they had kayak.
     /// A service already serving `/accounts` cannot adopt a client
     /// that calls `/v1/accounts`, and telling it to move its routes
-    /// breaks whatever is already shipped against them — for a
+    /// breaks whatever is already shipped against them -- for a
     /// contract layer whose point is catching breaks, that is the
     /// wrong direction to push.
     ///
@@ -55,7 +55,7 @@ pub struct Contract {
     /// until this existed each of them hardcoded one consumer's
     /// convention: `x-copal-tenant`, in eight places across four
     /// languages. That made kayak a generator of clients for copal
-    /// rather than for contracts — a service authenticating with a
+    /// rather than for contracts -- a service authenticating with a
     /// bearer token got a client that sent somebody else's header and
     /// no credential at all.
     ///
@@ -81,7 +81,7 @@ pub struct Contract {
 /// How a caller proves who it is, and therefore what every generated
 /// client puts on the wire.
 ///
-/// Deliberately three narrow cases rather than a general
+/// Three narrow cases rather than a general
 /// security-scheme vocabulary. Each one is something a generated
 /// client can actually DO without asking the caller to write transport
 /// code: put a fixed header on, or send nothing. OAuth flows, signed
@@ -98,7 +98,7 @@ pub enum AuthScheme {
     None,
     /// `Authorization: Bearer <token>`. The constructor takes a token.
     Bearer,
-    /// An opaque value in a named header — copal's `x-copal-tenant` is
+    /// An opaque value in a named header -- copal's `x-copal-tenant` is
     /// the case this generalises. The constructor takes a value named
     /// after the credential rather than after the header.
     Header {
@@ -227,7 +227,7 @@ pub struct Query {
     /// here with no backing of that kind behind it is a promise of
     /// indexed search over nothing indexed, and is refused. Without
     /// this field that promise had no way to be made, so it had no way
-    /// to be broken — a query that declared no backing was
+    /// to be broken -- a query that declared no backing was
     /// indistinguishable from a query that needed none, which is
     /// exactly how a semantic search over an unindexed column ships
     /// and goes unnoticed. Empty means the query searches nothing,
@@ -236,8 +236,8 @@ pub struct Query {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub searches: Vec<SearchKind>,
     /// What answers the search, when the query is one. A listing
-    /// declares its cost exhaustively — every filter and sort claim is
-    /// index-validated — while a query, the one read whose cost is
+    /// declares its cost exhaustively -- every filter and sort claim is
+    /// index-validated -- while a query, the one read whose cost is
     /// most surprising, was an opaque box: typed inputs, a path, and
     /// nothing about the machinery behind it. So nothing stopped a
     /// schema change from dropping the FULLTEXT index while the
@@ -245,7 +245,7 @@ pub struct Query {
     /// column of one table reached through one index of a stated
     /// kind, and validation holds the index to the same standard the
     /// listing rules hold theirs to. A fused search (copal's: BM25
-    /// candidates and HNSW neighbours, rescored together) is two
+    /// candidates and HNSW neighbors, rescored together) is two
     /// backings on one query; the fusion itself is resolver behavior,
     /// not contract. Empty means the query claims no search machinery,
     /// which is what every existing contract declares.
@@ -256,8 +256,8 @@ pub struct Query {
 /// One thing a search query's answer rests on: a column of a table,
 /// reached through a named index of a stated kind.
 ///
-/// A backing has no name, so where the machinery is — table, column,
-/// index, kind — is its identity, and re-pointing any of the four
+/// A backing has no name, so where the machinery is -- table, column,
+/// index, kind -- is its identity, and re-pointing any of the four
 /// changes what the query promises about the same wire surface. The
 /// width and the optional flag are not identity but what the backing
 /// promises about that machinery, and the differ reads the two halves
@@ -279,7 +279,7 @@ pub struct SearchBacking {
     ///
     /// A vector of the wrong width is not a slower search, it is a
     /// different one, and the width changes whenever the embedding
-    /// model does — so pinning it here turns a model swap that outran
+    /// model does -- so pinning it here turns a model swap that outran
     /// its schema into a generation failure instead of a quiet change
     /// in what comes back. `None` leaves the width to the deployment,
     /// which is the honest declaration when the index is applied at
@@ -297,7 +297,7 @@ pub struct SearchBacking {
     /// make the contract false in every deployment without one. The
     /// answer to that was to declare nothing, which is the silence
     /// this whole rulebook exists to end. Declared optional, absence
-    /// stops being a lie — the index may be missing, and a present one
+    /// stops being a lie -- the index may be missing, and a present one
     /// still has to hold the column, be the kind's own machinery, and
     /// match the declared width. Optional means may be absent, never
     /// may be wrong.
@@ -321,13 +321,13 @@ fn is_false(flag: &bool) -> bool {
 
 /// The two kinds of search machinery an index can be.
 ///
-/// The vocabulary is deliberately the contract's rather than the
+/// The vocabulary is the contract's rather than the
 /// engine's: `lexical` requires a FULLTEXT index (the `@@` operator),
 /// `vector` an HNSW, MTREE, or DISKANN one (the KNN operator), and
 /// validation translates between the two vocabularies when it
 /// refuses. Which of the three vector machineries answers is the
-/// schema's business, not the contract's — the contract asks for
-/// nearest neighbours through an index and the engine chooses how, so
+/// schema's business, not the contract's -- the contract asks for
+/// nearest neighbors through an index and the engine chooses how, so
 /// moving a column from HNSW to DISKANN is a capacity decision the
 /// contract does not have to be rewritten for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -335,7 +335,7 @@ fn is_false(flag: &bool) -> bool {
 pub enum SearchKind {
     /// Term matching over analyzed text: `@@` through FULLTEXT.
     Lexical,
-    /// Nearest-neighbour over a stored vector: KNN through HNSW,
+    /// Nearest-neighbor over a stored vector: KNN through HNSW,
     /// MTREE, or DISKANN.
     Vector,
 }
@@ -413,7 +413,7 @@ impl Contract {
         prefix == "/v1"
     }
 
-    /// The prefix, normalised for joining: either empty or leading
+    /// The prefix, normalized for joining: either empty or leading
     /// slash with no trailing one, so `{prefix}/{resource}` is right
     /// in both cases and no generator has to think about it.
     #[must_use]
@@ -429,8 +429,8 @@ impl Contract {
 /// serves `GET /accounts/{id}` and must never serve `GET /accounts`,
 /// because enumerating every user is the thing it is careful not to do.
 /// A contract had no way to say that, so it either promised an endpoint
-/// the service refuses to build or left the resource — and everything
-/// hanging off it — undeclared.
+/// the service refuses to build or left the resource -- and everything
+/// hanging off it -- undeclared.
 ///
 /// Actions and sub-resources are independent of both flags. A resource
 /// with neither face is still a place for verbs to live, which is what
@@ -1136,7 +1136,7 @@ mod tests {
     /// Contracts written before backings existed deserialize unchanged,
     /// and a query that declares none serializes without the key: the
     /// field is invisible in both directions unless something is
-    /// declared, which is why `ir_revision` stays at 1 — the revision
+    /// declared, which is why `ir_revision` stays at 1 -- the revision
     /// marks changes an older reader would MISREAD, and an absent
     /// `backing` means today exactly what its absence meant before.
     ///

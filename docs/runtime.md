@@ -206,9 +206,9 @@ reads as live.
 
 Watchers narrow the stream with the same `filterable` columns list callers
 use, so a resource has one filter vocabulary whichever operation reads it.
-There is no limit or cursor: a stream is not a page.
+Streams take no limit or cursor; paging doesn't apply to them.
 
-The middleware chain runs around the opening call ONLY. Authorization
+The middleware chain runs around the opening call only. Authorization
 happens when the subscription starts, and the rows that follow flow from the
 resolver to the subscriber without re-entering the chain. A stream that must
 stop when a credential is revoked has to check that itself, per row, inside

@@ -11,8 +11,8 @@
 //!
 //! So this module asks the planner itself. For each resource it
 //! composes one representative listing per filter claim and per sort
-//! claim — the pins as equality binds, the claimed filter bound, the
-//! claimed sort ordered, always with a `LIMIT` — and runs `EXPLAIN`
+//! claim -- the pins as equality binds, the claimed filter bound, the
+//! claimed sort ordered, always with a `LIMIT` -- and runs `EXPLAIN`
 //! against a live database. A claim whose plan falls back to
 //! iterating the table fails by name, the same way a validation
 //! violation names its claim.
@@ -21,7 +21,7 @@
 //! operators: a lexical backing is probed with `@@` and holds only if
 //! the plan reaches the NAMED index, a vector backing with the
 //! `<|k,EF|>` KNN form likewise. Reaching the named index is a
-//! stronger demand than not scanning, deliberately — a search served
+//! stronger demand than not scanning, and that is the point -- a search served
 //! by some other index than the declared one is drift the contract
 //! exists to catch. One boundary is the engine's, stated rather than
 //! papered over: SurrealDB 3.x has removed MTREE (`DEFINE INDEX ...
@@ -31,7 +31,7 @@
 //! one and verification composes only the HNSW form.
 //!
 //! The module rides the `verify` cargo feature because it is the one
-//! part of kayak that needs a database client, and kayak deliberately
+//! part of kayak that needs a database client, and kayak itself
 //! carries none: generation and diffing must stay runnable in CI jobs
 //! and build scripts that have no database and no TLS stack. The
 //! feature follows the `runtime`/`graphql`/`console` precedent: the
@@ -69,13 +69,13 @@ pub enum Expectation {
     NoTableWalk,
     /// A search backing: the plan must reach the named index. Not
     /// scanning is not enough here, because the backing names its
-    /// machinery — a search answered through some other index is the
+    /// machinery -- a search answered through some other index is the
     /// contract promising one thing and the deployment doing another.
     ReachesIndex(String),
     /// An optional backing: the plan must reach the named index
     /// wherever this database holds it. The claim is about machinery
     /// that is configured, not a claim that it is configured, so a
-    /// database without the index answers by not having it — and a
+    /// database without the index answers by not having it -- and a
     /// database with it answers to the standard above, unrelaxed.
     ReachesIndexIfDefined {
         /// The table the index would be defined on.
@@ -330,10 +330,10 @@ fn push_probes<'a>(
 /// The probes are minimal on purpose: no pins, no residual filters,
 /// just the operator the backing claims machinery for, because the
 /// question is whether THAT operator reaches THAT index. The vector
-/// literal is `[0]` whatever the index's dimension — probed on
+/// literal is `[0]` whatever the index's dimension -- probed on
 /// SurrealDB 3.x, the planner resolves the index before it ever looks
 /// at the literal's width (`KnnScan` either way, see the vocabulary
-/// note on [`reaches_index`]) — so a contract needs no knowledge of
+/// note on [`reaches_index`]) -- so a contract needs no knowledge of
 /// the embedding dimension to be verified.
 fn query_probes(query: &Query, out: &mut Vec<Probe>) {
     for backing in &query.backing {
@@ -382,8 +382,8 @@ fn probe_value(option: Option<&str>) -> String {
 /// `mem://` (the probe lives on as the vocabulary test in
 /// `tests/verify.rs`, so an engine upgrade that respells it fails
 /// there by name instead of turning every verification silently
-/// green). `EXPLAIN` returns one plan-tree object per statement —
-/// `operator`, `attributes`, `children` — and the two scan leaves
+/// green). `EXPLAIN` returns one plan-tree object per statement --
+/// `operator`, `attributes`, `children` -- and the two scan leaves
 /// observed are:
 ///
 /// ```text
@@ -644,8 +644,8 @@ mod tests {
     /// An optional backing is probed the same way and judged
     /// differently.
     ///
-    /// The statement is identical — the question is still whether that
-    /// operator reaches that index — but the expectation carries the
+    /// The statement is identical -- the question is still whether that
+    /// operator reaches that index -- but the expectation carries the
     /// table as well as the index, because a plan that missed has two
     /// explanations for an optional backing and only one for a
     /// required one, and telling them apart means asking the database

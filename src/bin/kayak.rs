@@ -128,7 +128,7 @@ fn run_scaffold(arguments: &[String]) -> ExitCode {
     }
 
     for column in &made.withheld {
-        eprintln!("withheld {column}: the name suggests a secret; expose it deliberately");
+        eprintln!("withheld {column}: the name suggests a secret; expose it explicitly");
     }
     for table in &made.declined {
         eprintln!(

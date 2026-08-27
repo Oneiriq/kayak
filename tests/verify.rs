@@ -242,11 +242,11 @@ async fn the_probed_plan_vocabulary_still_holds() {
     assert!(text.contains("idx_chunk_body"), "{text}");
     assert!(!text.contains("\"TableScan\""), "{text}");
 
-    let neighbouring = client
+    let neighboring = client
         .query("SELECT * FROM text_chunk WHERE embedding <|1,64|> [0] EXPLAIN")
         .await
         .expect("explain answers");
-    let text = neighbouring.to_string();
+    let text = neighboring.to_string();
     assert!(text.contains("\"KnnScan\""), "{text}");
     assert!(text.contains("idx_chunk_embedding"), "{text}");
     assert!(!text.contains("\"TableScan\""), "{text}");
@@ -349,7 +349,7 @@ async fn a_backed_search_verifies_clean() {
 
 /// The motivating drift: a schema change dropped the search indexes
 /// while the contract still promises search. Static validation against
-/// the CHECKED-IN schema would still pass — the live database is where
+/// the CHECKED-IN schema would still pass -- the live database is where
 /// the divergence lives, so the live planner is what convicts it,
 /// naming each backing.
 #[tokio::test]
@@ -412,7 +412,7 @@ async fn an_optional_backing_is_excused_only_by_an_absent_index() {
         vec![]
     );
 
-    // The index exists and the query cannot reach it — the metric
+    // The index exists and the query cannot reach it -- the metric
     // form of the KNN operator, which plans as KnnTopK over a
     // TableScan even with the index in place. Optional does not
     // excuse it.
@@ -425,7 +425,7 @@ async fn an_optional_backing_is_excused_only_by_an_absent_index() {
 
 /// The planner, not the catalog, is the judge: `state` IS indexed on
 /// `file`, but a listing that binds no pins hands the planner a
-/// predicate on the index's second column, which it cannot seek — the
+/// predicate on the index's second column, which it cannot seek -- the
 /// static gate's prefix rule said so, and the plan agrees. This is
 /// the divergence class `verify` exists for.
 #[tokio::test]

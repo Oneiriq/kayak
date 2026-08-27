@@ -10,7 +10,7 @@
 //! reconstruct the same argument, and the argument is only as good as
 //! the coupling between two modules that do not reference each other.
 //! If validation and generation ever disagree, a library taking the
-//! process down is the worst of the available behaviours: the caller
+//! process down is the worst of the available behaviors: the caller
 //! cannot catch it, and the message names a line rather than a
 //! contract.
 //!

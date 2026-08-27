@@ -37,7 +37,7 @@ pub(crate) fn snake(name: &str) -> String {
 
 /// The singular form generators hang instance operations on.
 /// A small English heuristic, covering the plural forms API resources
-/// actually take. It is deliberately not a full inflector: anything it
+/// actually take. It is not meant to be a full inflector: anything it
 /// gets wrong is fixed by naming the type explicitly through the
 /// `graphql` overrides, which is a better answer than a word list that
 /// drifts.

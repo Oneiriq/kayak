@@ -238,7 +238,7 @@ fn generate_and_diff_through_the_binary() {
     .unwrap();
 
     // Generate every target, naming the opt-in blocking client so the
-    // real toolchain below sees both Rust flavours.
+    // real toolchain below sees both Rust flavors.
     let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
         .args([
             "generate",
@@ -306,7 +306,7 @@ fn generate_and_diff_through_the_binary() {
     // Rust the same way, since rustfmt parses before it formats. This
     // catches syntax only -- a stray `.await` in the blocking client
     // parses fine and fails to build -- so the generators suite asserts
-    // separately that the blocking flavour never suspends.
+    // separately that the blocking flavor never suspends.
     if tool_available("rustfmt", &["--version"]) {
         for client in ["client.rs", "client_blocking.rs"] {
             let check = Command::new("rustfmt")

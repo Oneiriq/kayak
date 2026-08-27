@@ -17,7 +17,7 @@ use crate::sdl::generate_sdl;
 
 /// The targets one `generate` run produces when none are named.
 ///
-/// `engine-policy` is accepted but deliberately not among them: its
+/// `engine-policy` is accepted but not among them on purpose: its
 /// clauses render through a token-claim vocabulary the deployment
 /// owns, and the CLI holds only the default conventions. A contract
 /// naming a guard outside them would fail the whole default run over
@@ -25,7 +25,7 @@ use crate::sdl::generate_sdl;
 /// opt-in by name.
 ///
 /// `client-rs-blocking` is opt-in for a different reason: it is not a
-/// language the default set is missing, it is a second flavour of one
+/// language the default set is missing, it is a second flavor of one
 /// it already has. Defaulting it would hand every consumer a second
 /// Rust client to review and regenerate when almost all of them want
 /// exactly one. A caller with no runtime to await on asks for it.
@@ -87,7 +87,7 @@ pub fn generate_all(
                 "client.rs".to_owned(),
                 generate_client_rs(contract, schema)?,
             ),
-            // A separate filename, so a caller wanting both flavours
+            // A separate filename, so a caller wanting both flavors
             // gets both rather than whichever target ran last.
             "client-rs-blocking" => (
                 "client_blocking.rs".to_owned(),

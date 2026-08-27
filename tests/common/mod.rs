@@ -113,7 +113,7 @@ pub fn check_golden(filename: &str, content: &str) {
     // and was invisible here.
     assert_eq!(
         content, golden,
-        "{filename} drifted from its golden; KAYAK_BLESS={artifact} to re-bless deliberately",
+        "{filename} drifted from its golden; KAYAK_BLESS={artifact} if the change is intended",
     );
 }
 

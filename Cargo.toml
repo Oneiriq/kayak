@@ -26,7 +26,7 @@ graphql = ["runtime", "dep:async-graphql"]
 console = ["runtime", "dep:maud"]
 # Plan verification against a live database: EXPLAIN every filter and
 # sort claim and refuse the ones the planner answers with a table
-# walk. Kayak deliberately carries no database client, so the client
+# walk. Kayak itself carries no database client, so the client
 # rides this gate the way async-graphql rides `graphql`; CI runs
 # --all-features, which keeps the gated half compiled and tested.
 verify = ["oneiriq-surql/client-rustls", "dep:tokio"]

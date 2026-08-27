@@ -51,7 +51,7 @@ pub fn diff(old: &Contract, new: &Contract) -> Vec<Change> {
     // breaking. Changing the scheme leaves every deployed client sending
     // a credential the service no longer reads; ADDING one to an open API
     // locks out callers that sent nothing; and REMOVING one is breaking in
-    // the sense field guards are — the API stops refusing what it used to
+    // the sense field guards are -- the API stops refusing what it used to
     // refuse, which is surface for whoever the credential kept out, even
     // though no caller loses a call.
     if old.auth != new.auth {
@@ -262,15 +262,15 @@ fn diff_query(old: &crate::ir::Query, new: &crate::ir::Query, changes: &mut Vec<
         }
     }
     // Backings: a promise about what answers the query, on the same
-    // wire surface either way. Losing one is breaking — a caller (or
+    // wire surface either way. Losing one is breaking -- a caller (or
     // an operator's capacity plan) relying on indexed search is handed
     // whatever the resolver degrades to. A backing has no name of its
     // own, so WHERE the machinery is (table, column, index, kind) is
     // its identity, and re-pointing any of the four reads as the old
     // promise gone (breaking) and a new one made (compatible), which
     // is the honest description of what happened. What it promises
-    // ABOUT that machinery — the width, and whether the deployment is
-    // required to have it — moves under a fixed identity, so those
+    // ABOUT that machinery -- the width, and whether the deployment is
+    // required to have it -- moves under a fixed identity, so those
     // read as one change each rather than a loss and a gain; a
     // backing that merely became guaranteed is not a backing anyone
     // lost.

@@ -1,7 +1,7 @@
 //! Which collection faces a resource exposes.
 //!
 //! Both, before this existed, which misdescribes a resource whose
-//! collection is deliberately not browsable. polyconsole-social serves
+//! collection is not meant to be browsable. polyconsole-social serves
 //! `GET /accounts/{id}` and must never serve `GET /accounts`, because
 //! enumerating every user is the thing a social service is careful not
 //! to do -- and it hangs a keys sub-resource off that same resource, so

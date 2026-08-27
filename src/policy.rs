@@ -4,7 +4,7 @@
 //! application already enforces: table `PERMISSIONS` filter rows and
 //! field `PERMISSIONS` redact columns for sessions authenticated as
 //! callers rather than as the service. The clauses worth having are
-//! exactly what the contract already declares — a resource whose
+//! exactly what the contract already declares -- a resource whose
 //! reads require a scope should admit only sessions holding it, and
 //! a guarded field should come back absent for sessions its guard
 //! denies. Deriving those clauses by hand in the service is how the
@@ -16,7 +16,7 @@
 //! guard) are classified by [`crate::diff`] like every other face's
 //! inputs.
 //!
-//! Two things deliberately stay OUT of this module, and their absence
+//! Two things stay out of this module on purpose, and their absence
 //! is a boundary rather than a gap:
 //!
 //! - **The mechanical tenancy floor.** A service that scopes tables
@@ -24,7 +24,7 @@
 //!   tenant's rows and every table without the column closed to
 //!   caller sessions entirely. That rule must derive from the SCHEMA,
 //!   not the contract: the contract lists what is exposed, so a floor
-//!   derived from it would be dodgeable by omission — a future table
+//!   derived from it would be dodgeable by omission -- a future table
 //!   left out of the contract would sit above the floor instead of
 //!   under it. The service keeps the floor where the schema lives;
 //!   kayak derives only what the contract declares.
@@ -33,8 +33,8 @@
 //!   contract cannot declare yet. Until the IR can say them, they are
 //!   the service's to state explicitly, not this module's to invent.
 //!
-//! The rendered strings speak a token-claim vocabulary — which claim
-//! carries the scope list, what clause a named guard becomes — and
+//! The rendered strings speak a token-claim vocabulary -- which claim
+//! carries the scope list, what clause a named guard becomes -- and
 //! that vocabulary is deployment convention, not contract content.
 //! [`ClaimVocabulary`] carries it, with defaults matching copal's
 //! caller tokens, so the reference deployment's switch to this
@@ -122,7 +122,7 @@ pub enum PolicyError {
 /// their sub-resources alike. A resource's read scopes become one
 /// conjunct on its table's select rule, and the same conjunct lands
 /// on every sub-resource table, because a sub-collection is read
-/// under its parent's requirement — it is reached through the parent,
+/// under its parent's requirement -- it is reached through the parent,
 /// and the engine face mirrors how the dispatcher enforces reads.
 pub fn derive_policy(
     contract: &Contract,

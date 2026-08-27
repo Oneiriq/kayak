@@ -10,7 +10,7 @@ refuses with each violation named.
 | `sdl` | `schema.graphql` | Object types, sort enums, page types, Query and Mutation. Scalars `DateTime` and `JSON` appear only when used. |
 | `mcp` | `mcp-tools.json` | The `tools/list` manifest: one tool per declared operation, with input schemas, and scopes and rate classes as annotations. |
 | `client-rs` | `client.rs` | Rust client on `reqwest` and `serde`. |
-| `client-rs-blocking` (opt-in) | `client_blocking.rs` | The same client on `reqwest::blocking`, for callers with no runtime to await on. Opt-in because it is a second flavour of a language the default set already covers. |
+| `client-rs-blocking` (opt-in) | `client_blocking.rs` | The same client on `reqwest::blocking`, for callers with no runtime to await on. Opt-in because it is a second flavor of a language the default set already covers. |
 | `client-ts` | `client.ts` | TypeScript client on `fetch`, zero dependencies. |
 | `client-py` | `client.py` | Python client, standard library only. |
 | `client-go` | `client.go` | Go client, `net/http` only. |
@@ -68,8 +68,8 @@ let policy = kayak::derive_policy(&contract, &kayak::ClaimVocabulary::default())
 //   exposure, resources and sub-resources alike.
 ```
 
-Which token claims those clauses read is deployment convention, not
-contract content, so it travels as a `ClaimVocabulary`: the claim
+Which token claims those clauses read is deployment convention rather
+than contract content, so it travels as a `ClaimVocabulary`: the claim
 carrying the scope list, and the engine clause each named guard
 becomes. A guard the contract declares that the vocabulary cannot
 render refuses the derivation naming the guard, because rendering

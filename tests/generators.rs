@@ -83,7 +83,7 @@ fn contract() -> Contract {
         // Copal's convention, now declared rather than hardcoded in four
         // generators. Stating it here must reproduce the goldens byte for
         // byte -- that equality is the proof the mechanism is faithful to
-        // the behaviour it replaced.
+        // the behavior it replaced.
         auth: kayak::AuthScheme::Header {
             name: "x-copal-tenant".into(),
             credential: "tenant".into(),
@@ -186,7 +186,7 @@ fn contract() -> Contract {
                 requires: vec!["read".into()],
                 rate_class: None,
                 // Copal's fused search, declared: BM25 candidates and
-                // HNSW neighbours over the same passages, so the
+                // HNSW neighbors over the same passages, so the
                 // goldens carry a backed query and prove the backing
                 // is capacity metadata rather than wire shape. The
                 // vector half is optional and pinned to a width, so
@@ -948,11 +948,11 @@ fn a_backing_changes_no_wire_surface() {
 ///
 /// This is the gate, stated where the artifacts are made: a contract
 /// that promises semantic search over a column no vector index covers
-/// produces no OpenAPI, no SDL, no clients — it produces the refusal
+/// produces no OpenAPI, no SDL, no clients -- it produces the refusal
 /// naming the query and the kind. Every other rule in the validator
 /// reads something the author wrote and holds it to the schema; this
 /// one reads what the author did NOT write, which is the shape an
-/// unindexed neighbour search actually has when it ships.
+/// unindexed neighbor search actually has when it ships.
 #[test]
 fn a_declared_search_with_no_backing_refuses_to_generate() {
     let mut promised = contract();
@@ -1134,7 +1134,7 @@ fn the_client_sends_the_credential_the_contract_declares() {
 /// The OpenAPI document says how to authenticate.
 ///
 /// It described every path and never mentioned a credential, so a reader
-/// had to infer one from an example — and the four generated clients each
+/// had to infer one from an example -- and the four generated clients each
 /// hardcoded their own answer. Both now read the same declaration, which
 /// is what keeps the document and the SDKs from disagreeing.
 #[test]
@@ -1252,12 +1252,12 @@ fn the_blocking_client_never_suspends() {
 }
 
 #[test]
-fn the_two_rust_flavours_describe_the_same_contract() {
+fn the_two_rust_flavors_describe_the_same_contract() {
     let asynchronous = generate_client_rs(&contract(), &schema()).unwrap();
     let blocking = generate_client_rs_blocking(&contract(), &schema()).unwrap();
 
     // Everything the client says ABOUT the contract has to survive the
-    // flavour change: the types, the renames, the nullability, the auth
+    // flavor change: the types, the renames, the nullability, the auth
     // header, the URLs, the query shaping. Rather than spot-check those
     // one at a time, undo the four differences and demand the rest be
     // identical -- which also asserts there are only four.
@@ -1271,7 +1271,7 @@ fn the_two_rust_flavours_describe_the_same_contract() {
         .replace(".await", "");
     assert_eq!(
         converted, blocking,
-        "the flavours differ somewhere other than how a call suspends",
+        "the flavors differ somewhere other than how a call suspends",
     );
 }
 

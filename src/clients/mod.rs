@@ -15,7 +15,7 @@
 //! contract, four clients, regenerated instead of ported.
 //!
 //! One module per language, because the file outgrew the 1000-line
-//! budget and a second Rust flavour was about to make that worse. What
+//! budget and a second Rust flavor was about to make that worse. What
 //! lives HERE is only what more than one language needs: resolving the
 //! contract against the schema, and the naming and shape helpers that
 //! every generator reads the same way. A helper used by exactly one

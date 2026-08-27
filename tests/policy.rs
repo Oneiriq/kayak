@@ -39,7 +39,7 @@ fn resource(name: &str, table: &str) -> Resource {
 /// The shape of copal's real contract
 /// (`crates/copal-server/src/contract/`): four resources, all
 /// requiring the `read` scope, two carrying a sub-resource, and one
-/// guarded field — `file_version.created_by` under `owner_or_admin`.
+/// guarded field -- `file_version.created_by` under `owner_or_admin`.
 fn copal_shaped() -> kayak::Contract {
     let mut files = resource("files", "file");
     files.reads_require = vec!["read".into()];
@@ -104,7 +104,7 @@ fn copal_shaped() -> kayak::Contract {
 /// - `crates/copal-server/src/engine.rs:33-44` (`fn guard_clause`):
 ///   `"owner_or_admin"` renders as
 ///   `"$token.adm = true OR created_by = $token.pr"` and
-///   `"admin_only"` as `"$token.adm = true"` — the default
+///   `"admin_only"` as `"$token.adm = true"` -- the default
 ///   [`ClaimVocabulary`] carries both verbatim.
 /// - `crates/copal-server/src/engine.rs:54-78`: field guards walk
 ///   resources in contract order, each resource's own fields before
@@ -115,7 +115,7 @@ fn copal_shaped() -> kayak::Contract {
 ///   resource's table and then on every sub-resource table, in
 ///   contract order.
 ///
-/// NOT reproduced, deliberately: the `file_version` delete conjunct
+/// Not reproduced, on purpose: the `file_version` delete conjunct
 /// (`engine.rs:85-88`, retention the contract cannot declare) and the
 /// store's mechanical tenancy floor
 /// (`crates/copal-store/src/schema/mod.rs:86-133`, derived from the
@@ -255,7 +255,7 @@ fn the_engine_policy_target_renders_the_artifact() {
 }
 
 /// Through the CLI orchestrator, a guard outside the default
-/// vocabulary refuses the run and names the guard — the reason the
+/// vocabulary refuses the run and names the guard -- the reason the
 /// target is opt-in rather than a default: the vocabulary belongs to
 /// the deployment, and the CLI only holds copal's conventions.
 #[test]

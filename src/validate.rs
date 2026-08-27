@@ -18,13 +18,13 @@
 //!   ORDER BY only from a prefix whose head is equality-bound. A bare
 //!   leading column is the degenerate case.
 //! - search backing: the named index must exist on the named table,
-//!   hold the named column, be the kind's own machinery — FULLTEXT
-//!   for a lexical backing, HNSW, MTREE, or DISKANN for a vector one —
+//!   hold the named column, be the kind's own machinery -- FULLTEXT
+//!   for a lexical backing, HNSW, MTREE, or DISKANN for a vector one --
 //!   and, where the backing pins a width, be defined over that width.
 //!   The mirror
 //!   image of the index-type rule: there a filter rested on a search
 //!   index that cannot narrow, here a search rests on a b-tree that
-//!   cannot match terms or walk neighbours.
+//!   cannot match terms or walk neighbors.
 //! - declared search: a kind the query says it performs must have a
 //!   backing of that kind behind it. This is the one rule that catches
 //!   an ABSENCE rather than a mistake, and absence is how unindexed
@@ -203,7 +203,7 @@ pub enum Violation {
     #[error(
         "query {query}: performs a {kind} search and names no {kind} backing; a \
          declared search with nothing behind it is the table scan this gate exists \
-         to refuse — name the table, column, and index that answer it, or stop \
+         to refuse -- name the table, column, and index that answer it, or stop \
          declaring the search"
     )]
     UnbackedSearch { query: String, kind: SearchKind },
@@ -423,10 +423,10 @@ pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violatio
 /// something behind it.
 ///
 /// Every other rule in this file starts from something the author
-/// wrote — a filterable column, a sort, a backing — and holds it to
+/// wrote -- a filterable column, a sort, a backing -- and holds it to
 /// the schema. This one starts from an absence, because an absence is
 /// how unindexed search reaches production: nobody writes down that
-/// the neighbour search has no index, they simply write the resolver.
+/// the neighbor search has no index, they simply write the resolver.
 /// So the contract is given a way to state the capability, and the
 /// statement is what the gate can then refuse. It costs a line to
 /// declare and turns a whole class of silent table scan into a build
@@ -562,7 +562,7 @@ fn validate_searches(query: &Query, violations: &mut Vec<Violation>) {
 /// A filter claim needs an index that can narrow an equality, and the
 /// WrongIndexType rule refuses one resting on a FULLTEXT index. A
 /// backing claim needs the FULLTEXT (or vector) index, and this rule
-/// refuses one resting on a b-tree — the same mistake with the two
+/// refuses one resting on a b-tree -- the same mistake with the two
 /// index families swapped, so it gets the same treatment: name the
 /// index the author was looking at, say what it turned out to be, and
 /// say what the claim actually needs. Unknown names are reported and
@@ -570,8 +570,8 @@ fn validate_searches(query: &Query, violations: &mut Vec<Violation>) {
 /// first; a resolved column and a resolved index answer for coverage
 /// and kind independently of one another.
 ///
-/// An optional backing relaxes exactly one of these rules — the index
-/// may be absent — and no others. A deployment that configured the
+/// An optional backing relaxes exactly one of these rules -- the index
+/// may be absent -- and no others. A deployment that configured the
 /// machinery is not a deployment that gets to configure it wrong, so
 /// an index that IS there answers for its column, its kind, and its
 /// width the way any other does.
@@ -659,7 +659,7 @@ fn validate_backing(query: &Query, schema: &[TableDefinition], violations: &mut 
         // sends the author to fix the smaller of two problems. The
         // definition's own `DIMENSION` is read here rather than
         // through `crate::indexes`, because it is a field, not an
-        // interpretation of one — nothing about it can drift between
+        // interpretation of one -- nothing about it can drift between
         // readers the way index-type reasoning did.
         if let (SearchKind::Vector, Some(declared)) = (backing.kind, backing.dimension) {
             if index.dimension != Some(declared) {

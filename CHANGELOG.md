@@ -227,6 +227,17 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   Both are gated now, and CI runs a default-features `cargo test`
   beside the `--all-features` one.
 
+- **The TypeScript client types every field under its wire name.** The
+  interfaces camelCased each field (`createdAt`, `contentType`) while
+  the JSON body carries `created_at` and `content_type`, and
+  `response.json()` renames nothing. Every multi-word field was typed
+  under a name no response holds and read back `undefined`. The
+  interfaces now spell the wire name the OpenAPI document states,
+  quoting it only where it is not a plain identifier. The Rust, Python
+  and Go clients already read the wire name. A test now holds all four
+  to the OpenAPI property names, so a client cannot drift from the
+  wire again. Regenerate any TypeScript client built before this.
+
 
 ### Added
 

@@ -55,6 +55,13 @@ jobs:
       - name: cargo test
         run: cargo test --all-features
 
+      # The build a contributor runs first, and the one the README's
+      # re-bless lines use. --all-features alone let two test files
+      # reach a console-only item ungated, so plain `cargo test` did not
+      # compile while every run here stayed green.
+      - name: cargo test (default features)
+        run: cargo test
+
       - name: Dependency audit
         run: |
           if ! command -v cargo-audit >/dev/null 2>&1; then

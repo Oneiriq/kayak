@@ -215,6 +215,18 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   the refusal message names all three machineries. A lexical claim on
   one is refused as before.
 
+### Fixed
+
+- **Plain `cargo test` compiles again.** `tests/arbitrary_input.rs`
+  and one case in `tests/contract_gate.rs` drive the console's `cell`,
+  which exists only under the `console` feature, and neither was
+  gated. CI ran `--all-features` alone, so the default build failed to
+  compile while every run stayed green. That is the first build a
+  contributor runs, and the one every `KAYAK_BLESS` line in the README
+  uses.
+  Both are gated now, and CI runs a default-features `cargo test`
+  beside the `--all-features` one.
+
 
 ### Added
 

@@ -238,6 +238,19 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   to the OpenAPI property names, so a client cannot drift from the
   wire again. Regenerate any TypeScript client built before this.
 
+- **`kayak diff` names every addition, and a filter's closed set is
+  diffed at all.** The differ reported a removed filter, sort, or page
+  headroom, but not an added filter or sort or a raised page ceiling,
+  on a resource or a sub-resource. `kayak diff` answered "no contract
+  changes" about a contract that had grown. `additions_are_compatible`
+  applied its additions together, so the ones the differ reported
+  covered for the ones it dropped. Each is now a compatible line, and
+  a new test applies every addition alone. `filter_options` was not
+  compared in either direction, although OpenAPI and MCP publish the
+  set as an enum. It now follows the rules an input's `options` do: a
+  set appearing or a value leaving is breaking, a value arriving or the
+  set lifted is compatible.
+
 
 ### Added
 

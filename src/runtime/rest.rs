@@ -89,24 +89,26 @@ pub struct RestRouter {
 
 impl RestRouter {
     /// Derive the route table from the dispatcher's contract. The
-    /// formulas are the OpenAPI document's: `/v1/{plural}` lists,
-    /// `/v1/{plural}/{id}` gets, `/v1/{plural}/{id}/{sub}` walks a
-    /// sub-collection, `/v1/{plural}{action.path}` performs an
-    /// action, and a query serves at its own declared path.
+    /// formulas are the OpenAPI document's: `{prefix}/{plural}` lists,
+    /// `{prefix}/{plural}/{id}` gets, `{prefix}/{plural}/{id}/{sub}`
+    /// walks a sub-collection, `{prefix}/{plural}{action.path}`
+    /// performs an action, and a query serves at its own declared path.
+    /// The prefix is the contract's `api_prefix`, `/v1` by default.
     pub fn new(dispatcher: Arc<Dispatcher>) -> Self {
         let contract = dispatcher.contract().clone();
+        let prefix = contract.prefix();
         let mut routes = Vec::new();
         for resource in &contract.resources {
             routes.push(Route {
                 method: "GET".to_owned(),
-                segments: template(&format!("/v1/{}", resource.name)),
+                segments: template(&format!("{prefix}/{}", resource.name)),
                 target: Target::List {
                     resource: resource.name.clone(),
                 },
             });
             routes.push(Route {
                 method: "GET".to_owned(),
-                segments: template(&format!("/v1/{}/{{id}}", resource.name)),
+                segments: template(&format!("{prefix}/{}/{{id}}", resource.name)),
                 target: Target::Get {
                     resource: resource.name.clone(),
                 },
@@ -114,7 +116,7 @@ impl RestRouter {
             for sub in &resource.sub_resources {
                 routes.push(Route {
                     method: "GET".to_owned(),
-                    segments: template(&format!("/v1/{}/{{id}}/{}", resource.name, sub.name)),
+                    segments: template(&format!("{prefix}/{}/{{id}}/{}", resource.name, sub.name)),
                     target: Target::SubList {
                         resource: resource.name.clone(),
                         sub: sub.name.clone(),
@@ -124,7 +126,7 @@ impl RestRouter {
             for action in &resource.actions {
                 routes.push(Route {
                     method: action.method.to_uppercase(),
-                    segments: template(&format!("/v1/{}{}", resource.name, action.path)),
+                    segments: template(&format!("{prefix}/{}{}", resource.name, action.path)),
                     target: Target::Action {
                         resource: resource.name.clone(),
                         action: action.name.clone(),

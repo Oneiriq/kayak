@@ -816,7 +816,7 @@ impl ConsoleRouter {
                     faces.push(Face {
                         what: "List".to_owned(),
                         rest_method: "GET",
-                        rest_path: format!("/v1/{}", resource.name),
+                        rest_path: format!("{}/{}", contract.prefix(), resource.name),
                         graphql: Some(resource.graphql_list_field()),
                         graphql_kind: "query",
                         tool: Some(format!("{}_list", resource.name)),
@@ -831,7 +831,7 @@ impl ConsoleRouter {
                     faces.push(Face {
                         what: "Get one".to_owned(),
                         rest_method: "GET",
-                        rest_path: format!("/v1/{}/{{id}}", resource.name),
+                        rest_path: format!("{}/{}/{{id}}", contract.prefix(), resource.name),
                         graphql: Some(resource.graphql_get_field()),
                         graphql_kind: "query",
                         tool: Some(format!("{}_get", singular(&resource.name))),
@@ -874,7 +874,7 @@ impl ConsoleRouter {
                         faces.push(Face {
                             what: humanize(&sub.name),
                             rest_method: "GET",
-                            rest_path: format!("/v1/{}/{{id}}/{}", resource.name, sub.name),
+                            rest_path: format!("{}/{}/{{id}}/{}", contract.prefix(), resource.name, sub.name),
                             graphql: None,
                             graphql_kind: "query",
                             tool: None,
@@ -904,7 +904,7 @@ impl ConsoleRouter {
                                 "DELETE" => "DELETE",
                                 _ => "POST",
                             },
-                            rest_path: format!("/v1/{}{}", resource.name, action.path),
+                            rest_path: format!("{}/{}{}", contract.prefix(), resource.name, action.path),
                             graphql: Some(action.graphql_field_name(resource)),
                             graphql_kind: "mutation",
                             tool: Some(format!("{}_{}", singular(&resource.name), action.name)),

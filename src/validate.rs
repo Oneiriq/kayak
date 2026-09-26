@@ -33,7 +33,7 @@
 //!   column with no vector index writes nothing at all. Declaring the
 //!   capability is what gives the gate something to refuse.
 //!
-//! Both index rules read [`crate::indexes`] rather than the table's
+//! Both index rules read the `indexes` module rather than the table's
 //! index list, because only a standard or unique index counts toward
 //! either. A FULLTEXT or vector index covers a column without narrowing
 //! an equality on it or ordering by it, and a claim resting on one is

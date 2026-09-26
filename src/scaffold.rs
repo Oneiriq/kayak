@@ -6,7 +6,7 @@
 //! sort claim checked against an index by eye. The schema already
 //! knows all of that. This reads it.
 //!
-//! What comes out is a starting point that [`validate`](crate::validate)
+//! What comes out is a starting point that [`validate`](crate::validate())
 //! accepts against the same schema, which is the property worth having:
 //! the filter and sort claims are index-backed by construction rather
 //! than by hope, so the first generation succeeds and the editing that

@@ -13,7 +13,7 @@
 //! divergence nothing names because the differ never sees it. So the
 //! derivation lives here, beside the seven faces it agrees with, and
 //! the contract changes that move it (`reads_require`, a field's
-//! guard) are classified by [`crate::diff`] like every other face's
+//! guard) are classified by [`crate::diff()`] like every other face's
 //! inputs.
 //!
 //! Two things stay out of this module on purpose, and their absence

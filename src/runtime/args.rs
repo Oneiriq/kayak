@@ -75,7 +75,15 @@ pub struct ListOutput {
 }
 
 /// Clamp and check list arguments against the resource's declarations.
+/// A resource that withholds its listing refuses here, so a protocol
+/// layer that offers it by mistake cannot enumerate the collection.
 pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<(), KayakError> {
+    if !resource.faces.list {
+        return Err(KayakError::BadRequest(format!(
+            "{} cannot be listed",
+            resource.name,
+        )));
+    }
     args.limit = args.limit.clamp(1, resource.max_page_size);
     check_filters(resource, &args.filters)?;
     if let Some((column, _)) = &args.sort {
@@ -86,6 +94,18 @@ pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<
         }
     }
     Ok(())
+}
+
+/// Refuse a get on a resource that withholds its getter.
+pub(crate) fn validate_get(resource: &Resource) -> Result<(), KayakError> {
+    if resource.faces.get {
+        Ok(())
+    } else {
+        Err(KayakError::BadRequest(format!(
+            "{} cannot be fetched one at a time",
+            resource.name,
+        )))
+    }
 }
 
 /// Clamp and check sub-list arguments against the sub-resource's own

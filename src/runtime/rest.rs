@@ -99,20 +99,26 @@ impl RestRouter {
         let prefix = contract.prefix();
         let mut routes = Vec::new();
         for resource in &contract.resources {
-            routes.push(Route {
-                method: "GET".to_owned(),
-                segments: template(&format!("{prefix}/{}", resource.name)),
-                target: Target::List {
-                    resource: resource.name.clone(),
-                },
-            });
-            routes.push(Route {
-                method: "GET".to_owned(),
-                segments: template(&format!("{prefix}/{}/{{id}}", resource.name)),
-                target: Target::Get {
-                    resource: resource.name.clone(),
-                },
-            });
+            // A face the resource withholds gets no route, so the path
+            // answers 404 the way an undeclared one does.
+            if resource.faces.list {
+                routes.push(Route {
+                    method: "GET".to_owned(),
+                    segments: template(&format!("{prefix}/{}", resource.name)),
+                    target: Target::List {
+                        resource: resource.name.clone(),
+                    },
+                });
+            }
+            if resource.faces.get {
+                routes.push(Route {
+                    method: "GET".to_owned(),
+                    segments: template(&format!("{prefix}/{}/{{id}}", resource.name)),
+                    target: Target::Get {
+                        resource: resource.name.clone(),
+                    },
+                });
+            }
             for sub in &resource.sub_resources {
                 routes.push(Route {
                     method: "GET".to_owned(),

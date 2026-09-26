@@ -86,6 +86,12 @@ gap:
 let dispatcher = Dispatcher::new(contract.into(), resolvers, middleware)?;
 ```
 
+A resource whose `faces` withhold its listing or its getter needs no resolver
+for that face. The runtime serves only the faces the contract declares: the
+dispatcher refuses the withheld operation, the REST router has no route for
+it, the live schema has no field for it, and the console neither lists nor
+links to it.
+
 Rows travel as `serde_json::Value` in wire shape. The dispatcher validates
 before dispatch: list limits clamp to `max_page_size`, unknown filters and
 undeclared sorts refuse, action inputs check against their declared types,

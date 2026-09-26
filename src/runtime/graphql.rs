@@ -410,31 +410,35 @@ pub fn schema_builder(
         if !resource.sortable.is_empty() {
             list_field = list_field.argument(InputValue::new("sort", Gql::named(&sort_name)));
         }
-        query = query.field(list_field);
+        // Only the faces the resource exposes, as the SDL prints them.
+        if resource.faces.list {
+            query = query.field(list_field);
+        }
 
         // Query: the get field.
         let get_dispatcher = dispatcher.clone();
         let get_resource = resource.name.clone();
-        query = query.field(
-            Field::new(
-                resource.graphql_get_field(),
-                Gql::named(&type_name),
-                move |ctx| {
-                    let dispatcher = get_dispatcher.clone();
-                    let resource = get_resource.clone();
-                    FieldFuture::new(async move {
-                        let id = ctx.args.try_get("id")?.string()?.to_owned();
-                        let jctx = request_context(&ctx);
-                        let row = dispatcher
-                            .get(&resource, jctx, GetArgs { id })
-                            .await
-                            .map_err(to_graphql_error)?;
-                        Ok(row.map(FieldValue::owned_any))
-                    })
-                },
-            )
-            .argument(InputValue::new("id", Gql::named_nn(Gql::ID))),
-        );
+        let get_field = Field::new(
+            resource.graphql_get_field(),
+            Gql::named(&type_name),
+            move |ctx| {
+                let dispatcher = get_dispatcher.clone();
+                let resource = get_resource.clone();
+                FieldFuture::new(async move {
+                    let id = ctx.args.try_get("id")?.string()?.to_owned();
+                    let jctx = request_context(&ctx);
+                    let row = dispatcher
+                        .get(&resource, jctx, GetArgs { id })
+                        .await
+                        .map_err(to_graphql_error)?;
+                    Ok(row.map(FieldValue::owned_any))
+                })
+            },
+        )
+        .argument(InputValue::new("id", Gql::named_nn(Gql::ID)));
+        if resource.faces.get {
+            query = query.field(get_field);
+        }
 
         // Mutation: one field per action.
         for action in &resource.actions {

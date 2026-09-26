@@ -649,11 +649,16 @@ impl ConsoleRouter {
     /// One listing per resource, at the page size a card can show. A
     /// resource whose listing refuses says so on its own card and
     /// leaves the rest of the page standing, because an overview that
-    /// blanks on one failure is worse than one that reports it.
+    /// blanks on one failure is worse than one that reports it. A
+    /// resource that withholds its listing is not asked for one.
     async fn overview(&self, ctx: KayakContext) -> ConsoleAnswer {
         let contract = self.dispatcher.contract().clone();
         let mut cards = Vec::new();
         for resource in &contract.resources {
+            if !resource.faces.list {
+                cards.push((resource, None));
+                continue;
+            }
             let args = ListArgs {
                 limit: PREVIEW_ROWS,
                 cursor: None,
@@ -664,7 +669,7 @@ impl ConsoleRouter {
                 .dispatcher
                 .list(&resource.name, ctx.clone(), args)
                 .await;
-            cards.push((resource, outcome));
+            cards.push((resource, Some(outcome)));
         }
 
         let body = html! {
@@ -678,7 +683,8 @@ impl ConsoleRouter {
                             }
                         }
                         @match outcome {
-                            Ok(page) => {
+                            None => div.dim { "not listable" },
+                            Some(Ok(page)) => {
                                 div.count {
                                     (page.items.len())
                                     @if page.next_cursor.is_some() { "+" }
@@ -695,7 +701,7 @@ impl ConsoleRouter {
                                     }
                                 }
                             }
-                            Err(reason) => div.dim.error-note { (reason.to_string()) }
+                            Some(Err(reason)) => div.dim.error-note { (reason.to_string()) }
                         }
                     }
                 }
@@ -813,36 +819,40 @@ impl ConsoleRouter {
                 }];
                 @let faces = {
                     let mut faces: Vec<Face> = Vec::new();
-                    faces.push(Face {
-                        what: "List".to_owned(),
-                        rest_method: "GET",
-                        rest_path: format!("{}/{}", contract.prefix(), resource.name),
-                        graphql: Some(resource.graphql_list_field()),
-                        graphql_kind: "query",
-                        tool: Some(format!("{}_list", resource.name)),
-                        requires: &resource.reads_require,
-                        inputs: &list_inputs,
-                        body: false,
-                        takes_id: false,
-                        selection: Some(page_selection.clone()),
-                        document: None,
-                        try_at: Some(format!("{base}/r/{}", resource.name)),
-                    });
-                    faces.push(Face {
-                        what: "Get one".to_owned(),
-                        rest_method: "GET",
-                        rest_path: format!("{}/{}/{{id}}", contract.prefix(), resource.name),
-                        graphql: Some(resource.graphql_get_field()),
-                        graphql_kind: "query",
-                        tool: Some(format!("{}_get", singular(&resource.name))),
-                        requires: &resource.reads_require,
-                        inputs: &id_input,
-                        body: false,
-                        takes_id: true,
-                        selection: Some(one_selection.clone()),
-                        document: None,
-                        try_at: Some(format!("{base}/r/{}", resource.name)),
-                    });
+                    if resource.faces.list {
+                        faces.push(Face {
+                            what: "List".to_owned(),
+                            rest_method: "GET",
+                            rest_path: format!("{}/{}", contract.prefix(), resource.name),
+                            graphql: Some(resource.graphql_list_field()),
+                            graphql_kind: "query",
+                            tool: Some(format!("{}_list", resource.name)),
+                            requires: &resource.reads_require,
+                            inputs: &list_inputs,
+                            body: false,
+                            takes_id: false,
+                            selection: Some(page_selection.clone()),
+                            document: None,
+                            try_at: Some(format!("{base}/r/{}", resource.name)),
+                        });
+                    }
+                    if resource.faces.get {
+                        faces.push(Face {
+                            what: "Get one".to_owned(),
+                            rest_method: "GET",
+                            rest_path: format!("{}/{}/{{id}}", contract.prefix(), resource.name),
+                            graphql: Some(resource.graphql_get_field()),
+                            graphql_kind: "query",
+                            tool: Some(format!("{}_get", singular(&resource.name))),
+                            requires: &resource.reads_require,
+                            inputs: &id_input,
+                            body: false,
+                            takes_id: true,
+                            selection: Some(one_selection.clone()),
+                            document: None,
+                            try_at: Some(format!("{base}/r/{}", resource.name)),
+                        });
+                    }
                     if resource.watchable {
                         faces.push(Face {
                             what: "Watch".to_owned(),
@@ -1114,9 +1124,15 @@ impl ConsoleRouter {
             }
         }
         let filter_state = args.filters.clone();
-        let output = match self.dispatcher.list(name, ctx, args).await {
-            Ok(output) => output,
-            Err(error) => return self.refusal_page(&error),
+        // A resource that withholds its listing still carries its
+        // collection actions, so the page renders them with no table.
+        let listed = if resource.faces.list {
+            match self.dispatcher.list(name, ctx, args).await {
+                Ok(output) => Some(output),
+                Err(error) => return self.refusal_page(&error),
+            }
+        } else {
+            None
         };
         // The id is the instance's address and every wire row carries
         // one whether or not the declaration lists it, so it leads the
@@ -1197,45 +1213,52 @@ impl ConsoleRouter {
                     button { "Narrow" }
                 }
             }
-            div.scroll {
-              table {
-                thead { tr { @for column in &columns { th { (humanize(column)) } } } }
-                tbody {
-                    @for item in &output.items {
-                        tr {
-                            @for column in &columns {
-                                td {
-                                    @if column == "id" {
-                                        @if let Some(id) = item.get("id").and_then(Value::as_str) {
-                                            a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) title=(id) {
-                                                (shorten_id(id))
-                                            }
-                                        } @else { (cell(column, item.get(column.as_str()))) }
-                                    } @else {
-                                        (cell(column, item.get(column.as_str())))
+            @if let Some(output) = &listed {
+                div.scroll {
+                  table {
+                    thead { tr { @for column in &columns { th { (humanize(column)) } } } }
+                    tbody {
+                        @for item in &output.items {
+                            tr {
+                                @for column in &columns {
+                                    td {
+                                        // A row links to its page only
+                                        // when the resource has a getter
+                                        // to fill it.
+                                        @if column == "id" && resource.faces.get {
+                                            @if let Some(id) = item.get("id").and_then(Value::as_str) {
+                                                a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) title=(id) {
+                                                    (shorten_id(id))
+                                                }
+                                            } @else { (cell(column, item.get(column.as_str()))) }
+                                        } @else {
+                                            (cell(column, item.get(column.as_str())))
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                  }
                 }
-              }
-            }
-            @if output.items.is_empty() {
-                p.dim { "Nothing here yet. Anything created below shows up in this list." }
-            } @else {
-                p.count {
-                    (output.items.len())
-                    @if output.items.len() == 1 { " row" } @else { " rows" }
-                    @if output.next_cursor.is_some() { ", more after these" }
-                }
-            }
-            @if let Some(cursor) = &output.next_cursor {
-                p {
-                    a href=(format!("{}/r/{}?cursor={}", self.config.base, name, encode(cursor))) {
-                        "older"
+                @if output.items.is_empty() {
+                    p.dim { "Nothing here yet. Anything created below shows up in this list." }
+                } @else {
+                    p.count {
+                        (output.items.len())
+                        @if output.items.len() == 1 { " row" } @else { " rows" }
+                        @if output.next_cursor.is_some() { ", more after these" }
                     }
                 }
+                @if let Some(cursor) = &output.next_cursor {
+                    p {
+                        a href=(format!("{}/r/{}?cursor={}", self.config.base, name, encode(cursor))) {
+                            "older"
+                        }
+                    }
+                }
+            } @else {
+                p.dim { "The contract withholds this listing." }
             }
         };
         self.shell_at(200, name, Some(name), body)

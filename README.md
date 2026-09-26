@@ -76,6 +76,8 @@ kayak scaffold --schema schema.json --out contract.json [--name svc] \
 kayak generate --contract contract.json --schema schema.json \
     --out generated [--targets openapi,sdl,mcp,client-rs,client-ts,client-py,client-go]
 kayak diff old-contract.json new-contract.json   # exits non-zero on breaking changes
+kayak verify --contract contract.json --db ws://localhost:8000 \
+    --namespace ns --database db [--user root --pass secret]
 ```
 
 Contracts and schemas travel as data; the schema file is a serialized
@@ -83,6 +85,13 @@ Contracts and schemas travel as data; the schema file is a serialized
 the IR, so it catches what document diffs hide: a dropped filter, a moved
 action, an input that became required, a field re-pointed at a different
 column under the same wire name.
+
+`verify` asks a live database's planner what static validation cannot. It
+runs `EXPLAIN` on a representative listing for every filter and sort claim
+and on every search backing's own operator, and exits non-zero naming each
+claim the plan answers with a table walk or the wrong index. It needs the
+`verify` feature, which carries the database client the rest of kayak
+leaves out.
 
 ### Starting from a database you already have
 

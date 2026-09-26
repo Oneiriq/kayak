@@ -48,14 +48,16 @@ pub fn generate_all(
     let mut artifacts = BTreeMap::new();
     for target in targets {
         let (filename, content) = match *target {
-            "mcp" => (
-                "mcp-tools.json".to_owned(),
-                format!(
-                    "{}
-",
-                    serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract)?)?,
-                ),
-            ),
+            "mcp" => {
+                validated(contract, schema)?;
+                (
+                    "mcp-tools.json".to_owned(),
+                    format!(
+                        "{}\n",
+                        serde_json::to_string_pretty(&crate::mcp::generate_mcp_tools(contract)?)?,
+                    ),
+                )
+            }
             "openapi" => (
                 "openapi.json".to_owned(),
                 format!(
@@ -73,16 +75,19 @@ pub fn generate_all(
             // tightened in the contract shows up here as a changed
             // clause in the same commit. A guard outside the
             // vocabulary refuses the run, naming the guard.
-            "engine-policy" => (
-                "policy.json".to_owned(),
-                format!(
-                    "{}\n",
-                    serde_json::to_string_pretty(&crate::policy::derive_policy(
-                        contract,
-                        &crate::policy::ClaimVocabulary::default(),
-                    )?)?,
-                ),
-            ),
+            "engine-policy" => {
+                validated(contract, schema)?;
+                (
+                    "policy.json".to_owned(),
+                    format!(
+                        "{}\n",
+                        serde_json::to_string_pretty(&crate::policy::derive_policy(
+                            contract,
+                            &crate::policy::ClaimVocabulary::default(),
+                        )?)?,
+                    ),
+                )
+            }
             "client-rs" => (
                 "client.rs".to_owned(),
                 generate_client_rs(contract, schema)?,
@@ -112,4 +117,18 @@ pub fn generate_all(
         artifacts.insert(filename, content);
     }
     Ok(artifacts)
+}
+
+/// Refuse an invalid contract before rendering a target that reads
+/// only the contract. The MCP manifest and the engine policy take no
+/// schema, so their own entry points cannot check a contract against
+/// one. Every other generator validates inside, and these two validate
+/// here, so no target renders a contract the gate refuses.
+fn validated(contract: &Contract, schema: &[TableDefinition]) -> Result<(), GenerateError> {
+    let violations = crate::validate::validate(contract, schema);
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(GenerateError::Invalid(violations))
+    }
 }

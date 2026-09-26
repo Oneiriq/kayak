@@ -124,6 +124,10 @@ pub enum PolicyError {
 /// on every sub-resource table, because a sub-collection is read
 /// under its parent's requirement -- it is reached through the parent,
 /// and the engine face mirrors how the dispatcher enforces reads.
+///
+/// It reads only the contract and so takes no schema to validate
+/// against. Validate first with [`crate::validate()`], or generate
+/// through [`crate::generate_all`], which does.
 pub fn derive_policy(
     contract: &Contract,
     vocabulary: &ClaimVocabulary,

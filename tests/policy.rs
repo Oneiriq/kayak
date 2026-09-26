@@ -8,7 +8,53 @@
 //! `kayak::derive_policy` reviews as pure deletion: same tables, same
 //! columns, same clauses, in the same order.
 
-use kayak::{derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, Resource, SubResource};
+use kayak::generate::{generate_all, TARGETS};
+use kayak::{
+    derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, GenerateError, Resource,
+    SubResource,
+};
+use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
+
+/// The tables the contract below validates against: every column it
+/// names, and an index leading with the columns each listing binds.
+/// The derivation reads none of this, and the target validates against
+/// it first.
+fn schema() -> Vec<TableDefinition> {
+    let table = |name: &str, columns: &[&str], indexed: &[&str]| {
+        table_schema(name)
+            .with_mode(TableMode::Schemafull)
+            .with_fields(
+                columns
+                    .iter()
+                    .map(|column| string_field(*column).build_unchecked().unwrap()),
+            )
+            .with_indexes([index(format!("idx_{name}"), indexed.iter().copied())])
+    };
+    vec![
+        table(
+            "file",
+            &["tenant_id", "created_at", "digest"],
+            &["tenant_id"],
+        ),
+        table(
+            "file_version",
+            &["file", "tenant_id", "number", "created_by", "created_at"],
+            &["file", "tenant_id"],
+        ),
+        table(
+            "webhook_endpoint",
+            &["tenant_id", "created_at"],
+            &["tenant_id"],
+        ),
+        table(
+            "webhook_delivery",
+            &["endpoint", "tenant_id", "state", "created_at"],
+            &["endpoint", "tenant_id", "state"],
+        ),
+        table("file_event", &["tenant_id", "created_at"], &["tenant_id"]),
+        table("workflow_run", &["tenant_id", "created_at"], &["tenant_id"]),
+    ]
+}
 
 /// A resource carrying only what the policy face reads: table, field
 /// exposures, read scopes, sub-resources. Everything else defaulted,
@@ -211,8 +257,7 @@ fn an_unknown_guard_refuses_rather_than_ships_half_a_policy() {
 /// changes here in a commit is what changes in the engine.
 #[test]
 fn the_engine_policy_target_renders_the_artifact() {
-    let artifacts =
-        kayak::generate::generate_all(&copal_shaped(), &[], &["engine-policy"]).unwrap();
+    let artifacts = generate_all(&copal_shaped(), &schema(), &["engine-policy"]).unwrap();
     assert_eq!(
         artifacts["policy.json"],
         r#"{
@@ -262,9 +307,28 @@ fn the_engine_policy_target_renders_the_artifact() {
 fn the_target_refuses_a_guard_outside_the_default_vocabulary() {
     let mut contract = copal_shaped();
     contract.resources[0].fields = vec![FieldExposure::column("digest").with_guard("finance_only")];
-    let error = kayak::generate::generate_all(&contract, &[], &["engine-policy"]).unwrap_err();
+    let error = generate_all(&contract, &schema(), &["engine-policy"]).unwrap_err();
     assert!(
         error.to_string().contains("finance_only"),
         "the refusal names the guard: {error}",
     );
+}
+
+/// Every target validates first, the two that read only the contract
+/// included. The MCP manifest and the engine policy used to render
+/// whatever they were handed, so a contract over a table the schema
+/// lacks shipped a manifest and a policy for it.
+#[test]
+fn every_target_refuses_an_invalid_contract() {
+    let mut contract = copal_shaped();
+    contract.resources[0].table = "nonesuch".into();
+    let opt_in = ["engine-policy", "client-rs-blocking"];
+    for target in TARGETS.iter().chain(opt_in.iter()) {
+        let refused = generate_all(&contract, &schema(), &[target]);
+        assert!(
+            matches!(refused, Err(GenerateError::Invalid(_))),
+            "{target} rendered an invalid contract: {refused:?}",
+        );
+    }
+    assert!(generate_all(&copal_shaped(), &schema(), &["mcp", "engine-policy"]).is_ok());
 }

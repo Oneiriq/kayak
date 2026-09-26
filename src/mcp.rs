@@ -22,6 +22,10 @@ use crate::openapi::{addressed_identity, GenerateError};
 
 /// The manifest: every tool the contract implies, in MCP's
 /// `tools/list` shape.
+///
+/// It reads only the contract and so takes no schema to validate
+/// against. Validate first with [`crate::validate()`], or generate
+/// through [`crate::generate_all`], which does.
 pub fn generate_mcp_tools(contract: &Contract) -> Result<Value, GenerateError> {
     let mut tools = Vec::new();
     for resource in &contract.resources {

@@ -457,8 +457,8 @@ fn table_walk(node: &Value) -> Option<String> {
 /// With the index absent, `@@` degrades to a `TableScan` carrying the
 /// predicate as an attribute, and `<|k,EF|>` to a bare `TableScan`;
 /// the metric KNN form `<|k,COSINE|>` plans as `KnnTopK` OVER a
-/// `TableScan` even when an HNSW index exists, which is why copal
-/// renders the `<|k,EF|>` form and why the probe does too. Matching
+/// `TableScan` even when an HNSW index exists, which is why a real
+/// search renders the `<|k,EF|>` form and why the probe does too. Matching
 /// on the `index` attribute rather than on the operator names keeps
 /// the walker one rule for both kinds, and means a future operator
 /// respelling fails the pinned vocabulary test instead of silently

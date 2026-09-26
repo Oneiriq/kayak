@@ -161,7 +161,7 @@ fn resource_from(
     // index-served order. A scaffold cannot assume they will. `filterable` describes what a caller may send, nothing
     // obliges them to send it, and an unfiltered sort down a composite
     // index scans. So this claims only what the server guarantees on
-    // every request, which is what it pins. Copal's `created_at` sort is the case
+    // every request, which is what it pins. A file listing's `created_at` sort is the case
     // worth naming: it sits behind `state` and is genuinely the listing
     // order that index exists for, and it is still the right thing to
     // add by hand, because adding a sort is a compatible change and
@@ -400,7 +400,7 @@ mod tests {
         }
     }
 
-    /// Copal's `webhook_delivery` shape: the pins survive on the
+    /// A webhook service's `webhook_delivery` shape: the pins survive on the
     /// table, and every index serves someone else.
     fn delivery_table() -> TableDefinition {
         table_schema("webhook_delivery")

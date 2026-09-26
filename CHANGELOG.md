@@ -84,8 +84,8 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   they declare absolute paths, which is why a query could always
   describe a service's real routes when a resource could not.
 
-- **A contract says how its callers authenticate.** Copal's
-  `x-copal-tenant` header was hardcoded in four client generators, so a
+- **A contract says how its callers authenticate.** One file
+  service's tenant header was hardcoded in four client generators, so a
   service authenticating any other way had four files to edit and no
   way to say so in the contract. `Contract::auth` now declares the
   scheme — `none`, `bearer`, or a named header — and every face reads
@@ -93,8 +93,8 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   document-level `security`, and the differ, which treats any change of
   scheme as breaking in both directions. The credential's *name* is
   part of the declaration and reaches the generated constructors, so a
-  bearer contract gets `Client::new(url, token)` and copal's gets
-  `Client::new(url, tenant)`. Declaring copal's existing scheme
+  bearer contract gets `Client::new(url, token)` and the file service's gets
+  `Client::new(url, tenant)`. Declaring that service's existing scheme
   reproduces all four client goldens byte for byte, which is what
   establishes the mechanism is faithful to the behaviour it replaced.
 
@@ -150,7 +150,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   going to have one.
 
 - **A backing can be machinery the deployment configures.**
-  `SearchBacking.optional` says the index may be absent. Copal is the
+  `SearchBacking.optional` says the index may be absent. A file service is the
   case that forced it: its HNSW index over `text_chunk.embedding` is
   applied at startup, and only where an embedding model is configured,
   at that model's width — so declaring it outright would make the
@@ -222,7 +222,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   A listing declares its cost exhaustively — every filter and sort
   claim index-validated — while search, the one read whose cost is
   most surprising, was an opaque `Query`: typed inputs, a path, and
-  nothing about what serves them. Copal's real search is the proof:
+  nothing about what serves them. A file service's real search is the proof:
   BM25 over `text_chunk.body` through `idx_chunk_body`, HNSW over
   `text_chunk.embedding` through `idx_chunk_embedding`, fused in the
   resolver, and all of it invisible to validation, to the differ, and
@@ -270,7 +270,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   leaf's attributes; unserved, both degrade to `TableScan`, and the
   metric KNN form plans `KnnTopK` over a `TableScan` even where an
   index exists, which is why the probe composes `<|k,EF|>` the way
-  copal does. The probe literal is `[0]` whatever the embedding
+  a real search does. The probe literal is `[0]` whatever the embedding
   dimension, because the planner resolves the index before it looks
   at the literal's width. One boundary is the engine's, stated
   rather than papered over: SurrealDB 3.x has removed MTREE (the
@@ -300,7 +300,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   `Violation::UnreachableListing` fires when no standard or unique
   index leads with a bound column; one leading bound column is
   enough, because the engine seeks its range and checks the remaining
-  pins inside it. That is what keeps copal's deliveries sub-collection
+  pins inside it. That is what keeps a webhook deliveries sub-collection
   legal, and it is why the rule credits a sub-resource's `parent_key`:
   a delivery log indexed by endpoint and never by tenant is cheap
   reached through the endpoint and a scan reached directly, and the
@@ -311,9 +311,9 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   withholds them: exposing it without the pins would publish across
   the boundary the pins draw, exposing it with them writes a resource
   the validator refuses, and the missing index is a schema change a
-  contract tool does not get to make. Against copal's 25 tables the
+  contract tool does not get to make. Against a file service's 25 tables the
   scaffold now exposes 22, and the three it declines (`file_version`,
-  `tus_upload`, `webhook_delivery`) are exactly the tables copal's
+  `tus_upload`, `webhook_delivery`) are exactly the tables that service's
   hand-written contract never lists at the top level. The shared
   predicate lives in `indexes.rs` with the ordering-index rule, read
   by both the scaffold and the validator, so the two halves cannot
@@ -355,7 +355,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   the ordinary way to make one searchable and filterable at once, and
   is accepted as it always was.
 
-  Copal's checked-in contract is unaffected. Its only two non-ordering
+  The reference deployment's checked-in contract is unaffected. Its only two non-ordering
   indexes sit on `text_chunk`, and no resource or sub-resource targets
   that table: it is reached through queries, which declare no filter
   or sort claims.
@@ -400,7 +400,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   the engine — table `PERMISSIONS` filtering rows, field
   `PERMISSIONS` redacting columns — for sessions authenticated as
   callers rather than as the service. The clauses worth having are
-  exactly what the contract declares, and copal derived them by hand
+  exactly what the contract declares, and the reference deployment derived them by hand
   in its server, which is the drift this library exists to prevent:
   tighten a scope in the contract, forget to re-derive, and the API
   refuses what the engine still serves, with nothing naming the
@@ -413,10 +413,10 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   The token-claim vocabulary the clauses speak (which claim carries
   the scope list, what clause a named guard becomes) is deployment
   convention rather than contract content, so it travels as a
-  `ClaimVocabulary` argument whose defaults are copal's conventions —
+  `ClaimVocabulary` argument whose defaults are the reference deployment's conventions —
   the reference deployment's switch to this API is proven a
   behavioral no-op in `tests/policy.rs`, byte-for-byte against what
-  its hand derivation renders, with the matched copal sources cited.
+  its hand derivation renders, with the matched sources cited.
   A guard the vocabulary cannot render refuses the derivation naming
   the guard, because rendering nothing would silently drop the engine
   layer for a column the application layer kept enforcing.
@@ -459,8 +459,8 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   answering the resource carries a selection while one answering JSON
   does not, and an instance action names the id it takes as an
   argument rather than only in a path. All twenty-three documents
-  copal's contract produces parse and validate against copal's own
-  generated schema.
+  the reference deployment's contract produces parse and validate
+  against its own generated schema.
 
   "Try it" on each row lands on the control that runs it, with an
   action's dialog already open.
@@ -481,7 +481,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
 
 - **`document`, `Page`, and `rail_section` are exported**, so a host
   renders its own pages in the same frame. A second implementation of
-  the frame is a second console: copal's deployment page kept its own
+  the frame is a second console: a file service's deployment page kept its own
   markup and stayed on the old layout while every generated page
   moved, which is the failure the stylesheet already had before it
   was shared. The generated pages go through the same function.
@@ -493,7 +493,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   caller-side only: adding or swapping one broke, removing one
   "showed more and refused nobody" and passed as compatible, and a
   guard on a sub-resource field was not compared in any direction —
-  which is exactly where copal's one guarded field lives. Who sees a
+  which is exactly where a file service's one guarded field lives. Who sees a
   field is contract surface in BOTH directions: removing a guard
   takes away the redaction itself, showing the column to every caller
   the guard used to deny, on the API faces and now in the derived
@@ -640,7 +640,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
 
 - **`STYLE` and `cell` are exported.** A host renders pages of its own
   beside the generated ones, and two stylesheets means two consoles.
-  Copal's deployment page was the case: it kept a copy and went on
+  A file service's deployment page was the case: it kept a copy and went on
   printing raw byte counts and nanosecond timestamps after the
   generated pages stopped.
 
@@ -650,7 +650,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   OpenAPI, the SDL, the MCP manifest, the console, and both runtime
   routers; the four client generators never read it. A service could
   declare a search, publish it on every other face, and hand out an
-  SDK with no way to call it. Copal was in that position: `search` and
+  SDK with no way to call it. A file service was in that position: `search` and
   `file_text` were absent from all four clients.
 
   Each query now emits a method taking the path parameter, if the path
@@ -677,7 +677,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   adoption before it started. `scaffold --schema` reads the schema and
   writes a contract that validates against it, so the first `generate`
   produces artifacts instead of a list of claims to repair. Against
-  copal's real 25 tables it derives 47 filters and 33 sorts, and all
+  a file service's real 25 tables it derives 47 filters and 33 sorts, and all
   seven targets generate from the result unedited.
 
   It claims less than it could, deliberately. Sorts are claimed only

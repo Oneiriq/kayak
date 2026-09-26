@@ -27,7 +27,7 @@ fn file_table() -> TableDefinition {
 
 fn contract() -> Contract {
     Contract {
-        name: "copal".into(),
+        name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
         api_prefix: "/v1".into(),
@@ -161,7 +161,7 @@ fn a_scaffolded_contract_generates_without_edits() {
             "--out",
             contract_path.to_str().unwrap(),
             "--name",
-            "copal",
+            "probe",
         ])
         .output()
         .unwrap();

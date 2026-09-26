@@ -66,7 +66,7 @@ pub struct ConsoleRouter {
 
 /// The console's whole stylesheet, exported because a host renders
 /// pages of its own beside the generated ones and two stylesheets
-/// means two consoles. Copal's deployment page is the case: it kept a
+/// means two consoles. A file service's deployment page is the case: it kept a
 /// copy, so it went on printing raw byte counts and nanosecond
 /// timestamps after the generated pages stopped.
 ///
@@ -1784,8 +1784,8 @@ fn preview_line(preview: &Preview, item: &Value) -> Markup {
 /// One console page, frame and all.
 ///
 /// A host renders pages of its own beside the generated ones, and a
-/// second implementation of the frame is a second console: copal's
-/// deployment page kept its own markup and stayed on the old layout
+/// second implementation of the frame is a second console: a file
+/// service's deployment page kept its own markup and stayed on the old layout
 /// after every generated page moved, which is the same failure the
 /// stylesheet had before it was shared.
 ///

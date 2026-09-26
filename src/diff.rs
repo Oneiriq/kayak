@@ -380,7 +380,7 @@ fn diff_options(scope: &str, old: &ActionField, new: &ActionField, changes: &mut
 /// policy derives guards from both, so the rules cannot be allowed to
 /// differ by nesting depth: a guard the differ watches on a resource
 /// but not on its sub-collection is a silent hole exactly where
-/// copal's one guarded field actually lives.
+/// a file service's one guarded field actually lives.
 fn diff_fields(
     scope: &str,
     old: &[FieldExposure],

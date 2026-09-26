@@ -31,7 +31,7 @@ async fn memory_client() -> DatabaseClient {
     client
 }
 
-/// Copal-shaped listing tables: `file` seekable through its listing
+/// File-service listing tables: `file` seekable through its listing
 /// index, `file_version` seekable through the parent key, and `note`
 /// carrying no index at all, so its claims have nothing to plan on.
 const DDL: &str = "
@@ -93,16 +93,16 @@ fn contract(resources: Vec<Resource>) -> Contract {
     }
 }
 
-/// Copal's search tables, both search indexes in place: the analyzer,
+/// A file service's search tables, both search indexes in place: the analyzer,
 /// BM25 over the passage text, HNSW over its embedding. Dimension 3
 /// because the fixture controls it and three is enough to seek.
 const SEARCH_DDL: &str = "
-DEFINE ANALYZER copal_text TOKENIZERS class FILTERS lowercase, ascii, snowball(english);
+DEFINE ANALYZER chunk_text TOKENIZERS class FILTERS lowercase, ascii, snowball(english);
 DEFINE TABLE text_chunk SCHEMAFULL;
 DEFINE FIELD tenant_id ON text_chunk TYPE string;
 DEFINE FIELD body ON text_chunk TYPE string;
 DEFINE FIELD embedding ON text_chunk TYPE option<array<float>>;
-DEFINE INDEX idx_chunk_body ON text_chunk FIELDS body FULLTEXT ANALYZER copal_text BM25;
+DEFINE INDEX idx_chunk_body ON text_chunk FIELDS body FULLTEXT ANALYZER chunk_text BM25;
 DEFINE INDEX idx_chunk_embedding ON text_chunk FIELDS embedding HNSW DIMENSION 3 DIST COSINE TYPE F32;
 CREATE text_chunk SET tenant_id = 't1', body = 'the quick brown fox', embedding = [0.1, 0.2, 0.3];
 ";
@@ -117,7 +117,7 @@ DEFINE FIELD embedding ON text_chunk TYPE option<array<float>>;
 CREATE text_chunk SET tenant_id = 't1', body = 'the quick brown fox', embedding = [0.1, 0.2, 0.3];
 ";
 
-/// A contract whose one query declares copal's two backings.
+/// A contract whose one query declares a file service's two backings.
 fn searching_contract() -> Contract {
     let mut searching = contract(vec![]);
     searching.queries = vec![Query {
@@ -252,7 +252,7 @@ async fn the_probed_plan_vocabulary_still_holds() {
     assert!(!text.contains("\"TableScan\""), "{text}");
 
     // The metric KNN form ignores the index even where one exists,
-    // which is why the probe composes `<|k,EF|>` the way copal does.
+    // which is why the probe composes `<|k,EF|>` the way a real search does.
     let brute = client
         .query("SELECT * FROM text_chunk WHERE embedding <|1,COSINE|> [0] EXPLAIN")
         .await
@@ -333,7 +333,7 @@ async fn an_unserved_claim_names_itself() {
     );
 }
 
-/// Copal's search surface, backed the way its schema really is:
+/// A file service's search surface, backed the way its schema really is:
 /// both backings reach their named index, so the contract's promise
 /// and the planner's answer agree.
 #[tokio::test]
@@ -382,7 +382,7 @@ async fn a_dropped_search_index_convicts_the_backing_by_name() {
 ///
 /// Both halves matter, and the second is the one that makes the flag
 /// worth having. "This deployment may not have configured it" is a
-/// true statement about copal's embedding index and a tempting cover
+/// true statement about a real embedding index and a tempting cover
 /// for anything at all, so the excuse is granted on exactly one fact:
 /// the index is not defined here. Define it, and the claim answers to
 /// the planner like every other.

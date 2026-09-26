@@ -413,8 +413,8 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   The token-claim vocabulary the clauses speak (which claim carries
   the scope list, what clause a named guard becomes) is deployment
   convention rather than contract content, so it travels as a
-  `ClaimVocabulary` argument whose defaults are the reference deployment's conventions —
-  the reference deployment's switch to this API is proven a
+  `ClaimVocabulary` argument whose defaults are the reference deployment's conventions.
+  The reference deployment's switch to this API is proven a
   behavioral no-op in `tests/policy.rs`, byte-for-byte against what
   its hand derivation renders, with the matched sources cited.
   A guard the vocabulary cannot render refuses the derivation naming

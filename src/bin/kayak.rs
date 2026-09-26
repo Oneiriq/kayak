@@ -363,6 +363,23 @@ fn text_of(text: &str) -> &str {
     text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
+/// A contract every command can read, refused when a newer kayak wrote
+/// it. `diff` and `verify` take no schema and so never validate, and a
+/// revision this kayak does not know can carry a change it would
+/// misread.
+fn read_contract(path: &str) -> Result<Contract, String> {
+    let contract = assemble_contract(path)?;
+    if contract.ir_revision > kayak::ir::IR_REVISION {
+        return Err(format!(
+            "ir_revision {} is newer than {}, the newest this kayak reads; \
+             upgrade kayak to read it",
+            contract.ir_revision,
+            kayak::ir::IR_REVISION,
+        ));
+    }
+    Ok(contract)
+}
+
 /// A contract, from one file or from a directory of them.
 ///
 /// One entity per file is what lets a reader open `resources/files.json`
@@ -370,7 +387,7 @@ fn text_of(text: &str) -> &str {
 /// assembled contract is what kayak validates and generates from,
 /// because the checks that matter span it: a rate class a resource
 /// names, a query that collides with another query.
-fn read_contract(path: &str) -> Result<Contract, String> {
+fn assemble_contract(path: &str) -> Result<Contract, String> {
     let at = std::path::Path::new(path);
     if !at.is_dir() {
         return read_json(path);

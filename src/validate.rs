@@ -262,9 +262,33 @@ fn width_word(dimension: Option<u32>) -> String {
     dimension.map_or_else(|| "no stated width".to_owned(), |width| width.to_string())
 }
 
+/// A contract names the IR revision it was written in. A revision
+/// newer than this kayak reads can carry a change this kayak would
+/// misread, so it is refused rather than read. Revisions start at 1.
+fn validate_ir_revision(contract: &Contract, violations: &mut Vec<Violation>) {
+    let revision = contract.ir_revision;
+    let problem = if revision == 0 {
+        "is 0, and revisions start at 1".to_owned()
+    } else if revision > crate::ir::IR_REVISION {
+        format!(
+            "is {revision}, newer than revision {}, the newest this kayak reads. \
+             A newer kayak wrote it, and this one could misread it",
+            crate::ir::IR_REVISION,
+        )
+    } else {
+        return;
+    };
+    violations.push(Violation::InvalidName {
+        scope: "contract".into(),
+        name: "ir_revision".into(),
+        problem,
+    });
+}
+
 /// Validate a contract against schema definitions; empty means valid.
 pub fn validate(contract: &Contract, schema: &[TableDefinition]) -> Vec<Violation> {
     let mut violations = Vec::new();
+    validate_ir_revision(contract, &mut violations);
     validate_api_prefix(contract, &mut violations);
     validate_client_methods(contract, &mut violations);
     // Two resources under one name would claim the same REST prefix

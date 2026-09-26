@@ -18,7 +18,10 @@ pub struct Contract {
     pub name: String,
     /// Semantic version of the contract itself (not the service).
     pub version: String,
-    /// IR schema revision, for forward-compatible tooling.
+    /// IR schema revision, for forward-compatible tooling. It moves
+    /// only for a change an older reader would misread, and validation
+    /// refuses a revision newer than [`IR_REVISION`], so an older kayak
+    /// refuses a newer contract instead of misreading it.
     #[serde(default = "default_ir_revision")]
     pub ir_revision: u32,
     /// Named consumption budgets. A resource or action that names one
@@ -397,8 +400,11 @@ pub struct ContractLimits {
     pub max_watches_per_principal: Option<u32>,
 }
 
+/// The newest IR revision this kayak reads, and the one it writes.
+pub const IR_REVISION: u32 = 1;
+
 pub(crate) fn default_ir_revision() -> u32 {
-    1
+    IR_REVISION
 }
 
 impl Contract {

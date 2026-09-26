@@ -76,6 +76,8 @@ kayak scaffold --schema schema.json --out contract.json [--name svc] \
 kayak generate --contract contract.json --schema schema.json \
     --out generated [--targets openapi,sdl,mcp,client-rs,client-ts,client-py,client-go]
 kayak diff old-contract.json new-contract.json   # exits non-zero on breaking changes
+kayak verify --contract contract.json --db ws://localhost:8000 \
+    --namespace ns --database db [--user root --pass secret]
 ```
 
 Contracts and schemas travel as data; the schema file is a serialized
@@ -84,12 +86,19 @@ the IR, so it catches what document diffs hide: a dropped filter, a moved
 action, an input that became required, a field re-pointed at a different
 column under the same wire name.
 
+`verify` asks a live database's planner what static validation cannot. It
+runs `EXPLAIN` on a representative listing for every filter and sort claim
+and on every search backing's own operator, and exits non-zero naming each
+claim the plan answers with a table walk or the wrong index. It needs the
+`verify` feature, which carries the database client the rest of kayak
+leaves out.
+
 ### Starting from a database you already have
 
 `scaffold` reads a schema and writes a contract that validates against
 it. Without it, that step means copying every column by hand and checking
-every filter and sort against an index by eye. Run against copal's own 25
-tables, it exposes 22, derives 39 filters and 28 sorts, and all seven
+every filter and sort against an index by eye. Run against a real file
+service's 25 tables, it exposes 22, derives 39 filters and 28 sorts, and all seven
 artifacts generate from the result without an edit.
 
 The scaffold also refuses to guess a few things, on purpose. Actions are
@@ -100,8 +109,8 @@ surface shouldn't be how a hash reaches a client. Tables whose pinned
 columns don't lead any index are declined whole and named the same way:
 the pins apply to every read, so every listing of such a table scans it.
 Both repairs (lead an index with a pin, or reach the table through a
-parent as a sub-collection) are the author's to choose. The three copal
-tables declined this way are exactly the ones its hand-written contract
+parent as a sub-collection) are the author's to choose. The three tables
+it declined there are exactly the ones the service's hand-written contract
 never lists at the top level: versions reached through their file,
 deliveries through their endpoint, TUS uploads through their own
 protocol. Sort claims stay narrower than `validate` would tolerate: a
@@ -113,7 +122,7 @@ scans.
 Throughout, the scaffold prefers to claim less, because the differ calls
 a removed filter or sort breaking and an added one compatible. A claim
 the scaffold invents costs a major version to withdraw; one it omits
-costs a line to add. Copal's `created_at` listing sort is the intended
+costs a line to add. That service's `created_at` listing sort is the intended
 example: left unclaimed, correct to add by hand, compatible when you do.
 
 ## Testing

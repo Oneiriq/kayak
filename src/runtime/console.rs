@@ -26,7 +26,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::KayakError;
-use crate::runtime::wire::percent_decode as decode;
+use crate::runtime::wire::{gather, percent_decode as decode};
 use surql::schema::TableDefinition;
 
 /// One rendered page: an HTTP status and a complete HTML document.
@@ -66,7 +66,7 @@ pub struct ConsoleRouter {
 
 /// The console's whole stylesheet, exported because a host renders
 /// pages of its own beside the generated ones and two stylesheets
-/// means two consoles. Copal's deployment page is the case: it kept a
+/// means two consoles. A file service's deployment page is the case: it kept a
 /// copy, so it went on printing raw byte counts and nanosecond
 /// timestamps after the generated pages stopped.
 ///
@@ -578,11 +578,8 @@ impl ConsoleRouter {
             if raw.is_empty() {
                 continue;
             }
-            let kind = declared
-                .input
-                .iter()
-                .find(|f| f.name == *key)
-                .map(|f| &f.kind);
+            let field = declared.input.iter().find(|f| f.name == *key);
+            let kind = field.map(|f| &f.kind);
             if matches!(kind, Some(TypeRef::Json)) && serde_json::from_str::<Value>(raw).is_err() {
                 return FormOutcome::Page(self.error_page(
                     400,
@@ -592,7 +589,8 @@ impl ConsoleRouter {
                     ),
                 ));
             }
-            input.insert(key.clone(), coerce(raw.clone(), kind));
+            // A checked box submits its own pair, one per value chosen.
+            gather(&mut input, field, key.clone(), coerce(raw.clone(), kind));
         }
         let args = ActionArgs {
             id: id.clone(),
@@ -649,11 +647,16 @@ impl ConsoleRouter {
     /// One listing per resource, at the page size a card can show. A
     /// resource whose listing refuses says so on its own card and
     /// leaves the rest of the page standing, because an overview that
-    /// blanks on one failure is worse than one that reports it.
+    /// blanks on one failure is worse than one that reports it. A
+    /// resource that withholds its listing is not asked for one.
     async fn overview(&self, ctx: KayakContext) -> ConsoleAnswer {
         let contract = self.dispatcher.contract().clone();
         let mut cards = Vec::new();
         for resource in &contract.resources {
+            if !resource.faces.list {
+                cards.push((resource, None));
+                continue;
+            }
             let args = ListArgs {
                 limit: PREVIEW_ROWS,
                 cursor: None,
@@ -664,7 +667,7 @@ impl ConsoleRouter {
                 .dispatcher
                 .list(&resource.name, ctx.clone(), args)
                 .await;
-            cards.push((resource, outcome));
+            cards.push((resource, Some(outcome)));
         }
 
         let body = html! {
@@ -678,7 +681,8 @@ impl ConsoleRouter {
                             }
                         }
                         @match outcome {
-                            Ok(page) => {
+                            None => div.dim { "not listable" },
+                            Some(Ok(page)) => {
                                 div.count {
                                     (page.items.len())
                                     @if page.next_cursor.is_some() { "+" }
@@ -695,7 +699,7 @@ impl ConsoleRouter {
                                     }
                                 }
                             }
-                            Err(reason) => div.dim.error-note { (reason.to_string()) }
+                            Some(Err(reason)) => div.dim.error-note { (reason.to_string()) }
                         }
                     }
                 }
@@ -801,10 +805,20 @@ impl ConsoleRouter {
                     "items {{\n      {}\n    }}\n    nextCursor",
                     shown.join("\n      "),
                 );
-                @let one_selection = format!("id\n    {}", shown.join("\n    "));
+                // An instance is addressed by its identity column, which
+                // is not always `id`, and its type carries that column as
+                // a field of its own only when the SDL synthesises it.
+                @let identity = resource.wire_identity().unwrap_or("id");
+                @let lead: Vec<&str> = resource
+                    .wire_identity()
+                    .filter(|id| !resource.fields.iter().any(|f| f.api_name() == *id))
+                    .into_iter()
+                    .chain(shown.iter().copied())
+                    .collect();
+                @let one_selection = lead.join("\n    ");
                 @let list_inputs = vec![];
                 @let id_input = vec![ActionField {
-                    name: "id".to_owned(),
+                    name: identity.to_owned(),
                     kind: TypeRef::String,
                     required: true,
                     multiple: false,
@@ -813,36 +827,42 @@ impl ConsoleRouter {
                 }];
                 @let faces = {
                     let mut faces: Vec<Face> = Vec::new();
-                    faces.push(Face {
-                        what: "List".to_owned(),
-                        rest_method: "GET",
-                        rest_path: format!("/v1/{}", resource.name),
-                        graphql: Some(resource.graphql_list_field()),
-                        graphql_kind: "query",
-                        tool: Some(format!("{}_list", resource.name)),
-                        requires: &resource.reads_require,
-                        inputs: &list_inputs,
-                        body: false,
-                        takes_id: false,
-                        selection: Some(page_selection.clone()),
-                        document: None,
-                        try_at: Some(format!("{base}/r/{}", resource.name)),
-                    });
-                    faces.push(Face {
-                        what: "Get one".to_owned(),
-                        rest_method: "GET",
-                        rest_path: format!("/v1/{}/{{id}}", resource.name),
-                        graphql: Some(resource.graphql_get_field()),
-                        graphql_kind: "query",
-                        tool: Some(format!("{}_get", singular(&resource.name))),
-                        requires: &resource.reads_require,
-                        inputs: &id_input,
-                        body: false,
-                        takes_id: true,
-                        selection: Some(one_selection.clone()),
-                        document: None,
-                        try_at: Some(format!("{base}/r/{}", resource.name)),
-                    });
+                    if resource.faces.list {
+                        faces.push(Face {
+                            what: "List".to_owned(),
+                            rest_method: "GET",
+                            rest_path: format!("{}/{}", contract.prefix(), resource.name),
+                            graphql: Some(resource.graphql_list_field()),
+                            graphql_kind: "query",
+                            tool: Some(format!("{}_list", resource.name)),
+                            requires: &resource.reads_require,
+                            inputs: &list_inputs,
+                            body: false,
+                            takes_id: false,
+                            selection: Some(page_selection.clone()),
+                            document: None,
+                            try_at: Some(format!("{base}/r/{}", resource.name)),
+                        });
+                    }
+                    if resource.faces.get {
+                        faces.push(Face {
+                            what: "Get one".to_owned(),
+                            rest_method: "GET",
+                            rest_path: format!("{}/{}/{{{identity}}}", contract.prefix(), resource.name),
+                            graphql: Some(resource.graphql_get_field()),
+                            graphql_kind: "query",
+                            tool: Some(format!("{}_get", singular(&resource.name))),
+                            requires: &resource.reads_require,
+                            // The identity is a declared input here, so
+                            // nothing adds an `id` beside it.
+                            inputs: &id_input,
+                            body: false,
+                            takes_id: false,
+                            selection: Some(one_selection.clone()),
+                            document: None,
+                            try_at: Some(format!("{base}/r/{}", resource.name)),
+                        });
+                    }
                     if resource.watchable {
                         faces.push(Face {
                             what: "Watch".to_owned(),
@@ -864,7 +884,9 @@ impl ConsoleRouter {
                         // A sub-collection hangs off its parent, so
                         // naming the parent type locates it without
                         // saying what to send. The nested document
-                        // does.
+                        // does, through the parent's getter and under
+                        // the field name the schema gives it. A parent
+                        // with no getter has no such document.
                         let sub_fields: Vec<&str> = sub
                             .fields
                             .iter()
@@ -874,20 +896,20 @@ impl ConsoleRouter {
                         faces.push(Face {
                             what: humanize(&sub.name),
                             rest_method: "GET",
-                            rest_path: format!("/v1/{}/{{id}}/{}", resource.name, sub.name),
+                            rest_path: format!("{}/{}/{{{identity}}}/{}", contract.prefix(), resource.name, sub.name),
                             graphql: None,
                             graphql_kind: "query",
-                            tool: None,
+                            tool: Some(format!("{}_{}_list", singular(&resource.name), sub.name)),
                             requires: &resource.reads_require,
                             inputs: &id_input,
                             body: false,
-                            takes_id: true,
+                            takes_id: false,
                             selection: None,
-                            document: Some(format!(
-                                "query {{\n  {}(id: \"<id>\") {{\n    {}(limit: {}) {{\n      \
+                            document: resource.faces.get.then(|| format!(
+                                "query {{\n  {}({identity}: \"<{identity}>\") {{\n    {}(limit: {}) {{\n      \
                                  items {{\n        {}\n      }}\n      nextCursor\n    }}\n  }}\n}}",
                                 resource.graphql_get_field(),
-                                sub.name,
+                                sub.graphql_field(),
                                 sub.max_page_size,
                                 sub_fields.join("\n        "),
                             )),
@@ -904,7 +926,7 @@ impl ConsoleRouter {
                                 "DELETE" => "DELETE",
                                 _ => "POST",
                             },
-                            rest_path: format!("/v1/{}{}", resource.name, action.path),
+                            rest_path: format!("{}/{}{}", contract.prefix(), resource.name, action.path),
                             graphql: Some(action.graphql_field_name(resource)),
                             graphql_kind: "mutation",
                             tool: Some(format!("{}_{}", singular(&resource.name), action.name)),
@@ -1114,9 +1136,15 @@ impl ConsoleRouter {
             }
         }
         let filter_state = args.filters.clone();
-        let output = match self.dispatcher.list(name, ctx, args).await {
-            Ok(output) => output,
-            Err(error) => return self.refusal_page(&error),
+        // A resource that withholds its listing still carries its
+        // collection actions, so the page renders them with no table.
+        let listed = if resource.faces.list {
+            match self.dispatcher.list(name, ctx, args).await {
+                Ok(output) => Some(output),
+                Err(error) => return self.refusal_page(&error),
+            }
+        } else {
+            None
         };
         // The id is the instance's address and every wire row carries
         // one whether or not the declaration lists it, so it leads the
@@ -1197,45 +1225,52 @@ impl ConsoleRouter {
                     button { "Narrow" }
                 }
             }
-            div.scroll {
-              table {
-                thead { tr { @for column in &columns { th { (humanize(column)) } } } }
-                tbody {
-                    @for item in &output.items {
-                        tr {
-                            @for column in &columns {
-                                td {
-                                    @if column == "id" {
-                                        @if let Some(id) = item.get("id").and_then(Value::as_str) {
-                                            a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) title=(id) {
-                                                (shorten_id(id))
-                                            }
-                                        } @else { (cell(column, item.get(column.as_str()))) }
-                                    } @else {
-                                        (cell(column, item.get(column.as_str())))
+            @if let Some(output) = &listed {
+                div.scroll {
+                  table {
+                    thead { tr { @for column in &columns { th { (humanize(column)) } } } }
+                    tbody {
+                        @for item in &output.items {
+                            tr {
+                                @for column in &columns {
+                                    td {
+                                        // A row links to its page only
+                                        // when the resource has a getter
+                                        // to fill it.
+                                        @if column == "id" && resource.faces.get {
+                                            @if let Some(id) = item.get("id").and_then(Value::as_str) {
+                                                a href=(format!("{}/r/{}/{}", self.config.base, name, encode(id))) title=(id) {
+                                                    (shorten_id(id))
+                                                }
+                                            } @else { (cell(column, item.get(column.as_str()))) }
+                                        } @else {
+                                            (cell(column, item.get(column.as_str())))
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                  }
                 }
-              }
-            }
-            @if output.items.is_empty() {
-                p.dim { "Nothing here yet. Anything created below shows up in this list." }
-            } @else {
-                p.count {
-                    (output.items.len())
-                    @if output.items.len() == 1 { " row" } @else { " rows" }
-                    @if output.next_cursor.is_some() { ", more after these" }
-                }
-            }
-            @if let Some(cursor) = &output.next_cursor {
-                p {
-                    a href=(format!("{}/r/{}?cursor={}", self.config.base, name, encode(cursor))) {
-                        "older"
+                @if output.items.is_empty() {
+                    p.dim { "Nothing here yet. Anything created below shows up in this list." }
+                } @else {
+                    p.count {
+                        (output.items.len())
+                        @if output.items.len() == 1 { " row" } @else { " rows" }
+                        @if output.next_cursor.is_some() { ", more after these" }
                     }
                 }
+                @if let Some(cursor) = &output.next_cursor {
+                    p {
+                        a href=(format!("{}/r/{}?cursor={}", self.config.base, name, encode(cursor))) {
+                            "older"
+                        }
+                    }
+                }
+            } @else {
+                p.dim { "The contract withholds this listing." }
             }
         };
         self.shell_at(200, name, Some(name), body)
@@ -1455,17 +1490,11 @@ impl ConsoleRouter {
         self.shell(200, action, body)
     }
 
+    /// A refusal answers with the status the error itself carries, the
+    /// one the REST face gives it. The console kept a table of its own
+    /// and answered 500 for an oversized payload.
     fn refusal_page(&self, error: &KayakError) -> ConsoleAnswer {
-        let status = match error {
-            KayakError::BadRequest(_) => 400,
-            KayakError::Unauthorized(_) => 401,
-            KayakError::Forbidden(_) => 403,
-            KayakError::NotFound => 404,
-            KayakError::Conflict(_) => 409,
-            KayakError::TooManyRequests(_) => 429,
-            _ => 500,
-        };
-        self.error_page(status, &error.to_string())
+        self.error_page(error.status(), &error.to_string())
     }
 
     fn error_page(&self, status: u16, message: &str) -> ConsoleAnswer {
@@ -1753,8 +1782,8 @@ fn preview_line(preview: &Preview, item: &Value) -> Markup {
 /// One console page, frame and all.
 ///
 /// A host renders pages of its own beside the generated ones, and a
-/// second implementation of the frame is a second console: copal's
-/// deployment page kept its own markup and stayed on the old layout
+/// second implementation of the frame is a second console: a file
+/// service's deployment page kept its own markup and stayed on the old layout
 /// after every generated page moved, which is the same failure the
 /// stylesheet had before it was shared.
 ///
@@ -1968,12 +1997,15 @@ fn declared_type(kind: TypeRef) -> &'static str {
 
 /// A placeholder that shows the type rather than pretending to be a
 /// value, since a caller copying this has to substitute anyway.
-fn sample(field: &ActionField) -> String {
+///
+/// `listed` says the face publishes several of a set as an array, as
+/// the OpenAPI body and the MCP manifest do. GraphQL declares a string.
+fn sample(field: &ActionField, listed: bool) -> String {
     if let Some(first) = field.options.first() {
-        return if field.multiple {
-            format!("\"{}\"", field.options.join(","))
-        } else {
-            format!("\"{first}\"")
+        return match (field.multiple, listed) {
+            (true, true) => format!("[\"{}\"]", field.options.join("\", \"")),
+            (true, false) => format!("\"{}\"", field.options.join(",")),
+            (false, _) => format!("\"{first}\""),
         };
     }
     match field.kind {
@@ -2001,7 +2033,7 @@ impl Face<'_> {
             } else {
                 out.push_str("\n{\n");
                 for (index, field) in carried.iter().enumerate() {
-                    out.push_str(&format!("  \"{}\": {}", field.name, sample(field)));
+                    out.push_str(&format!("  \"{}\": {}", field.name, sample(field, true)));
                     if index + 1 < carried.len() {
                         out.push(',');
                     }
@@ -2014,7 +2046,18 @@ impl Face<'_> {
                 .inputs
                 .iter()
                 .filter(|f| !self.rest_path.contains(&format!("{{{}}}", f.name)))
-                .map(|f| format!("{}={}", f.name, sample(f).trim_matches('"')))
+                // Several of a set repeats its key, the form the
+                // OpenAPI document describes.
+                .flat_map(|f| {
+                    if f.multiple {
+                        f.options
+                            .iter()
+                            .map(|o| format!("{}={o}", f.name))
+                            .collect()
+                    } else {
+                        vec![format!("{}={}", f.name, sample(f, false).trim_matches('"'))]
+                    }
+                })
                 .collect();
             out.push_str(&format!("{} {}", self.rest_method, self.rest_path));
             if !query.is_empty() {
@@ -2042,7 +2085,7 @@ impl Face<'_> {
         arguments.extend(
             self.inputs
                 .iter()
-                .map(|f| format!("{}: {}", camel(&f.name), sample(f))),
+                .map(|f| format!("{}: {}", camel(&f.name), sample(f, false))),
         );
         let call = if arguments.is_empty() {
             field.clone()
@@ -2112,7 +2155,7 @@ impl Face<'_> {
         arguments.extend(
             self.inputs
                 .iter()
-                .map(|f| format!("    \"{}\": {}", f.name, sample(f))),
+                .map(|f| format!("    \"{}\": {}", f.name, sample(f, true))),
         );
         Some(format!(
             "{{\n  \"name\": \"{tool}\",\n  \"arguments\": {{\n{}\n  }}\n}}",

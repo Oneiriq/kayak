@@ -1,8 +1,11 @@
 # Generators and the CLI
 
 One contract and one schema produce seven artifacts by default, and two
-more on request. Every generator validates first; an invalid contract
-refuses with each violation named.
+more on request. Every target validates first, and an invalid contract
+refuses with each violation named. The MCP manifest and the engine policy
+read only the contract, so their own library functions
+(`generate_mcp_tools`, `derive_policy`) take no schema and cannot validate.
+`generate_all` and the CLI validate before rendering them.
 
 | Target | File | Contents |
 | --- | --- | --- |

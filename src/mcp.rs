@@ -9,19 +9,25 @@
 //! artifact, and the drift gate refuses until the change is blessed.
 //!
 //! Tool names are deterministic: `{resource}_list`, `{singular}_get`,
-//! the action's snake form, and a query's own name. Scope and rate
-//! declarations ride each tool as annotations, so a serving runtime
-//! can enforce them and an agent can read what a call will cost
-//! before making it.
+//! `{singular}_{sub}_list` for a sub-collection, the action's snake
+//! form, and a query's own name. Scope and rate declarations ride each
+//! tool as annotations, so a serving runtime can enforce them and an
+//! agent can read what a call will cost before making it.
+
+use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-use crate::ir::{ActionOutput, Contract, Query, Resource, TypeRef};
+use crate::ir::{ActionOutput, Contract, Query, Resource, SubResource, TypeRef};
 use crate::naming::singular;
 use crate::openapi::{addressed_identity, GenerateError};
 
 /// The manifest: every tool the contract implies, in MCP's
 /// `tools/list` shape.
+///
+/// It reads only the contract and so takes no schema to validate
+/// against. Validate first with [`crate::validate()`], or generate
+/// through [`crate::generate_all`], which does.
 pub fn generate_mcp_tools(contract: &Contract) -> Result<Value, GenerateError> {
     let mut tools = Vec::new();
     for resource in &contract.resources {
@@ -30,6 +36,9 @@ pub fn generate_mcp_tools(contract: &Contract) -> Result<Value, GenerateError> {
         }
         if resource.faces.get {
             tools.push(get_tool(resource)?);
+        }
+        for sub in &resource.sub_resources {
+            tools.push(sub_list_tool(resource, sub)?);
         }
         for action in &resource.actions {
             tools.push(action_tool(resource, action));
@@ -63,37 +72,56 @@ fn type_schema(kind: TypeRef) -> Value {
     }
 }
 
-fn list_tool(resource: &Resource) -> Value {
-    let mut properties = Map::new();
+/// The paging, filter, and sort inputs a listing takes, added after
+/// whatever `properties` already holds.
+fn page_properties(
+    properties: &mut Map<String, Value>,
+    max_page_size: u32,
+    filterable: &[String],
+    filter_options: Option<&BTreeMap<String, Vec<String>>>,
+    sortable: &[String],
+) {
     properties.insert(
         "limit".to_owned(),
         json!({
             "type": "integer",
-            "description": format!("Rows per page, at most {}.", resource.max_page_size),
+            "description": format!("Rows per page, at most {max_page_size}."),
         }),
     );
     properties.insert(
         "cursor".to_owned(),
         json!({ "type": "string", "description": "Resume from a previous page." }),
     );
-    for column in &resource.filterable {
-        properties.insert(
-            column.clone(),
-            json!({ "type": "string", "description": format!("Filter by {column}.") }),
-        );
+    for column in filterable {
+        let mut schema = json!({ "type": "string", "description": format!("Filter by {column}.") });
+        if let Some(options) = filter_options.and_then(|options| options.get(column)) {
+            schema["enum"] = json!(options);
+        }
+        properties.insert(column.clone(), schema);
     }
-    if !resource.sortable.is_empty() {
+    if !sortable.is_empty() {
         properties.insert(
             "sort".to_owned(),
             json!({
                 "type": "string",
                 "description": format!(
                     "Sort column, one of: {}. Suffix with :desc for newest first.",
-                    resource.sortable.join(", "),
+                    sortable.join(", "),
                 ),
             }),
         );
     }
+}
+
+fn list_tool(resource: &Resource) -> Value {
+    let mut properties = Map::new();
+    page_properties(
+        &mut properties,
+        resource.max_page_size,
+        &resource.filterable,
+        Some(&resource.filter_options),
+        &resource.sortable,
+    );
     json!({
         "name": format!("{}_list", resource.name),
         "description": format!("List {} for the authenticated tenant.", resource.name),
@@ -114,6 +142,44 @@ fn get_tool(resource: &Resource) -> Result<Value, GenerateError> {
         "inputSchema": {
             "type": "object",
             "properties": { identity: { "type": "string" } },
+            "required": [identity],
+            "additionalProperties": false,
+        },
+        "annotations": annotations(&resource.reads_require, resource.rate_class.as_deref()),
+    }))
+}
+
+/// A sub-collection pages like a listing, reached through one parent:
+/// the parent's identity is the one required input. It is read under
+/// the parent's scopes and metered by the parent's rate class, as the
+/// dispatcher reads it.
+fn sub_list_tool(resource: &Resource, sub: &SubResource) -> Result<Value, GenerateError> {
+    let identity = addressed_identity(resource)?;
+    let one = singular(&resource.name);
+    let mut properties = Map::new();
+    properties.insert(
+        identity.to_owned(),
+        json!({
+            "type": "string",
+            "description": format!("The {one} whose {} to list.", sub.name),
+        }),
+    );
+    page_properties(
+        &mut properties,
+        sub.max_page_size,
+        &sub.filterable,
+        None,
+        &sub.sortable,
+    );
+    Ok(json!({
+        "name": format!("{one}_{}_list", sub.name),
+        "description": sub
+            .description
+            .clone()
+            .unwrap_or_else(|| format!("List the {} of one of {}.", sub.name, resource.name)),
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
             "required": [identity],
             "additionalProperties": false,
         },
@@ -215,7 +281,7 @@ mod tests {
 
     fn contract() -> Contract {
         Contract {
-            name: "copal".into(),
+            name: "probe".into(),
             version: "0.1.0".into(),
             ir_revision: 1,
             api_prefix: "/v1".into(),
@@ -290,6 +356,52 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, ["files_list", "file_get", "file_remove", "search"]);
+    }
+
+    /// A sub-collection is a tool beside its parent's listing and
+    /// getter, as it is a path in the OpenAPI document and a method in
+    /// every client. It takes the parent's identity and pages under
+    /// the parent's scopes and rate class.
+    #[test]
+    fn a_sub_collection_becomes_a_tool() {
+        let mut contract = contract();
+        contract.resources[0].identity = crate::ir::Identity::Column("key".into());
+        contract.resources[0].sub_resources = vec![SubResource {
+            name: "versions".into(),
+            table: "file_version".into(),
+            parent_key: "file".into(),
+            identity: Default::default(),
+            fields: vec![FieldExposure::column("number")],
+            pinned: vec![],
+            filterable: vec!["state".into()],
+            sortable: vec!["created_at".into()],
+            max_page_size: 20,
+            description: None,
+            graphql: None,
+        }];
+        let manifest = generate_mcp_tools(&contract).unwrap();
+        let tools = manifest["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "files_list",
+                "file_get",
+                "file_versions_list",
+                "file_remove",
+                "search"
+            ],
+        );
+        let versions = &tools[2];
+        let properties: Vec<&String> = versions["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        assert_eq!(properties, ["key", "limit", "cursor", "state", "sort"]);
+        assert_eq!(versions["inputSchema"]["required"], json!(["key"]));
+        assert_eq!(versions["annotations"]["requiredScopes"], json!(["read"]));
+        assert_eq!(versions["annotations"]["rateClass"], "reads");
     }
 
     #[test]

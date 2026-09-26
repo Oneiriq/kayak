@@ -13,7 +13,7 @@ use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure,
             Resource, TypeRef};
 
 Contract {
-    name: "copal".into(),          // becomes the OpenAPI title
+    name: "files".into(),          // becomes the OpenAPI title
     version: "0.1.0".into(),       // the contract's own version
     ir_revision: 1,
     resources: vec![Resource {
@@ -129,7 +129,7 @@ contracts when it is.
 auth: AuthScheme::None,        // an open API: no credential, no field
 auth: AuthScheme::Bearer,      // Authorization: Bearer <token>
 auth: AuthScheme::Header {     // a named header, sent verbatim
-    name: "x-copal-tenant".into(),
+    name: "x-tenant".into(),
     credential: "tenant".into(),
 },
 ```
@@ -343,7 +343,7 @@ never going to have one.
 ### Machinery a deployment configures
 
 `optional: true` says the deployment is free not to provide this index.
-Copal is the case that needed it: its HNSW index over
+A file service is the case that needed it: its HNSW index over
 `text_chunk.embedding` is applied at startup, and only where an
 embedding model is configured, at that model's width. Declared outright,
 the claim would be false in every deployment without one. So before this

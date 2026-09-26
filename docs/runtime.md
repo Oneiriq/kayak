@@ -80,17 +80,38 @@ let resolvers = Resolvers::new()
 
 Construction is the completeness gate. A contract that declares a resource or
 action without a registered resolver refuses to build, at startup, naming the
-gap:
+gap. The faces share one dispatcher, so it lives in an `Arc`:
 
 ```rust
-let dispatcher = Dispatcher::new(contract.into(), resolvers, middleware)?;
+use std::sync::Arc;
+
+let dispatcher = Arc::new(Dispatcher::new(contract.into(), resolvers, middleware)?);
+let rest = kayak::runtime::RestRouter::new(dispatcher.clone());
 ```
+
+`RestRouter::new`, `ConsoleRouter::new`, and `build_schema` each take an
+`Arc<Dispatcher>`.
+
+A resource whose `faces` withhold its listing or its getter needs no resolver
+for that face. The runtime serves only the faces the contract declares: the
+dispatcher refuses the withheld operation, the REST router has no route for
+it, the live schema has no field for it, and the console neither lists nor
+links to it.
 
 Rows travel as `serde_json::Value` in wire shape. The dispatcher validates
 before dispatch: list limits clamp to `max_page_size`, unknown filters and
 undeclared sorts refuse, action inputs check against their declared types,
 and unknown input keys drop (the differ promises that removing an optional
 input is compatible, which only holds if servers ignore unknown fields).
+
+An input marked `multiple` takes several of its `options`. The OpenAPI
+document and the MCP manifest publish it as an array, and the runtime takes
+it in each form a caller sends: a JSON array in an action body or an MCP
+call, the key repeated in a REST query string (`?facets=a&facets=b`), or one
+comma-separated string (`?facets=a,b`), which the GraphQL schema and the
+generated clients send. Every value must be one of the options. The resolver
+reads one comma-separated string whichever form arrived, so
+`args.input["facets"]` is `"a,b"` for each of those three requests.
 
 ## Sub-resources
 
@@ -111,11 +132,12 @@ separately.
 
 ## Field guards
 
-A guard is registered by name and decides over the context,
-synchronously:
+A guard is registered by name and decides over the context and the row,
+synchronously. The row is `None` when the question comes before any row
+exists, and the guard then answers for every row at once:
 
 ```rust
-let guards = Guards::new().guard("audit_only", |ctx| {
+let guards = Guards::new().guard("audit_only", |ctx, _row| {
     ctx.get::<Principal>().is_some_and(|p| p.has("audit"))
 });
 let dispatcher = Dispatcher::with_policies(
@@ -123,7 +145,7 @@ let dispatcher = Dispatcher::with_policies(
 )?;
 ```
 
-Synchronous on purpose: guards run per operation, and a guard that
+Synchronous on purpose: guards run per field per row, and a guard that
 performed IO would turn one listing into hundreds of queries.
 Anything needing IO belongs in an auth middleware that resolves once
 into the context, where the guard can then see it.
@@ -131,19 +153,23 @@ into the context, where the guard can then see it.
 The gate runs in both directions: a declared guard nobody registered
 refuses to build (it would silently show what it was meant to hide),
 and a registered guard nothing references refuses too (dead policy
-that reads as live). Visibility is evaluated once per operation, and
-the hidden set both refuses filters and sorts before the resolver and
-projects rows after it, streamed rows included.
+that reads as live). The rowless answer is evaluated once per
+operation and refuses filters and sorts on a hidden column before the
+resolver runs. The row answer projects each row after it, streamed
+rows included.
 
 A hand-written face redacts from the same declarations through the
 projection API, which the dispatcher itself delegates to:
 
 ```rust
-let hidden = kayak::runtime::hidden_fields(&contract, "files", None, &guards, &ctx);
+let guarded = kayak::runtime::guarded_fields(&contract, "files", None, &guards);
 for row in &mut rows {
-    kayak::runtime::strip_hidden(row, &hidden);
+    kayak::runtime::strip_guarded(row, &guarded, &ctx);
 }
 ```
+
+`hidden_fields` and `strip_hidden` give the rowless answer, for a face
+that decides before it has rows.
 
 ## Rate limiting
 
@@ -227,8 +253,8 @@ over GraphQL or anything else built on the dispatcher, so policy is written
 once.
 
 ```rust
-use kayak::runtime::{BoxFuture, KayakError, Middleware, Next, Operation,
-                     Outcome, Payload};
+use kayak::runtime::{BoxFuture, KayakContext, KayakError, Middleware, Next,
+                     Operation, Outcome, Payload};
 
 struct RequireTenant;
 
@@ -258,15 +284,27 @@ Layers execute in registration order, innermost last.
 (a tenant, a principal) and readable in every layer and resolver. A missing
 context is an empty context, so context-requiring middleware fails closed.
 
-Errors carry a stable vocabulary (`KayakError::BadRequest`, `Unauthorized`,
-`Forbidden`, `NotFound`, `Conflict`, `Internal`) with HTTP status and
-machine-readable code mappings. Protocol layers translate; resolvers never
-think in protocol terms.
+Errors carry a stable vocabulary with HTTP status and machine-readable code
+mappings:
+
+| Variant | Status | Code |
+| --- | --- | --- |
+| `BadRequest` | 400 | `bad_request` |
+| `Unauthorized` | 401 | `unauthorized` |
+| `Forbidden` | 403 | `forbidden` |
+| `NotFound` | 404 | `not_found` |
+| `Conflict` | 409 | `conflict` |
+| `PayloadTooLarge` | 413 | `payload_too_large` |
+| `TooManyRequests` | 429 | `too_many_requests` |
+| `Internal` | 500 | `internal` |
+
+Protocol layers translate them, and every face answers a refusal with the
+same status. Resolvers never think in protocol terms.
 
 ## The GraphQL face
 
 ```rust
-let schema = kayak::runtime::graphql::build_schema(&tables, dispatcher)?;
+let schema = kayak::runtime::graphql::build_schema(&tables, dispatcher.clone())?;
 let response = schema.execute(
     async_graphql::Request::new(query).data(kayak_context)
 ).await;
@@ -288,7 +326,7 @@ them, so a read-only contract prints neither.
 limits and any extensions attach:
 
 ```rust
-let schema = kayak::runtime::graphql::schema_builder(&tables, dispatcher)?
+let schema = kayak::runtime::graphql::schema_builder(&tables, dispatcher.clone())?
     .limit_depth(10)
     .limit_complexity(500)
     .finish()?;

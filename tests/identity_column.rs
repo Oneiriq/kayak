@@ -293,7 +293,7 @@ fn the_identity_states_round_trip_through_the_contract_document() {
 
 /// The runtime faces over a resource keyed by `user` with a
 /// sub-collection keyed by `entry`.
-#[cfg(feature = "runtime")]
+#[cfg(any(feature = "graphql", feature = "console"))]
 mod live {
     use std::sync::{Arc, Mutex};
 

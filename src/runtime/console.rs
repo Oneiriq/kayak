@@ -807,10 +807,20 @@ impl ConsoleRouter {
                     "items {{\n      {}\n    }}\n    nextCursor",
                     shown.join("\n      "),
                 );
-                @let one_selection = format!("id\n    {}", shown.join("\n    "));
+                // An instance is addressed by its identity column, which
+                // is not always `id`, and its type carries that column as
+                // a field of its own only when the SDL synthesises it.
+                @let identity = resource.wire_identity().unwrap_or("id");
+                @let lead: Vec<&str> = resource
+                    .wire_identity()
+                    .filter(|id| !resource.fields.iter().any(|f| f.api_name() == *id))
+                    .into_iter()
+                    .chain(shown.iter().copied())
+                    .collect();
+                @let one_selection = lead.join("\n    ");
                 @let list_inputs = vec![];
                 @let id_input = vec![ActionField {
-                    name: "id".to_owned(),
+                    name: identity.to_owned(),
                     kind: TypeRef::String,
                     required: true,
                     multiple: false,
@@ -840,14 +850,16 @@ impl ConsoleRouter {
                         faces.push(Face {
                             what: "Get one".to_owned(),
                             rest_method: "GET",
-                            rest_path: format!("{}/{}/{{id}}", contract.prefix(), resource.name),
+                            rest_path: format!("{}/{}/{{{identity}}}", contract.prefix(), resource.name),
                             graphql: Some(resource.graphql_get_field()),
                             graphql_kind: "query",
                             tool: Some(format!("{}_get", singular(&resource.name))),
                             requires: &resource.reads_require,
+                            // The identity is a declared input here, so
+                            // nothing adds an `id` beside it.
                             inputs: &id_input,
                             body: false,
-                            takes_id: true,
+                            takes_id: false,
                             selection: Some(one_selection.clone()),
                             document: None,
                             try_at: Some(format!("{base}/r/{}", resource.name)),
@@ -874,7 +886,9 @@ impl ConsoleRouter {
                         // A sub-collection hangs off its parent, so
                         // naming the parent type locates it without
                         // saying what to send. The nested document
-                        // does.
+                        // does, through the parent's getter and under
+                        // the field name the schema gives it. A parent
+                        // with no getter has no such document.
                         let sub_fields: Vec<&str> = sub
                             .fields
                             .iter()
@@ -884,20 +898,20 @@ impl ConsoleRouter {
                         faces.push(Face {
                             what: humanize(&sub.name),
                             rest_method: "GET",
-                            rest_path: format!("{}/{}/{{id}}/{}", contract.prefix(), resource.name, sub.name),
+                            rest_path: format!("{}/{}/{{{identity}}}/{}", contract.prefix(), resource.name, sub.name),
                             graphql: None,
                             graphql_kind: "query",
                             tool: None,
                             requires: &resource.reads_require,
                             inputs: &id_input,
                             body: false,
-                            takes_id: true,
+                            takes_id: false,
                             selection: None,
-                            document: Some(format!(
-                                "query {{\n  {}(id: \"<id>\") {{\n    {}(limit: {}) {{\n      \
+                            document: resource.faces.get.then(|| format!(
+                                "query {{\n  {}({identity}: \"<{identity}>\") {{\n    {}(limit: {}) {{\n      \
                                  items {{\n        {}\n      }}\n      nextCursor\n    }}\n  }}\n}}",
                                 resource.graphql_get_field(),
-                                sub.name,
+                                sub.graphql_field(),
                                 sub.max_page_size,
                                 sub_fields.join("\n        "),
                             )),

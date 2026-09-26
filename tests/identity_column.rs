@@ -291,90 +291,142 @@ fn the_identity_states_round_trip_through_the_contract_document() {
     assert_eq!(parsed.resources[0].identity, Identity::Id);
 }
 
-/// The live schema names rows the way the SDL does. The type carries
-/// `user` and no `id`, the get field takes `user`, and a sub-collection
-/// is reached with the parent's `user`. The served schema used to carry
-/// `id` in all three places, so a query written against the SDL failed
-/// on the server.
-#[cfg(feature = "graphql")]
-#[tokio::test]
-async fn the_live_schema_addresses_rows_by_their_identity() {
+/// The runtime faces over a resource keyed by `user` with a
+/// sub-collection keyed by `entry`.
+#[cfg(feature = "runtime")]
+mod live {
     use std::sync::{Arc, Mutex};
 
-    use kayak::runtime::graphql::build_schema;
     use kayak::runtime::{
         Dispatcher, GetArgs, KayakContext, ListArgs, ListOutput, Resolvers, SubListArgs,
     };
     use kayak::SubResource;
 
-    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
-    let mut tables = schema();
-    tables.push(
-        table_schema("presence_entry")
-            .with_mode(TableMode::Schemafull)
-            .with_fields([
-                built(string_field("presence")),
-                built(string_field("entry")),
-                built(string_field("note")),
-            ])
-            .with_indexes([index("presence_entry_idx", ["presence"])]),
-    );
-    let mut contract = contract(Identity::Column("user".into()));
-    contract.resources[0].sub_resources = vec![SubResource {
-        name: "entries".into(),
-        table: "presence_entry".into(),
-        parent_key: "presence".into(),
-        identity: Identity::Column("entry".into()),
-        fields: vec![FieldExposure::column("note")],
-        pinned: vec![],
-        filterable: vec![],
-        sortable: vec![],
-        max_page_size: 20,
-        description: None,
-        graphql: None,
-    }];
-    assert!(validate(&contract, &tables).is_empty());
+    use super::*;
 
-    let parents: Arc<Mutex<Vec<String>>> = Arc::default();
-    let seen = parents.clone();
-    let resolvers = Resolvers::new()
-        .list("presences", |_ctx, _args: ListArgs| async move {
-            Ok(ListOutput::default())
-        })
-        .get("presences", |_ctx, args: GetArgs| async move {
-            Ok(Some(
-                serde_json::json!({ "user": args.id, "status": "online" }),
-            ))
-        })
-        .sub_list("presences", "entries", move |_ctx, args: SubListArgs| {
-            seen.lock().unwrap().push(args.parent_id.clone());
-            async move {
-                Ok(ListOutput {
-                    items: vec![serde_json::json!({ "entry": "e1", "note": "hi" })],
-                    next_cursor: None,
-                })
-            }
-        });
-    let dispatcher = Dispatcher::new(Arc::new(contract), resolvers, vec![]).unwrap();
-    let schema = build_schema(&tables, Arc::new(dispatcher)).unwrap();
+    fn tables() -> Vec<TableDefinition> {
+        let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+        let mut tables = schema();
+        tables.push(
+            table_schema("presence_entry")
+                .with_mode(TableMode::Schemafull)
+                .with_fields([
+                    built(string_field("presence")),
+                    built(string_field("entry")),
+                    built(string_field("note")),
+                ])
+                .with_indexes([index("presence_entry_idx", ["presence"])]),
+        );
+        tables
+    }
 
-    let sdl = schema.sdl();
-    assert!(sdl.contains("presence(user: ID!)"), "{sdl}");
-    assert!(sdl.contains("user: ID!"), "{sdl}");
-    assert!(sdl.contains("entry: ID!"), "{sdl}");
-    assert!(!sdl.contains(" id: ID!"), "no phantom id: {sdl}");
+    /// The parent ids the sub-collection resolver was handed.
+    type Parents = Arc<Mutex<Vec<String>>>;
 
-    let response = schema
-        .execute(
-            async_graphql::Request::new(
-                r#"{ presence(user: "u1") { user status entries { items { entry note } } } }"#,
+    fn dispatcher() -> (Arc<Dispatcher>, Parents) {
+        let mut contract = contract(Identity::Column("user".into()));
+        contract.resources[0].sub_resources = vec![SubResource {
+            name: "log_entries".into(),
+            table: "presence_entry".into(),
+            parent_key: "presence".into(),
+            identity: Identity::Column("entry".into()),
+            fields: vec![FieldExposure::column("note")],
+            pinned: vec![],
+            filterable: vec![],
+            sortable: vec![],
+            max_page_size: 20,
+            description: None,
+            graphql: None,
+        }];
+        assert!(validate(&contract, &tables()).is_empty());
+
+        let parents: Parents = Arc::default();
+        let seen = parents.clone();
+        let resolvers = Resolvers::new()
+            .list("presences", |_ctx, _args: ListArgs| async move {
+                Ok(ListOutput::default())
+            })
+            .get("presences", |_ctx, args: GetArgs| async move {
+                Ok(Some(
+                    serde_json::json!({ "user": args.id, "status": "online" }),
+                ))
+            })
+            .sub_list(
+                "presences",
+                "log_entries",
+                move |_ctx, args: SubListArgs| {
+                    seen.lock().unwrap().push(args.parent_id.clone());
+                    async move {
+                        Ok(ListOutput {
+                            items: vec![serde_json::json!({ "entry": "e1", "note": "hi" })],
+                            next_cursor: None,
+                        })
+                    }
+                },
+            );
+        let dispatcher = Dispatcher::new(Arc::new(contract), resolvers, vec![]).unwrap();
+        (Arc::new(dispatcher), parents)
+    }
+
+    /// The live schema names rows the way the SDL does. The type
+    /// carries `user` and no `id`, the get field takes `user`, and a
+    /// sub-collection is reached with the parent's `user`. The served
+    /// schema used to carry `id` in all three places, so a query
+    /// written against the SDL failed on the server.
+    #[cfg(feature = "graphql")]
+    #[tokio::test]
+    async fn the_live_schema_addresses_rows_by_their_identity() {
+        let (dispatcher, parents) = dispatcher();
+        let schema = kayak::runtime::graphql::build_schema(&tables(), dispatcher).unwrap();
+
+        let sdl = schema.sdl();
+        assert!(sdl.contains("presence(user: ID!)"), "{sdl}");
+        assert!(sdl.contains("user: ID!"), "{sdl}");
+        assert!(sdl.contains("entry: ID!"), "{sdl}");
+        assert!(!sdl.contains(" id: ID!"), "no phantom id: {sdl}");
+
+        let response = schema
+            .execute(
+                async_graphql::Request::new(
+                    r#"{ presence(user: "u1") { user status logEntries { items { entry note } } } }"#,
+                )
+                .data(KayakContext::new()),
             )
-            .data(KayakContext::new()),
-        )
-        .await;
-    assert!(response.errors.is_empty(), "{:?}", response.errors);
-    let data = response.data.into_json().unwrap();
-    assert_eq!(data["presence"]["user"], "u1");
-    assert_eq!(data["presence"]["entries"]["items"][0]["entry"], "e1");
-    assert_eq!(*parents.lock().unwrap(), ["u1"], "the parent's own user");
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.into_json().unwrap();
+        assert_eq!(data["presence"]["user"], "u1");
+        assert_eq!(data["presence"]["logEntries"]["items"][0]["entry"], "e1");
+        assert_eq!(*parents.lock().unwrap(), ["u1"], "the parent's own user");
+    }
+
+    /// The console reference writes the requests the other faces
+    /// serve: the path binds `user`, the GraphQL documents take `user`,
+    /// and the sub-collection is reached under the field name the
+    /// schema gives it rather than its contract name.
+    #[cfg(feature = "console")]
+    #[tokio::test]
+    async fn the_console_reference_addresses_rows_by_their_identity() {
+        use kayak::runtime::{ConsoleConfig, ConsoleRouter};
+
+        let (dispatcher, _) = dispatcher();
+        let console = ConsoleRouter::new(
+            dispatcher,
+            ConsoleConfig {
+                base: "/console".to_owned(),
+                title: "test".to_owned(),
+            },
+        );
+        let page = console.page("/reference", "", KayakContext::new()).await;
+        let html = page.html;
+        assert!(html.contains("GET /v1/presences/{user}<"), "{html}");
+        assert!(
+            html.contains("GET /v1/presences/{user}/log_entries"),
+            "{html}"
+        );
+        assert!(html.contains("presence(user: "), "{html}");
+        assert!(html.contains("logEntries(limit: 20)"), "{html}");
+        assert!(!html.contains("log_entries(limit"), "{html}");
+        assert!(!html.contains("(id: "), "{html}");
+    }
 }

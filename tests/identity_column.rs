@@ -290,3 +290,91 @@ fn the_identity_states_round_trip_through_the_contract_document() {
     let parsed: Contract = serde_json::from_value(document).expect("parses");
     assert_eq!(parsed.resources[0].identity, Identity::Id);
 }
+
+/// The live schema names rows the way the SDL does. The type carries
+/// `user` and no `id`, the get field takes `user`, and a sub-collection
+/// is reached with the parent's `user`. The served schema used to carry
+/// `id` in all three places, so a query written against the SDL failed
+/// on the server.
+#[cfg(feature = "graphql")]
+#[tokio::test]
+async fn the_live_schema_addresses_rows_by_their_identity() {
+    use std::sync::{Arc, Mutex};
+
+    use kayak::runtime::graphql::build_schema;
+    use kayak::runtime::{
+        Dispatcher, GetArgs, KayakContext, ListArgs, ListOutput, Resolvers, SubListArgs,
+    };
+    use kayak::SubResource;
+
+    let built = |b: surql::schema::FieldBuilder| b.build_unchecked().unwrap();
+    let mut tables = schema();
+    tables.push(
+        table_schema("presence_entry")
+            .with_mode(TableMode::Schemafull)
+            .with_fields([
+                built(string_field("presence")),
+                built(string_field("entry")),
+                built(string_field("note")),
+            ])
+            .with_indexes([index("presence_entry_idx", ["presence"])]),
+    );
+    let mut contract = contract(Identity::Column("user".into()));
+    contract.resources[0].sub_resources = vec![SubResource {
+        name: "entries".into(),
+        table: "presence_entry".into(),
+        parent_key: "presence".into(),
+        identity: Identity::Column("entry".into()),
+        fields: vec![FieldExposure::column("note")],
+        pinned: vec![],
+        filterable: vec![],
+        sortable: vec![],
+        max_page_size: 20,
+        description: None,
+        graphql: None,
+    }];
+    assert!(validate(&contract, &tables).is_empty());
+
+    let parents: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = parents.clone();
+    let resolvers = Resolvers::new()
+        .list("presences", |_ctx, _args: ListArgs| async move {
+            Ok(ListOutput::default())
+        })
+        .get("presences", |_ctx, args: GetArgs| async move {
+            Ok(Some(
+                serde_json::json!({ "user": args.id, "status": "online" }),
+            ))
+        })
+        .sub_list("presences", "entries", move |_ctx, args: SubListArgs| {
+            seen.lock().unwrap().push(args.parent_id.clone());
+            async move {
+                Ok(ListOutput {
+                    items: vec![serde_json::json!({ "entry": "e1", "note": "hi" })],
+                    next_cursor: None,
+                })
+            }
+        });
+    let dispatcher = Dispatcher::new(Arc::new(contract), resolvers, vec![]).unwrap();
+    let schema = build_schema(&tables, Arc::new(dispatcher)).unwrap();
+
+    let sdl = schema.sdl();
+    assert!(sdl.contains("presence(user: ID!)"), "{sdl}");
+    assert!(sdl.contains("user: ID!"), "{sdl}");
+    assert!(sdl.contains("entry: ID!"), "{sdl}");
+    assert!(!sdl.contains(" id: ID!"), "no phantom id: {sdl}");
+
+    let response = schema
+        .execute(
+            async_graphql::Request::new(
+                r#"{ presence(user: "u1") { user status entries { items { entry note } } } }"#,
+            )
+            .data(KayakContext::new()),
+        )
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(data["presence"]["user"], "u1");
+    assert_eq!(data["presence"]["entries"]["items"][0]["entry"], "e1");
+    assert_eq!(*parents.lock().unwrap(), ["u1"], "the parent's own user");
+}

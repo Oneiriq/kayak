@@ -77,13 +77,7 @@ pub struct ListOutput {
 /// Clamp and check list arguments against the resource's declarations.
 pub(crate) fn validate_list(resource: &Resource, args: &mut ListArgs) -> Result<(), KayakError> {
     args.limit = args.limit.clamp(1, resource.max_page_size);
-    for column in args.filters.keys() {
-        if !resource.filterable.iter().any(|c| c == column) {
-            return Err(KayakError::BadRequest(format!(
-                "filtering on {column} is not allowed",
-            )));
-        }
-    }
+    check_filters(resource, &args.filters)?;
     if let Some((column, _)) = &args.sort {
         if !resource.sortable.iter().any(|c| c == column) {
             return Err(KayakError::BadRequest(format!(
@@ -135,10 +129,33 @@ pub(crate) fn validate_watch(resource: &Resource, args: &WatchArgs) -> Result<()
             resource.name,
         )));
     }
-    for column in args.filters.keys() {
+    check_filters(resource, &args.filters)
+}
+
+/// Refuse a filter on an undeclared column, or a value outside the
+/// column's declared set.
+///
+/// `filter_options` makes the promise an input's `options` makes, at
+/// the other place a caller supplies a value, so it is held the same
+/// way: here, ahead of the resolver, on every face at once.
+fn check_filters(
+    resource: &Resource,
+    filters: &BTreeMap<String, serde_json::Value>,
+) -> Result<(), KayakError> {
+    for (column, value) in filters {
         if !resource.filterable.iter().any(|c| c == column) {
             return Err(KayakError::BadRequest(format!(
                 "filtering on {column} is not allowed",
+            )));
+        }
+        let (Some(options), Some(text)) = (resource.filter_options.get(column), value.as_str())
+        else {
+            continue;
+        };
+        if !options.iter().any(|option| option == text) {
+            return Err(KayakError::BadRequest(format!(
+                "filter {column} takes one of {}",
+                options.join(", "),
             )));
         }
     }

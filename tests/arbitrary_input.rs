@@ -7,6 +7,10 @@
 //! characters over an alphabet of one-, two-, three- and four-byte
 //! characters plus the punctuation the parsers look for. Exhaustive
 //! and deterministic, so a failure names an input rather than a seed.
+//!
+//! Every case here drives the console's `cell`, so the file compiles
+//! only where the console does.
+#![cfg(feature = "console")]
 
 use kayak::runtime::cell;
 use serde_json::Value;

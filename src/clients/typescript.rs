@@ -232,7 +232,7 @@ fn ts_interface(
     // The identity column -- when the rows name themselves at all, and
     // unless the resource exposes it as a field.
     if let Some(identity) = identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id)) {
-        wln!(out, "  {identity}: string");
+        wln!(out, "  {}: string", ts_property(identity));
     }
     for exposure in fields {
         let field = column(table, &exposure.column)?;
@@ -249,7 +249,14 @@ fn ts_interface(
         } else {
             ""
         };
-        wln!(out, "  {}{optional}: {base}", camel(exposure.api_name()));
+        // The wire name, verbatim. The interface types a parsed JSON
+        // body, and `JSON.parse` does not rename keys: a camelCased
+        // `createdAt` here describes a property no response carries.
+        wln!(
+            out,
+            "  {}{optional}: {base}",
+            ts_property(exposure.api_name())
+        );
     }
     wln!(out, "}}\n");
     wln!(out, "export interface {name}Page {{");
@@ -257,4 +264,21 @@ fn ts_interface(
     wln!(out, "  next_cursor?: string | null");
     wln!(out, "}}\n");
     Ok(())
+}
+
+/// A property name as TypeScript must spell it to match the wire:
+/// bare when it is an identifier, quoted when it is not (a nested
+/// column such as `meta.size`). Keywords need no escaping here --
+/// `type: string` is a legal property.
+fn ts_property(name: &str) -> String {
+    let mut chars = name.chars();
+    let bare = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    if bare {
+        name.to_owned()
+    } else {
+        format!("'{name}'")
+    }
 }

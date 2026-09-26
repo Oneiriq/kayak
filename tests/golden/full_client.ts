@@ -4,11 +4,11 @@ export interface File {
   id: string
   path: string
   state: string
-  contentType: string
+  content_type: string
   size?: number
   digest?: string
   metadata: unknown
-  createdAt: string
+  created_at: string
 }
 
 export interface FilePage {

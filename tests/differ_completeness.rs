@@ -37,7 +37,9 @@ fn base() -> Contract {
             pinned: vec!["tenant_id".into()],
             pinned_either: vec![],
             filterable: vec!["state".into()],
-            filter_options: Default::default(),
+            filter_options: [("state".to_owned(), vec!["live".into(), "deleted".into()])]
+                .into_iter()
+                .collect(),
             faces: Default::default(),
             sortable: vec!["created_at".into()],
             max_page_size: 100,
@@ -162,6 +164,24 @@ fn taking_something_away() -> Vec<Mutation> {
         (
             "the page ceiling is lower",
             Box::new(|c: &mut Contract| c.resources[0].max_page_size = 10),
+        ),
+        (
+            "a filter's closed set lost a value",
+            Box::new(|c: &mut Contract| {
+                c.resources[0]
+                    .filter_options
+                    .get_mut("state")
+                    .unwrap()
+                    .retain(|v| v == "live")
+            }),
+        ),
+        (
+            "a sub-collection sort is gone",
+            Box::new(|c: &mut Contract| c.resources[0].sub_resources[0].sortable.clear()),
+        ),
+        (
+            "a sub-collection page ceiling is lower",
+            Box::new(|c: &mut Contract| c.resources[0].sub_resources[0].max_page_size = 10),
         ),
         (
             "a resource stopped being watchable",
@@ -423,6 +443,117 @@ fn additions_are_compatible() {
         "additions read as breaking: {breaking:?}"
     );
     assert!(!changes.is_empty(), "and they are still reported");
+}
+
+/// Each entry adds something and takes nothing away.
+fn adding_something() -> Vec<Mutation> {
+    vec![
+        (
+            "a filter is added",
+            Box::new(|c: &mut Contract| c.resources[0].filterable.push("path".into())),
+        ),
+        (
+            "a sort is added",
+            Box::new(|c: &mut Contract| c.resources[0].sortable.push("path".into())),
+        ),
+        (
+            "the page ceiling is higher",
+            Box::new(|c: &mut Contract| c.resources[0].max_page_size = 500),
+        ),
+        (
+            "a sub-collection filter is added",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].sub_resources[0]
+                    .filterable
+                    .push("ordinal".into())
+            }),
+        ),
+        (
+            "a sub-collection sort is added",
+            Box::new(|c: &mut Contract| {
+                c.resources[0].sub_resources[0]
+                    .sortable
+                    .push("ordinal".into())
+            }),
+        ),
+        (
+            "a sub-collection page ceiling is higher",
+            Box::new(|c: &mut Contract| c.resources[0].sub_resources[0].max_page_size = 200),
+        ),
+        (
+            "a filter's closed set gained a value",
+            Box::new(|c: &mut Contract| {
+                c.resources[0]
+                    .filter_options
+                    .get_mut("state")
+                    .unwrap()
+                    .push("archived".into())
+            }),
+        ),
+        (
+            "a filter's closed set was lifted",
+            Box::new(|c: &mut Contract| c.resources[0].filter_options.clear()),
+        ),
+        (
+            "a field is added",
+            Box::new(|c: &mut Contract| {
+                c.resources[0]
+                    .fields
+                    .push(FieldExposure::column("created_at"))
+            }),
+        ),
+        (
+            "a budget grew",
+            Box::new(|c: &mut Contract| c.rate_classes[0].units_per_minute = 10_000),
+        ),
+        (
+            "reading takes one scope fewer",
+            Box::new(|c: &mut Contract| c.resources[0].reads_require.clear()),
+        ),
+    ]
+}
+
+/// Every addition is named, and none is named breaking.
+///
+/// `additions_are_compatible` applies its additions together, so one
+/// the differ reports covers for one it drops. `kayak diff` stayed
+/// silent on an added filter or sort, and on a raised page ceiling,
+/// for exactly that reason: the CLI said "no contract changes" about a
+/// contract that had grown. Each addition is applied alone here.
+#[test]
+fn every_addition_is_named_and_none_breaks() {
+    let mut problems = Vec::new();
+    for (what, apply) in adding_something() {
+        let before = base();
+        let mut after = base();
+        apply(&mut after);
+        let changes = diff(&before, &after);
+        if changes.is_empty() {
+            problems.push(format!("{what}  ->  reported nothing"));
+        } else if changes.iter().any(kayak::diff::Change::is_breaking) {
+            problems.push(format!("{what}  ->  reported breaking: {changes:?}"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "the differ misread these additions:\n  {}",
+        problems.join("\n  "),
+    );
+}
+
+/// A closed set appearing on a filter that took anything refuses every
+/// caller sending a value outside it, as it does on an input.
+#[test]
+fn a_filter_set_appearing_is_breaking() {
+    let mut open = base();
+    open.resources[0].filter_options.clear();
+    let changes = diff(&open, &base());
+    assert!(
+        changes.iter().any(
+            |c| matches!(c, kayak::diff::Change::Breaking(m) if m.contains("filter state now takes only live, deleted"))
+        ),
+        "{changes:?}",
+    );
 }
 
 /// A backing that promises MORE about machinery it already pointed at

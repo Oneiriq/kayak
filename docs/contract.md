@@ -581,16 +581,20 @@ gates in CI beside `diff`.
 `kayak::diff(&old, &new)` compares two contracts at the IR level and
 classifies every change. Breaking: a removed resource, field, filter, or
 sort; a field re-pointed to a different column under the same wire name;
-a lowered page ceiling; a moved action; a changed output; an input that
-became required or changed type; any effective GraphQL rename; a
-resource that stopped being watchable; a removed sub-resource, or one
-that lost a field, filter, sort, or page headroom; a removed search
-backing, or any of the four members that place one re-pointed; a backing
-that stopped pinning its width or pinned a different one; a backing that
-became optional; a search the query no longer performs. Compatible:
-additions, a resource that became watchable, a new sub-resource, a
-backing added to an existing query, a width newly pinned, a backing now
-required of every deployment, a search newly performed, and removal of
+a lowered page ceiling; a closed set introduced on a filter that took
+anything, or a value taken out of one; a moved action; a changed output;
+an input that became required or changed type; any effective GraphQL
+rename; a resource that stopped being watchable; a removed sub-resource,
+or one that lost a field, filter, sort, or page headroom; a removed
+search backing, or any of the four members that place one re-pointed; a
+backing that stopped pinning its width or pinned a different one; a
+backing that became optional; a search the query no longer performs.
+Compatible, and each one named: an added resource, field, filter, sort,
+sub-resource, action, query, or optional input, on a resource or a
+sub-resource alike; a raised page ceiling; a value added to a filter's
+closed set, or the set lifted; a resource that became watchable; a
+backing added to an existing query; a width newly pinned; a backing now
+required of every deployment; a search newly performed; and removal of
 an optional input.
 
 The CLI exits non-zero on breaking changes

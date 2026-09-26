@@ -197,3 +197,33 @@ async fn a_listing_without_a_limit_gets_the_declared_page() {
         assert_eq!(limit, expected);
     }
 }
+
+/// A refusal answers with the error's own status on every face. The
+/// console kept a table of its own and answered 500 for an oversized
+/// payload, which REST answers 413.
+#[cfg(feature = "console")]
+#[tokio::test]
+async fn an_oversized_payload_is_413_on_every_face() {
+    use kayak::runtime::{ConsoleConfig, ConsoleRouter, KayakError};
+
+    let resolvers = Resolvers::new()
+        .list("files", |_ctx, _args: ListArgs| async move {
+            Err(KayakError::PayloadTooLarge("the page is too large".into()))
+        })
+        .get("files", |_ctx, _args| async move { Ok(None) });
+    let dispatcher =
+        Arc::new(Dispatcher::new(Arc::new(contract("/v1")), resolvers, vec![]).unwrap());
+
+    let rest = RestRouter::new(dispatcher.clone());
+    assert_eq!(status(&rest, "/v1/files").await, 413);
+
+    let console = ConsoleRouter::new(
+        dispatcher,
+        ConsoleConfig {
+            base: "/console".to_owned(),
+            title: "test".to_owned(),
+        },
+    );
+    let page = console.page("/r/files", "", KayakContext::new()).await;
+    assert_eq!(page.status, 413, "{}", page.html);
+}

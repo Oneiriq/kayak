@@ -36,18 +36,10 @@ fn answer(status: u16, body: Value) -> RestAnswer {
     RestAnswer { status, body }
 }
 
+/// A refusal answers with the status the error itself carries, so no
+/// face keeps a table of its own to fall out of step.
 fn refusal(error: &KayakError) -> RestAnswer {
-    let status = match error {
-        KayakError::BadRequest(_) => 400,
-        KayakError::Unauthorized(_) => 401,
-        KayakError::Forbidden(_) => 403,
-        KayakError::NotFound => 404,
-        KayakError::Conflict(_) => 409,
-        KayakError::PayloadTooLarge(_) => 413,
-        KayakError::TooManyRequests(_) => 429,
-        _ => 500,
-    };
-    answer(status, json!({ "error": error.to_string() }))
+    answer(error.status(), json!({ "error": error.to_string() }))
 }
 
 enum Segment {

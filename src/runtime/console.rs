@@ -1492,17 +1492,11 @@ impl ConsoleRouter {
         self.shell(200, action, body)
     }
 
+    /// A refusal answers with the status the error itself carries, the
+    /// one the REST face gives it. The console kept a table of its own
+    /// and answered 500 for an oversized payload.
     fn refusal_page(&self, error: &KayakError) -> ConsoleAnswer {
-        let status = match error {
-            KayakError::BadRequest(_) => 400,
-            KayakError::Unauthorized(_) => 401,
-            KayakError::Forbidden(_) => 403,
-            KayakError::NotFound => 404,
-            KayakError::Conflict(_) => 409,
-            KayakError::TooManyRequests(_) => 429,
-            _ => 500,
-        };
-        self.error_page(status, &error.to_string())
+        self.error_page(error.status(), &error.to_string())
     }
 
     fn error_page(&self, status: u16, message: &str) -> ConsoleAnswer {

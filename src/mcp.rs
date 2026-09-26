@@ -77,10 +77,11 @@ fn list_tool(resource: &Resource) -> Value {
         json!({ "type": "string", "description": "Resume from a previous page." }),
     );
     for column in &resource.filterable {
-        properties.insert(
-            column.clone(),
-            json!({ "type": "string", "description": format!("Filter by {column}.") }),
-        );
+        let mut schema = json!({ "type": "string", "description": format!("Filter by {column}.") });
+        if let Some(options) = resource.filter_options.get(column) {
+            schema["enum"] = json!(options);
+        }
+        properties.insert(column.clone(), schema);
     }
     if !resource.sortable.is_empty() {
         properties.insert(

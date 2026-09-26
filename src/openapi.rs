@@ -563,10 +563,14 @@ fn list_path(resource: &Resource, schema_name: &str) -> Value {
         }),
     ];
     for column in &resource.filterable {
+        let mut schema = json!({"type": "string"});
+        if let Some(options) = resource.filter_options.get(column) {
+            schema["enum"] = json!(options);
+        }
         parameters.push(json!({
             "name": column,
             "in": "query",
-            "schema": {"type": "string"},
+            "schema": schema,
             "description": format!("Filter by {column} (indexed)."),
         }));
     }

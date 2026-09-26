@@ -37,7 +37,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
 
 - **A resource with no face needs no fields.** Requiring an exposure
   on a resource that never renders its row type was requiring a
-  projection nobody builds. Found writing polyconsole-social's
+  projection nobody builds. Found writing a social service's
   contract, where `friends` is five two-account verbs over a table of
   unordered pairs and `me` is three writes that name no id: both are
   resources whose only job is to give their actions a path. A face
@@ -46,7 +46,7 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
 
 - **A resource says which collection faces it exposes.** Every resource
   emitted a listing and a getter, which misdescribes a resource whose
-  collection is deliberately not browsable. polyconsole-social serves
+  collection is deliberately not browsable. A social service serves
   `GET /accounts/{id}` and must never serve `GET /accounts` — a social
   service does not enumerate its users — and it hangs a keys
   sub-resource off that same resource, so leaving `accounts` undeclared
@@ -120,8 +120,8 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   that declared no backing and a query that needed none were the same
   document, so the contract had no way to say "this performs a
   semantic search" and therefore no way to be wrong about it. That is
-  the exact shape unindexed search has when it ships: driftnet's chunk
-  search and antumbra's recall paths both ran for months over columns
+  the exact shape unindexed search has when it ships: a document chunk
+  search and a memory recall path both ran for months over columns
   nothing could answer a neighbour query on, and no contract anywhere
   could have caught either, because nobody writes down the index they
   do not have.

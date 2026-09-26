@@ -8,7 +8,7 @@
 //! generated client declares a field the service never sends, so
 //! deserializing a SUCCESSFUL response fails.
 //!
-//! It shipped. polyconsole's social service keys presence one row per
+//! It shipped. A social service keys presence one row per
 //! account and names it `user`; three of six generated structs could not
 //! parse a 200 from the routes they described, in every artifact at
 //! once, while the byte-comparison gate stayed green because the

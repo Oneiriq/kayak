@@ -1,7 +1,7 @@
 //! Which collection faces a resource exposes.
 //!
 //! Both, before this existed, which misdescribes a resource whose
-//! collection is not meant to be browsable. polyconsole-social serves
+//! collection is not meant to be browsable. A social service serves
 //! `GET /accounts/{id}` and must never serve `GET /accounts`, because
 //! enumerating every user is the thing a social service is careful not
 //! to do -- and it hangs a keys sub-resource off that same resource, so
@@ -310,7 +310,7 @@ fn the_default_faces_stay_out_of_a_serialized_contract() {
 fn a_faceless_resource_needs_no_fields_to_expose() {
     // An RPC-only domain has rows nobody receives, so requiring an
     // exposure would be requiring a projection that is never built.
-    // Found writing polyconsole-social's contract, where `friends` is
+    // Found writing a social service's contract, where `friends` is
     // five verbs over a table of unordered pairs and `me` is three
     // writes that name no id.
     let mut verbs_only = contract(ResourceFaces::NONE);

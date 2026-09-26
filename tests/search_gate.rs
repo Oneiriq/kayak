@@ -535,8 +535,8 @@ fn a_backing_that_resolves_nothing_is_named() {
 ///
 /// Every other rule here catches a claim held against the schema and
 /// found wanting. This one catches an absence, and an absence is what
-/// unindexed search looks like from the outside: driftnet's chunk
-/// search and antumbra's recall paths both ran for months over
+/// unindexed search looks like from the outside: a document chunk
+/// search and a memory recall path both ran for months over
 /// columns nothing could answer a neighbor query on, and no contract
 /// anywhere could have said so, because saying nothing about search
 /// and needing nothing were the same declaration. They stop being the

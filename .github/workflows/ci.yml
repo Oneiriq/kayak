@@ -11,7 +11,7 @@ on:
   # abandons a run mid-flight, where the commit is already on main and
   # there is nothing left to push at it, and drift arriving without a
   # commit, which is how a new advisory reddens a branch that has not
-  # changed. Without this the only way to re-run janus CI was another
+  # changed. Without this the only way to re-run CI was another
   # commit, and `gh workflow run` answered 422.
   workflow_dispatch:
 
@@ -44,7 +44,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-janus-stable"
+          prefix-key: "v1-kayak-stable"
 
       - name: cargo fmt --check
         run: cargo fmt --all --check

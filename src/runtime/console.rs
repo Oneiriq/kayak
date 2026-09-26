@@ -901,7 +901,7 @@ impl ConsoleRouter {
                             rest_path: format!("{}/{}/{{{identity}}}/{}", contract.prefix(), resource.name, sub.name),
                             graphql: None,
                             graphql_kind: "query",
-                            tool: None,
+                            tool: Some(format!("{}_{}_list", singular(&resource.name), sub.name)),
                             requires: &resource.reads_require,
                             inputs: &id_input,
                             body: false,

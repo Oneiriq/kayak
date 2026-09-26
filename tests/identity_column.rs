@@ -428,5 +428,7 @@ mod live {
         assert!(html.contains("logEntries(limit: 20)"), "{html}");
         assert!(!html.contains("log_entries(limit"), "{html}");
         assert!(!html.contains("(id: "), "{html}");
+        // The sub-collection names the MCP tool the manifest carries.
+        assert!(html.contains("presence_log_entries_list"), "{html}");
     }
 }

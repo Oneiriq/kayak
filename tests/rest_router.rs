@@ -118,3 +118,65 @@ async fn the_console_reference_names_the_served_prefix() {
     assert!(page.html.contains("GET /api/files"), "{}", page.html);
     assert!(!page.html.contains("/v1/files"), "{}", page.html);
 }
+
+/// A query whose path names one of its inputs receives it from the
+/// path. The OpenAPI document declares it `in: path` and every client
+/// sends it only there.
+#[tokio::test]
+async fn a_query_takes_the_input_its_path_carries() {
+    let mut contract = contract("/v1");
+    contract.queries = vec![kayak::Query {
+        name: "file_text".into(),
+        path: "/v1/files/{id}/text".into(),
+        input: vec![
+            kayak::ActionField {
+                name: "id".into(),
+                kind: kayak::TypeRef::String,
+                required: true,
+                multiple: false,
+                description: None,
+                options: vec![],
+            },
+            kayak::ActionField {
+                name: "page".into(),
+                kind: kayak::TypeRef::Int,
+                required: false,
+                multiple: false,
+                description: None,
+                options: vec![],
+            },
+        ],
+        description: None,
+        graphql_field: None,
+        requires: vec![],
+        rate_class: None,
+        searches: vec![],
+        backing: vec![],
+    }];
+    let resolvers = Resolvers::new()
+        .list("files", |_ctx, _args: ListArgs| async move {
+            Ok(ListOutput::default())
+        })
+        .get("files", |_ctx, _args| async move { Ok(None) })
+        .query("file_text", |_ctx, args| async move {
+            Ok(serde_json::Value::Object(args.input))
+        });
+    let dispatcher = Dispatcher::new(Arc::new(contract), resolvers, vec![]).unwrap();
+    let router = RestRouter::new(Arc::new(dispatcher));
+
+    let answered = router
+        .handle(
+            "GET",
+            "/v1/files/01A/text",
+            "page=2",
+            None,
+            KayakContext::new(),
+        )
+        .await;
+    assert_eq!(answered.status, 200, "{:?}", answered.body);
+    assert_eq!(
+        answered.body,
+        serde_json::json!({ "id": "01A", "page": 2 }),
+        "the path's id and the query string's page both arrive",
+    );
+}

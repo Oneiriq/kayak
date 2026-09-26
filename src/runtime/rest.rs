@@ -274,7 +274,10 @@ impl RestRouter {
                     .iter()
                     .find(|q| q.name == *name);
                 let mut input = Map::new();
-                for (key, raw) in pairs {
+                // A parameter the path names arrives in the path, the way
+                // the OpenAPI document and every client send it. Chained
+                // last, so the path wins over a query pair of the same name.
+                for (key, raw) in pairs.into_iter().chain(params) {
                     let kind = declared
                         .and_then(|q| q.input.iter().find(|f| f.name == key))
                         .map(|f| &f.kind);

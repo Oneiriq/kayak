@@ -443,3 +443,45 @@ async fn an_index_the_listing_cannot_seek_is_still_a_walk() {
     assert_eq!(violations[0].claim, "filter state");
     assert_eq!(violations[0].operation, "TableScan over file");
 }
+
+/// An either-of pin is probed once per branch. The listing binds `a`
+/// or `b`, and the engine answers each branch with its own seek, so a
+/// branch no index serves is a walk even when the other branch seeks.
+/// Verification used to bind neither column and probe a listing no
+/// caller ever sends.
+#[tokio::test]
+async fn each_branch_of_an_either_pin_is_verified() {
+    let client = memory_client().await;
+    client
+        .query(
+            "
+DEFINE TABLE friendship SCHEMAFULL;
+DEFINE FIELD a ON friendship TYPE string;
+DEFINE FIELD b ON friendship TYPE string;
+DEFINE FIELD state ON friendship TYPE string;
+DEFINE INDEX idx_by_a ON friendship FIELDS a, state;
+CREATE friendship SET a = 'x', b = 'y', state = 'ready';
+",
+        )
+        .await
+        .expect("schema applies");
+
+    let mut friends = resource("friends", "friendship");
+    friends.pinned = vec![];
+    friends.pinned_either = vec!["a".into(), "b".into()];
+    friends.filterable = vec!["state".into()];
+    let contract = contract(vec![friends]);
+
+    let composed = probes(&contract);
+    assert_eq!(composed.len(), 2, "{composed:?}");
+    assert_eq!(composed[0].scope, "friends (pinned on a)");
+    assert!(composed[0].surql.contains("a = 'kayak-probe' AND state"));
+    assert_eq!(composed[1].scope, "friends (pinned on b)");
+    assert!(composed[1].surql.contains("b = 'kayak-probe' AND state"));
+
+    let violations = verify_contract(&client, &contract).await.unwrap();
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].scope, "friends (pinned on b)");
+    assert_eq!(violations[0].claim, "filter state");
+    assert_eq!(violations[0].operation, "TableScan over friendship");
+}

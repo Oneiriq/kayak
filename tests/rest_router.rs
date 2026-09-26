@@ -180,3 +180,20 @@ async fn a_query_takes_the_input_its_path_carries() {
         "the path's id and the query string's page both arrive",
     );
 }
+
+/// A listing without a limit gets the page the OpenAPI document
+/// promises: `max_page_size`, the same default GraphQL applies.
+#[tokio::test]
+async fn a_listing_without_a_limit_gets_the_declared_page() {
+    let mut narrow = contract("/v1");
+    narrow.resources[0].max_page_size = 20;
+    for (contract, expected) in [(contract("/v1"), 100), (narrow, 20)] {
+        let (router, seen) = router(contract);
+        let answered = router
+            .handle("GET", "/v1/files", "", None, KayakContext::new())
+            .await;
+        assert_eq!(answered.status, 200, "{:?}", answered.body);
+        let limit = seen.lock().unwrap().as_ref().unwrap().limit;
+        assert_eq!(limit, expected);
+    }
+}

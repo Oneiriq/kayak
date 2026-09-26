@@ -298,7 +298,10 @@ impl RestRouter {
 /// `column:desc`.
 fn list_args(pairs: &mut Vec<(String, String)>) -> Result<ListArgs, RestAnswer> {
     let mut args = ListArgs {
-        limit: 50,
+        // No limit asks for a full page. The dispatcher clamps this to
+        // the declared `max_page_size`, the default the OpenAPI
+        // document states and the GraphQL face applies.
+        limit: u32::MAX,
         cursor: None,
         filters: BTreeMap::new(),
         sort: None,

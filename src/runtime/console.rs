@@ -1997,12 +1997,15 @@ fn declared_type(kind: TypeRef) -> &'static str {
 
 /// A placeholder that shows the type rather than pretending to be a
 /// value, since a caller copying this has to substitute anyway.
-fn sample(field: &ActionField) -> String {
+///
+/// `listed` says the face publishes several of a set as an array, as
+/// the OpenAPI body and the MCP manifest do. GraphQL declares a string.
+fn sample(field: &ActionField, listed: bool) -> String {
     if let Some(first) = field.options.first() {
-        return if field.multiple {
-            format!("\"{}\"", field.options.join(","))
-        } else {
-            format!("\"{first}\"")
+        return match (field.multiple, listed) {
+            (true, true) => format!("[\"{}\"]", field.options.join("\", \"")),
+            (true, false) => format!("\"{}\"", field.options.join(",")),
+            (false, _) => format!("\"{first}\""),
         };
     }
     match field.kind {
@@ -2030,7 +2033,7 @@ impl Face<'_> {
             } else {
                 out.push_str("\n{\n");
                 for (index, field) in carried.iter().enumerate() {
-                    out.push_str(&format!("  \"{}\": {}", field.name, sample(field)));
+                    out.push_str(&format!("  \"{}\": {}", field.name, sample(field, true)));
                     if index + 1 < carried.len() {
                         out.push(',');
                     }
@@ -2043,7 +2046,18 @@ impl Face<'_> {
                 .inputs
                 .iter()
                 .filter(|f| !self.rest_path.contains(&format!("{{{}}}", f.name)))
-                .map(|f| format!("{}={}", f.name, sample(f).trim_matches('"')))
+                // Several of a set repeats its key, the form the
+                // OpenAPI document describes.
+                .flat_map(|f| {
+                    if f.multiple {
+                        f.options
+                            .iter()
+                            .map(|o| format!("{}={o}", f.name))
+                            .collect()
+                    } else {
+                        vec![format!("{}={}", f.name, sample(f, false).trim_matches('"'))]
+                    }
+                })
                 .collect();
             out.push_str(&format!("{} {}", self.rest_method, self.rest_path));
             if !query.is_empty() {
@@ -2071,7 +2085,7 @@ impl Face<'_> {
         arguments.extend(
             self.inputs
                 .iter()
-                .map(|f| format!("{}: {}", camel(&f.name), sample(f))),
+                .map(|f| format!("{}: {}", camel(&f.name), sample(f, false))),
         );
         let call = if arguments.is_empty() {
             field.clone()
@@ -2141,7 +2155,7 @@ impl Face<'_> {
         arguments.extend(
             self.inputs
                 .iter()
-                .map(|f| format!("    \"{}\": {}", f.name, sample(f))),
+                .map(|f| format!("    \"{}\": {}", f.name, sample(f, true))),
         );
         Some(format!(
             "{{\n  \"name\": \"{tool}\",\n  \"arguments\": {{\n{}\n  }}\n}}",

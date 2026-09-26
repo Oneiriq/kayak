@@ -289,15 +289,9 @@ mod runtime {
     #[cfg(feature = "console")]
     #[tokio::test]
     async fn a_console_form_keeps_every_checked_box() {
-        use kayak::runtime::{ConsoleConfig, ConsoleRouter, FormOutcome};
+        use kayak::runtime::FormOutcome;
 
-        let console = ConsoleRouter::new(
-            dispatcher(),
-            ConsoleConfig {
-                base: "/console".to_owned(),
-                title: "test".to_owned(),
-            },
-        );
+        let console = console();
         let pairs = |values: &[&str]| -> Vec<(String, String)> {
             values
                 .iter()
@@ -326,5 +320,47 @@ mod runtime {
             .await;
         assert_eq!(page.status, 200, "{}", page.html);
         assert!(page.html.contains("content_type,access"), "{}", page.html);
+    }
+
+    #[cfg(feature = "console")]
+    fn console() -> kayak::runtime::ConsoleRouter {
+        kayak::runtime::ConsoleRouter::new(
+            dispatcher(),
+            kayak::runtime::ConsoleConfig {
+                base: "/console".to_owned(),
+                title: "test".to_owned(),
+            },
+        )
+    }
+
+    /// The console reference writes each request in the form its face
+    /// publishes: an array in a JSON body and an MCP call, the key
+    /// repeated in a REST query string, and one string on GraphQL.
+    #[cfg(feature = "console")]
+    #[tokio::test]
+    async fn the_console_reference_writes_the_form_each_face_publishes() {
+        let page = console().page("/reference", "", KayakContext::new()).await;
+        assert_eq!(page.status, 200, "{}", page.html);
+        let html = page
+            .html
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+        let listed = r#"["red", "green", "blue"]"#;
+        assert!(
+            html.contains(&format!("{{\n  \"labels\": {listed}\n}}")),
+            "{html}"
+        );
+        assert!(
+            html.contains(&format!("\n    \"labels\": {listed}\n")),
+            "{html}"
+        );
+        assert!(
+            html.contains("?q=<q>&facets=content_type&facets=access"),
+            "{html}"
+        );
+        assert!(html.contains(r#"labels: "red,green,blue""#), "{html}");
+        assert!(html.contains(r#"facets: "content_type,access""#), "{html}");
     }
 }

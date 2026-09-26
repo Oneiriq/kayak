@@ -26,7 +26,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::KayakError;
-use crate::runtime::wire::percent_decode as decode;
+use crate::runtime::wire::{gather, percent_decode as decode};
 use surql::schema::TableDefinition;
 
 /// One rendered page: an HTTP status and a complete HTML document.
@@ -578,11 +578,8 @@ impl ConsoleRouter {
             if raw.is_empty() {
                 continue;
             }
-            let kind = declared
-                .input
-                .iter()
-                .find(|f| f.name == *key)
-                .map(|f| &f.kind);
+            let field = declared.input.iter().find(|f| f.name == *key);
+            let kind = field.map(|f| &f.kind);
             if matches!(kind, Some(TypeRef::Json)) && serde_json::from_str::<Value>(raw).is_err() {
                 return FormOutcome::Page(self.error_page(
                     400,
@@ -592,7 +589,8 @@ impl ConsoleRouter {
                     ),
                 ));
             }
-            input.insert(key.clone(), coerce(raw.clone(), kind));
+            // A checked box submits its own pair, one per value chosen.
+            gather(&mut input, field, key.clone(), coerce(raw.clone(), kind));
         }
         let args = ActionArgs {
             id: id.clone(),

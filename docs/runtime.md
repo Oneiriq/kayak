@@ -104,6 +104,15 @@ undeclared sorts refuse, action inputs check against their declared types,
 and unknown input keys drop (the differ promises that removing an optional
 input is compatible, which only holds if servers ignore unknown fields).
 
+An input marked `multiple` takes several of its `options`. The OpenAPI
+document and the MCP manifest publish it as an array, and the runtime takes
+it in each form a caller sends: a JSON array in an action body or an MCP
+call, the key repeated in a REST query string (`?facets=a&facets=b`), or one
+comma-separated string (`?facets=a,b`), which the GraphQL schema and the
+generated clients send. Every value must be one of the options. The resolver
+reads one comma-separated string whichever form arrived, so
+`args.input["facets"]` is `"a,b"` for each of those three requests.
+
 ## Sub-resources
 
 A declared sub-resource needs its own list resolver, checked at build like

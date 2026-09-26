@@ -953,10 +953,10 @@ pub struct ActionField {
     pub description: Option<String>,
     /// Whether the caller may name several of `options` at once.
     ///
-    /// The value travels as one comma-separated string, which is what
-    /// a query parameter can carry without ceremony. Meaningless
-    /// without `options`, since a set is what there is to choose
-    /// several of.
+    /// OpenAPI and MCP publish it as an array. The runtime takes an
+    /// array, the key repeated, or one comma-separated string, and the
+    /// resolver reads that one string. Meaningless without `options`,
+    /// since a set is what there is to choose several of.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub multiple: bool,
     /// The values this input accepts, when they are a closed set.

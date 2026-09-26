@@ -23,7 +23,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::KayakError;
-use crate::runtime::wire::percent_decode;
+use crate::runtime::wire::{gather, percent_decode};
 
 /// One answered request: an HTTP status and a JSON body.
 #[derive(Debug, Clone)]
@@ -271,15 +271,21 @@ impl RestRouter {
                     .queries
                     .iter()
                     .find(|q| q.name == *name);
+                let field =
+                    |key: &str| declared.and_then(|q| q.input.iter().find(|f| f.name == key));
                 let mut input = Map::new();
+                // A multi-valued input may repeat its key, the form the
+                // OpenAPI document describes, so every value is kept.
+                for (key, raw) in pairs {
+                    let value = coerce(raw, field(&key).map(|f| &f.kind));
+                    gather(&mut input, field(&key), key, value);
+                }
                 // A parameter the path names arrives in the path, the way
-                // the OpenAPI document and every client send it. Chained
+                // the OpenAPI document and every client send it. Read
                 // last, so the path wins over a query pair of the same name.
-                for (key, raw) in pairs.into_iter().chain(params) {
-                    let kind = declared
-                        .and_then(|q| q.input.iter().find(|f| f.name == key))
-                        .map(|f| &f.kind);
-                    input.insert(key, coerce(raw, kind));
+                for (key, raw) in params {
+                    let value = coerce(raw, field(&key).map(|f| &f.kind));
+                    input.insert(key, value);
                 }
                 match self.dispatcher.query(name, ctx, QueryArgs { input }).await {
                     Ok(value) => answer(200, value),

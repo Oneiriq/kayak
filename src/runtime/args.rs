@@ -221,10 +221,41 @@ fn check_options(
     Ok(())
 }
 
-/// Check action arguments: instance id presence, required inputs,
-/// input types. Unknown input keys are dropped; the
-/// differ promises that removing an optional input is compatible, and
-/// that only holds if servers ignore fields they no longer declare.
+/// A multi-valued input in the one shape its resolver reads.
+///
+/// The OpenAPI document and the MCP manifest publish such an input as
+/// an array. A caller who follows them sends a JSON array, or on REST
+/// the key once per value, which the router gathers into an array. The
+/// older form is one string with commas between the values, and the
+/// GraphQL schema and the generated clients still send it. An array
+/// becomes that string here, ahead of middleware and the resolver, so
+/// a resolver reads one shape whatever the face. A string passes
+/// through as it arrived.
+fn several(
+    field: &crate::ir::ActionField,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, KayakError> {
+    let serde_json::Value::Array(items) = value else {
+        return Ok(value.clone());
+    };
+    if !field.multiple || field.kind != TypeRef::String {
+        return Ok(value.clone());
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for item in items {
+        let Some(text) = item.as_str() else {
+            return Err(KayakError::BadRequest(format!(
+                "input {} must be a string or a list of strings",
+                field.name,
+            )));
+        };
+        // One item may hold several values itself. A REST caller who
+        // sends `?facets=a,b` once arrives here as `["a,b"]`.
+        parts.extend(text.split(',').map(str::trim).filter(|p| !p.is_empty()));
+    }
+    Ok(serde_json::Value::String(parts.join(",")))
+}
+
 /// Check a query's parameters against its declaration: required ones
 /// present, declared types honored, undeclared ones refused. The
 /// same discipline actions get, because a query is a wire surface
@@ -244,6 +275,7 @@ pub(crate) fn validate_query(
             }
             None | Some(serde_json::Value::Null) => {}
             Some(value) => {
+                let value = several(field, value)?;
                 let ok = match field.kind {
                     TypeRef::String => value.is_string(),
                     TypeRef::Int => value.is_i64() || value.is_u64(),
@@ -256,8 +288,8 @@ pub(crate) fn validate_query(
                         field.name,
                     )));
                 }
-                check_options(field, value)?;
-                checked.insert(field.name.clone(), value.clone());
+                check_options(field, &value)?;
+                checked.insert(field.name.clone(), value);
             }
         }
     }
@@ -272,6 +304,10 @@ pub(crate) fn validate_query(
     Ok(())
 }
 
+/// Check action arguments: instance id presence, required inputs,
+/// input types. Unknown input keys are dropped. The differ promises
+/// that removing an optional input is compatible, and that only holds
+/// if servers ignore fields they no longer declare.
 pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<(), KayakError> {
     if action.takes_id() && args.id.is_none() {
         return Err(KayakError::BadRequest(format!(
@@ -291,6 +327,7 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
             }
             None | Some(serde_json::Value::Null) => {}
             Some(value) => {
+                let value = several(field, value)?;
                 let ok = match field.kind {
                     TypeRef::String => value.is_string(),
                     TypeRef::Int => value.is_i64() || value.is_u64(),
@@ -309,8 +346,8 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
                         },
                     )));
                 }
-                check_options(field, value)?;
-                checked.insert(field.name.clone(), value.clone());
+                check_options(field, &value)?;
+                checked.insert(field.name.clone(), value);
             }
         }
     }
@@ -322,19 +359,23 @@ pub(crate) fn validate_action(action: &Action, args: &mut ActionArgs) -> Result<
 mod tests {
     use super::*;
 
-    /// Several of a set travels as one comma-separated value, so
-    /// every part answers to the set. Checking the joined string
-    /// would refuse every multi-valued input ever sent.
-    #[test]
-    fn several_of_a_set_is_checked_part_by_part() {
-        let field = ActionField {
+    fn facets() -> ActionField {
+        ActionField {
             name: "facets".into(),
             kind: TypeRef::String,
             required: false,
             multiple: true,
             options: vec!["a".into(), "b".into()],
             description: None,
-        };
+        }
+    }
+
+    /// Several of a set travels as one comma-separated value, so
+    /// every part answers to the set. Checking the joined string
+    /// would refuse every multi-valued input ever sent.
+    #[test]
+    fn several_of_a_set_is_checked_part_by_part() {
+        let field = facets();
         let check = |value: &str| check_options(&field, &serde_json::Value::String(value.into()));
         assert!(check("a").is_ok());
         assert!(check("a,b").is_ok(), "both parts are in the set");
@@ -359,6 +400,59 @@ mod tests {
         assert!(check("a").is_ok());
         let refused = check("a,b").unwrap_err().to_string();
         assert!(refused.contains("one of a, b"), "{refused}");
+    }
+
+    /// The documents publish several of a set as an array. An array
+    /// leaves as the one comma-separated string a resolver reads, and
+    /// the string form passes through as it came.
+    #[test]
+    fn several_of_a_set_arrives_as_an_array_or_a_string() {
+        use serde_json::json;
+        let field = facets();
+        let joined = |value: serde_json::Value| several(&field, &value).unwrap();
+        assert_eq!(joined(json!(["a", "b"])), json!("a,b"));
+        assert_eq!(joined(json!(["a,b"])), json!("a,b"), "one item holds two");
+        assert_eq!(joined(json!([" a ", "", "b"])), json!("a,b"));
+        assert_eq!(joined(json!([])), json!(""));
+        assert_eq!(joined(json!("a, b")), json!("a, b"), "a string is kept");
+        let refused = several(&field, &json!(["a", 1])).unwrap_err().to_string();
+        assert!(refused.contains("a list of strings"), "{refused}");
+
+        // A single-valued input keeps its array for the type check to
+        // refuse.
+        let single = ActionField {
+            multiple: false,
+            ..facets()
+        };
+        assert_eq!(several(&single, &json!(["a"])).unwrap(), json!(["a"]));
+    }
+
+    /// Every item of an array answers to the set, as every part of a
+    /// string does.
+    #[test]
+    fn an_array_outside_the_set_is_refused() {
+        use serde_json::json;
+        let query = crate::ir::Query {
+            name: "search".into(),
+            path: "/v1/search".into(),
+            input: vec![facets()],
+            description: None,
+            graphql_field: None,
+            requires: vec![],
+            rate_class: None,
+            searches: vec![],
+            backing: vec![],
+        };
+        let check = |value: serde_json::Value| {
+            let mut args = QueryArgs {
+                input: json!({ "facets": value }).as_object().unwrap().clone(),
+            };
+            validate_query(&query, &mut args).map(|()| args.input["facets"].clone())
+        };
+        assert_eq!(check(json!(["a", "b"])).unwrap(), json!("a,b"));
+        assert_eq!(check(json!("b,a")).unwrap(), json!("b,a"));
+        let refused = check(json!(["a", "zzz"])).unwrap_err().to_string();
+        assert!(refused.contains("any of a, b"), "{refused}");
     }
     use crate::ir::ActionField;
 

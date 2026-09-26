@@ -193,8 +193,10 @@ pub fn generate_openapi(
                     schema["enum"] = json!(field.options);
                 }
                 if field.multiple {
-                    // `?facets=a,b`, which is form style without
-                    // explode, so the array arrives as one parameter.
+                    // No style is named, so the default holds: form
+                    // with explode, which reads `?facets=a&facets=b`.
+                    // The runtime also takes `?facets=a,b`, the form
+                    // the generated clients send.
                     schema = json!({ "type": "array", "items": schema });
                 }
                 json!({

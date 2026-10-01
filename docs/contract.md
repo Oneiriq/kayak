@@ -1,152 +1,265 @@
 # Authoring a contract
 
-A contract is data: a serializable object describing what an API exposes
-over which tables. It never restates the database schema. Resources
-reference tables and columns by name, and validation resolves those
-references against the authoritative `surql-rs` definitions, so a
-contract can't drift from the schema without failing generation.
+A contract is a JSON document that says what an API exposes over which
+SurrealDB tables. It does not restate the database schema. Resources name
+tables and columns, and validation resolves those names against the
+`surql` `TableDefinition`s that back the service (crate `oneiriq-surql`,
+imported as `surql`). A contract that names a missing column, or claims a
+filter that no index serves, fails validation, and generation refuses it.
 
-## The shape
+This page covers every key a contract can hold, the rules validation
+applies, and how the differ classifies a change. Turning a contract into
+artifacts is covered in [generators.md](generators.md). Serving one is
+covered in [runtime.md](runtime.md).
 
-```rust
-use kayak::{Action, ActionField, ActionOutput, Contract, FieldExposure,
-            Resource, TypeRef};
+## A first contract
 
-Contract {
-    name: "files".into(),          // becomes the OpenAPI title
-    version: "0.1.0".into(),       // the contract's own version
-    ir_revision: 1,
-    resources: vec![Resource {
-        name: "files".into(),      // API name, plural
-        table: "file".into(),      // backing table
-        fields: vec![
-            FieldExposure::column("path"),
-            FieldExposure::renamed("size_bytes", "size"),
-        ],
-        pinned: vec!["tenant_id".into()],
-        filterable: vec!["state".into()],
-        sortable: vec!["created_at".into()],
-        max_page_size: 100,
-        watchable: false,
-        graphql: None,
-        actions: vec![/* see below */],
-        sub_resources: vec![/* see below */],
-    }],
+```json
+{
+  "name": "filestore",
+  "version": "0.1.0",
+  "auth": { "kind": "bearer" },
+  "resources": [
+    {
+      "name": "files",
+      "table": "file",
+      "fields": [
+        { "column": "path" },
+        { "column": "state" },
+        { "column": "size_bytes", "rename": "size" },
+        { "column": "created_at" }
+      ],
+      "pinned": ["tenant_id"],
+      "filterable": ["state"],
+      "sortable": ["created_at"],
+      "max_page_size": 100
+    }
+  ]
 }
 ```
 
+The `file` table behind it has the columns `tenant_id`, `path`, `state`,
+`size_bytes`, and `created_at`, and a standard index on
+`(tenant_id, state, created_at)`. Against that schema the contract
+validates:
+
+- Every column in `fields`, `pinned`, `filterable`, and `sortable` exists.
+- The pinned column `tenant_id` leads an index, so the plain listing seeks.
+- `state` appears in an index, so filtering on it is allowed.
+- `created_at` sits in an index behind `tenant_id` (pinned) and `state`
+  (filterable), so sorting on it is allowed.
+
+From this one resource the generators produce `GET /v1/files` and
+`GET /v1/files/{id}` in OpenAPI, a `File` type with `files` and `file`
+query fields in GraphQL, `files_list` and `file_get` MCP tools, and
+`list_files` and `get_file` methods in each client, cased per language.
+
+To start from an existing schema, run `kayak scaffold` (see
+[generators.md](generators.md#kayak-scaffold)). It writes a contract that
+already validates, which you then narrow.
+
+## JSON and Rust
+
+Kayak reads contracts with serde, so JSON can leave out any key that has a
+default. The tables below list every key and its default.
+
+Kayak does not reject unknown keys. A misspelled key such as
+`"filterabel"` is ignored without an error, and the contract behaves as if
+the key were absent. After adding a key, check that its effect shows up in
+the generated OpenAPI document.
+
+In Rust, the simplest path is to parse the JSON:
+
+```rust
+let text = std::fs::read_to_string("api/contract.json")?;
+let contract: kayak::Contract = serde_json::from_str(&text)?;
+```
+
+`Contract`, `Resource`, `SubResource`, `Action`, `ActionField`, and `Query`
+do not implement `Default`, so a Rust struct literal has to name every
+field. This is the `files` resource above, written out in full:
+
+```rust
+use kayak::{FieldExposure, Identity, Resource, ResourceFaces};
+
+let files = Resource {
+    name: "files".into(),
+    table: "file".into(),
+    identity: Identity::Id,
+    fields: vec![
+        FieldExposure::column("path"),
+        FieldExposure::column("state"),
+        FieldExposure::renamed("size_bytes", "size"),
+        FieldExposure::column("created_at"),
+    ],
+    pinned: vec!["tenant_id".into()],
+    pinned_either: vec![],
+    filterable: vec!["state".into()],
+    filter_options: Default::default(),
+    sortable: vec!["created_at".into()],
+    max_page_size: 100,
+    actions: vec![],
+    content: None,
+    sub_resources: vec![],
+    faces: ResourceFaces::ALL,
+    rate_class: None,
+    reads_require: vec![],
+    watchable: false,
+    graphql: None,
+};
+```
+
+Helpers exist for the small types: `FieldExposure::column`,
+`FieldExposure::renamed`, `FieldExposure::with_guard`, the
+`ResourceFaces::ALL`, `GET_ONLY`, `LIST_ONLY`, and `NONE` constants, and
+`Contract::default_api_prefix()`. `ResourceFaces`, `GraphqlNames`,
+`SubGraphqlNames`, `ContractLimits`, `ContentFaces`, `AuthScheme`, and
+`Identity` implement `Default`. The rest of this page uses JSON.
+
+## Key reference
+
+### Contract
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | Contract name. Becomes the OpenAPI title, appears in client file headers, and names the Go package. |
+| `version` | required | The contract's own version. Becomes the OpenAPI `info.version`. |
+| `ir_revision` | `1` | IR format revision. Validation refuses `0` and any revision newer than this build of Kayak reads, and every CLI command that reads a contract refuses a newer one, `diff` and `verify` included. |
+| `api_prefix` | `"/v1"` | Path prefix for resource routes, in the generated artifacts and the runtime's REST router. See [Where the routes live](#where-the-routes-live). |
+| `auth` | `{"kind": "none"}` | How callers authenticate. See [Authentication](#authentication). |
+| `rate_classes` | `[]` | Named consumption budgets. See [Rate classes](#rate-classes). |
+| `limits` | none | GraphQL cost ceilings and a subscription cap. See [Limits](#limits). |
+| `resources` | required | The exposed resources. Write `[]` for a contract that only declares queries. |
+| `queries` | `[]` | Reads that are not listings. See [Queries](#queries). |
+
+### Resource
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | API name, plural, lowercase snake or kebab case. Becomes the path segment. |
+| `table` | required | The backing table. |
+| `fields` | required | The columns to expose. See [Exposing fields](#exposing-fields). |
+| `identity` | `"id"` | The column that names one row on the wire, or `null` for none. See [Identity](#identity). |
+| `pinned` | `[]` | Columns the server always equality-binds. |
+| `pinned_either` | `[]` | Columns the server binds the caller's value to one of. |
+| `filterable` | `[]` | Columns callers may filter on. |
+| `filter_options` | `{}` | Allowed values per filterable column. |
+| `sortable` | `[]` | Columns callers may sort on. |
+| `max_page_size` | `100` | Page-size ceiling for the listing. |
+| `faces` | `{"list": true, "get": true}` | Which collection faces exist. |
+| `actions` | `[]` | Verbs beyond list and get. |
+| `content` | none | Byte upload and download faces. |
+| `sub_resources` | `[]` | Collections reached through one instance. |
+| `rate_class` | none | The budget that meters reads of this resource. |
+| `reads_require` | `[]` | Scopes a caller must hold to read. |
+| `watchable` | `false` | Whether callers may subscribe to changes. |
+| `graphql` | none | GraphQL name overrides. |
+
+### Field exposure
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `column` | required | The column in the table. |
+| `rename` | none | The API name. Defaults to the column name. |
+| `guard` | none | A named visibility policy. See [Field guards](#field-guards). |
+
+### Sub-resource
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | API name, plural, lowercase snake or kebab case. |
+| `table` | required | The backing table. |
+| `parent_key` | required | The column on `table` that holds the parent's id. |
+| `fields` | required | The columns to expose. |
+| `identity` | `"id"` | As on a resource. |
+| `pinned` | `[]` | Server-bound columns beyond `parent_key`. |
+| `filterable` | `[]` | As on a resource. |
+| `sortable` | `[]` | As on a resource. |
+| `max_page_size` | `100` | Page-size ceiling. |
+| `description` | none | Rendered into OpenAPI. |
+| `graphql` | none | `{"type_name": ..., "field": ...}` overrides. |
+
+### Action
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | Lowercase snake case. |
+| `method` | required | `POST`, `PUT`, `DELETE`, or `PATCH`. |
+| `path` | `""` | Suffix under the resource path. `""` targets the collection. A literal `{id}` targets one instance. |
+| `input` | `[]` | Request-body fields. |
+| `output` | `"json"` | `"resource"`, `"json"`, or `"none"`. |
+| `description` | none | Rendered into OpenAPI, MCP, and the console. |
+| `graphql_field` | none | Mutation field name override. |
+| `requires` | `[]` | Scopes a caller must hold to invoke it. |
+| `rate_class` | none | The budget that meters it. |
+
+### Input field (actions and queries)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | Lowercase snake case. |
+| `kind` | required | `"string"`, `"int"`, `"bool"`, or `"json"`. |
+| `required` | `false` | Whether the caller must send it. |
+| `description` | none | Rendered into OpenAPI and MCP. |
+| `options` | `[]` | A closed set of allowed values. String inputs only. |
+| `multiple` | `false` | Whether the caller may send several of `options`, as a JSON array or one comma-separated string. |
+
+### Query
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | Lowercase snake case. |
+| `path` | required | Absolute REST path, such as `"/v1/search"`. Never prefixed. |
+| `input` | `[]` | Parameters. |
+| `description` | none | Rendered into OpenAPI and MCP. |
+| `graphql_field` | none | Query field name override. |
+| `requires` | `[]` | Scopes a caller must hold. |
+| `rate_class` | none | The budget that meters it. |
+| `searches` | `[]` | The search kinds it performs: `"lexical"`, `"vector"`. |
+| `backing` | `[]` | The indexes that answer those searches. |
+
+## Exposing fields
+
 Nothing is exposed by default. A column absent from `fields` does not
-exist on any surface. Renames apply everywhere at once, from the wire
-name to every generated client.
+appear on any surface. A `rename` changes the API name everywhere a row is
+described: the OpenAPI schema, the GraphQL type, the client types, and the
+keys a resolver's rows are expected to carry. A rename must be lowercase
+snake case and must not be a SurrealDB v3 reserved word.
 
-## Pinning to one of several columns
+Filters and sorts are named by column, even when the column is exposed
+under another name. If `size_bytes` in the first example were filterable,
+it would be declared as `size_bytes` and sent as `size_bytes` on REST and
+MCP (`sizeBytes` as a GraphQL argument), while rows carry `size`.
 
-`pinned` is an AND: every column is equality-bound and credited as an
-index prefix. A symmetric relationship can't be expressed that way. A
-friendship stored as one row per unordered pair holds its two accounts
-in `a` and `b`, and the caller is *either* of them:
+## Identity
 
-```rust
-pinned: vec![],
-pinned_either: vec!["a".into(), "b".into()],
-filterable: vec!["state".into()],
-```
+Every resource names its rows on the wire somehow. `identity` says how,
+and has three states:
 
-The engine answers that as a union of one index seek per branch, so
-**every** alternative must head an index whose remaining columns serve
-the filter and sort claims; here that means `(a, state)` and
-`(b, state)`. A branch with no index behind it drags the whole read back
-to a scan, so validation refuses it and names the branch, which tells
-the author which index is missing.
+| JSON | Meaning |
+| --- | --- |
+| key absent, or `"identity": "id"` | Rows carry `id`. This is the default. |
+| `"identity": "user"` | Rows are named by the `user` column. |
+| `"identity": null` | Rows carry no identity field at all. |
 
-Fewer than two alternatives is refused, and so is a column that is both
-pinned and an alternative. Changing the set is breaking in both
-directions: narrowing hides rows a caller used to see, widening shows
-rows they did not.
+The generated artifacts read it. For a `presence` resource with
+`"identity": "user"`, the OpenAPI get path becomes `/v1/presence/{user}`,
+the SDL get field takes `user: ID!`, the MCP get tool takes `user`, and
+every client type carries a `user` field. When the identity column is not
+in `fields`, the artifacts add it as a required string. When it is in
+`fields`, they describe it once, with the column's real type.
 
-## Which faces a resource exposes
+A named identity column must exist on the table. `null` means no instance
+can be addressed, so validation refuses it together with a get face,
+content faces, any action whose path holds `{id}`, and any sub-resource.
+Sub-resources take `identity` too, with the same three states.
 
-A resource exposes a listing and a getter by default. `faces` narrows
-that:
-
-```rust
-faces: ResourceFaces::ALL,       // GET /accounts and GET /accounts/{id}
-faces: ResourceFaces::GET_ONLY,  // reachable by id, never enumerable
-faces: ResourceFaces::LIST_ONLY, // enumerable, no by-id face
-faces: ResourceFaces::NONE,      // a place for actions to live
-```
-
-`GET_ONLY` is the shape a social service needs: `GET /accounts/{id}` is
-served and `GET /accounts` never is, because enumerating every user is
-the thing the service is careful never to allow. `NONE` fits a domain
-that is all verbs: an RPC-shaped resource whose table has no browsable
-collection.
-
-Actions and sub-resources are independent of both flags, which is what
-makes `NONE` useful instead of empty.
-
-Turning the listing off refuses `filterable`, `sortable`,
-`filter_options`, and `watchable`, because each is a claim about an
-endpoint that no longer exists. A resource with no face, no action, and
-no sub-resource is refused outright: it generates nothing.
-
-Withdrawing a face is breaking, since an endpoint, a GraphQL field, and
-a client method all disappear. Adding one back is compatible.
-
-## Where the routes live
-
-Resource faces hang under `api_prefix`, `/v1` by default:
-
-```rust
-api_prefix: "/v1".into(),   // /v1/files, /v1/files/{id}, /v1/files/{id}/url
-api_prefix: String::new(),  // /files, /files/{id} -- the service's own routes
-api_prefix: "/api/v2".into(),
-```
-
-A contract that omits it gets `/v1`, and the field stays out of the
-serialized document, so contracts written before it existed round-trip
-unchanged.
-
-Queries are unaffected: they declare absolute paths (`"/me"`,
-`"/v1/search"`) and always have, which is why a query could describe a
-service's real route before a resource could.
-
-Moving the prefix is breaking in both directions: every resource route
-moves at once, and every deployed client calls a path that is no longer
-served. Declaring the prefix instead of hardcoding it exists for
-adoption. A service already serving `/accounts` can take on a generated
-client by saying so, without moving its routes and breaking whatever is
-already shipped.
-
-## Authentication
-
-A contract declares how its callers authenticate, and every face reads
-the declaration: the four clients, the OpenAPI security scheme, and the
-differ. The field defaults to `None` and is omitted from serialized
-contracts when it is.
-
-```rust
-auth: AuthScheme::None,        // an open API: no credential, no field
-auth: AuthScheme::Bearer,      // Authorization: Bearer <token>
-auth: AuthScheme::Header {     // a named header, sent verbatim
-    name: "x-tenant".into(),
-    credential: "tenant".into(),
-},
-```
-
-`credential` names the thing, and the name reaches the generated
-constructors: a bearer contract gets `Client::new(url, token)`, the
-header above gets `Client::new(url, tenant)`, and an open one gets
-`Client::new(url)` with no field to carry. Bearer always calls it
-`token`; a header scheme deserialized without a `credential` gets
-`credential`.
-
-Changing the scheme is breaking in every direction, including relaxing
-it. A client generated against a contract that sends a credential
-doesn't stop compiling when the server stops requiring one, but every
-caller holding the old client is now sending a header the contract no
-longer describes, so the differ flags the relaxation instead of letting
-it pass as a compatible loosening.
+The live GraphQL schema reads it too: its type carries the identity field
+the SDL prints, its get field takes the identity column as its argument,
+and a sub-collection field reads the parent row's identity column. The
+REST router addresses an instance by its position in the path, so it
+serves any identity. The console's listing page still links rows through
+their `id` key (see [runtime.md](runtime.md#known-limitations)).
 
 ## Pinned, filterable, sortable
 
@@ -155,447 +268,728 @@ input reaches a query: tenant scoping, soft-delete filters. They are never
 API parameters. They exist so index validation can credit them.
 
 Because the pins apply to every read, they carry an index requirement of
-their own, and it belongs to the set rather than to any single pin: some
-standard or unique index must lead with a bound column, or the plain
-listing (nothing filtered, nothing sorted) scans the whole table with
-the pins as its only predicate. One leading bound column is enough; the
-engine seeks its range and checks the remaining pins inside it. A
-sub-resource counts its `parent_key` among the bound columns, which is
-how a table like a delivery log, indexed by endpoint and never by
-tenant, is fine as a sub-collection and refused as a top-level resource:
-the same rows, reached two ways, cost two different things.
+their own, and the requirement applies to the pins as a set. Some
+standard or unique index must lead with a bound column. If none
+does, the plain listing (nothing filtered, nothing sorted) scans the whole
+table with the pins as its only predicate. One leading bound column is
+enough: the engine seeks its range and checks the remaining pins inside
+it. A sub-resource counts its `parent_key` among the bound columns. That
+is why a table indexed by endpoint and never by tenant, such as a delivery
+log, passes as a sub-collection of an endpoint and fails as a top-level
+resource.
 
 `filterable` columns become query parameters and GraphQL arguments. Each
-must appear in at least one index on the table, because an unindexed
-filter works in the demo and becomes a table scan in production.
+must appear in at least one index on the table. An unindexed filter
+returns correct results on small data and scans the table once the table
+grows.
 
-`sortable` columns become sort options. The rule: some index must hold
-the column at a position where every earlier column is pinned or
-filterable. An index serves an ORDER BY only from a prefix whose head is
-equality-bound. Given `(tenant_id, state, created_at)` with `tenant_id`
-pinned and `state` filterable, `created_at` is a valid sort. Declaring a
-sort no index can serve is a generation error naming the column.
+`sortable` columns become sort options. Some index must hold the column at
+a position where every earlier column is pinned or filterable, because an
+index serves an ORDER BY only from a prefix whose head is equality-bound.
+Given `(tenant_id, state, created_at)` with `tenant_id` pinned and `state`
+filterable, `created_at` is a valid sort. Declaring a sort no index can
+serve is a generation error naming the column.
 
-Only a standard or unique index counts toward either rule.
-`DEFINE INDEX` also spells FULLTEXT, HNSW, and MTREE, and none of the
-three narrows an equality or supplies an order: a column covered only by
-one of them is, for a filter or a sort, uncovered. Claiming it is a
-generation error that names the index and its type, because a bare "not
-covered by any index" against a table that visibly has one would send
-the reader hunting the wrong bug. A column may of course carry both, and
-a BM25 index beside a standard one is the ordinary way to make a column
-searchable and filterable at once.
+Only a standard or unique index counts toward either rule. `DEFINE INDEX`
+also defines FULLTEXT, HNSW, and MTREE indexes, and none of them narrows an
+equality or supplies an order. A column covered only by one of them is
+uncovered for a filter or a sort. Claiming it is a generation error that
+names the index and its type, so the message points at the index you were
+looking at. A column may carry both kinds: a FULLTEXT index beside a
+standard one makes a column searchable and filterable.
+
+### Filter options
+
+`filter_options` lists the values a filterable column accepts, for columns
+whose values form a closed set:
+
+```json
+"filterable": ["state"],
+"filter_options": { "state": ["pending", "ready", "deleted"] }
+```
+
+Validation requires every key to be a filterable column and every list to
+be non-empty. The OpenAPI list parameter and the MCP list tool publish the
+set as an `enum`, and the console renders it as a menu. The dispatcher
+enforces it on every face: a listing or a subscription that filters on a
+value outside the list is refused with `bad_request` before the resolver
+runs.
+
+## Pinning to one of several columns
+
+`pinned` is an AND: every column is equality-bound and credited as an
+index prefix. A symmetric relationship cannot be written that way. A
+friendship stored as one row per unordered pair holds its two accounts in
+`a` and `b`, and the caller is either of them:
+
+```json
+"pinned": [],
+"pinned_either": ["a", "b"],
+"filterable": ["state"]
+```
+
+The engine answers that as a union of one index seek per branch, so every
+alternative must head an index whose remaining columns serve the filter and
+sort claims. Here that means `(a, state)` and `(b, state)`. A branch with
+no index behind it turns the whole read into a scan, so validation refuses
+it and names the branch.
+
+Validation also refuses fewer than two alternatives, a column named twice,
+and a column that is both pinned and an alternative. Changing the set is
+breaking in both directions: narrowing it hides rows a caller used to see,
+and widening it shows rows they did not.
+
+## Which faces a resource exposes
+
+A resource exposes a listing and a getter by default. `faces` narrows that:
+
+| JSON | Rust | Generated faces |
+| --- | --- | --- |
+| absent | `ResourceFaces::ALL` | `GET /v1/accounts` and `GET /v1/accounts/{id}` |
+| `{"list": false}` | `ResourceFaces::GET_ONLY` | `GET /v1/accounts/{id}` only |
+| `{"get": false}` | `ResourceFaces::LIST_ONLY` | `GET /v1/accounts` only |
+| `{"list": false, "get": false}` | `ResourceFaces::NONE` | Neither. The resource holds actions and sub-resources. |
+
+`GET_ONLY` fits a resource whose instances are reachable by id and whose
+collection must never be enumerated, such as a social service's accounts.
+`NONE` fits an RPC-shaped resource that is all verbs. Actions and
+sub-resources do not depend on either flag.
+
+A withdrawn face disappears from the OpenAPI document, the SDL, the MCP
+manifest, and the clients. Turning the listing off makes validation refuse
+`filterable`, `sortable`, `filter_options`, and `watchable`, since each is
+a claim about the listing. A resource with no face, no action, and no
+sub-resource is refused because it generates nothing.
+
+Withdrawing a face is breaking. Adding one back is compatible.
+
+The runtime serves only the declared faces. The dispatcher needs no
+resolver for a withdrawn face and refuses a call to it, the REST router
+has no route for it, the live GraphQL schema has no field for it, and the
+console neither lists nor links to it (see
+[runtime.md](runtime.md#resolvers)).
+
+## Where the routes live
+
+Resource routes hang under `api_prefix`, which defaults to `/v1`:
+
+| `api_prefix` | Generated routes |
+| --- | --- |
+| `"/v1"` (default) | `/v1/files`, `/v1/files/{id}`, `/v1/files/{id}/url` |
+| `""` | `/files`, `/files/{id}`, `/files/{id}/url` |
+| `"/api/v2"` | `/api/v2/files`, `/api/v2/files/{id}`, `/api/v2/files/{id}/url` |
+
+The OpenAPI paths, all client methods, the runtime's REST router, and the
+console reference use the prefix. A contract that
+omits the key gets `/v1`, and a contract that uses `/v1` serializes without
+the key. An empty prefix or `"/"` puts resources at the root. Otherwise the
+prefix must start with `/` and contain no empty segment and no whitespace.
+A trailing slash is trimmed.
+
+Queries are unaffected. They declare absolute paths (`"/me"`,
+`"/v1/search"`), and the prefix is never added to them.
+
+The prefix exists so a service that already serves `/accounts` can adopt
+generated clients without moving its routes. Changing it is breaking in
+both directions, because every generated resource route moves at once.
+
+## Authentication
+
+A contract declares how its callers authenticate:
+
+```json
+"auth": { "kind": "header", "name": "x-tenant", "credential": "tenant" }
+```
+
+| `auth` | On the wire | Rust client constructor |
+| --- | --- | --- |
+| absent, or `{"kind": "none"}` | nothing | `Client::new(url)` |
+| `{"kind": "bearer"}` | `Authorization: Bearer <token>` | `Client::new(url, token)` |
+| `{"kind": "header", "name": "x-tenant", "credential": "tenant"}` | `x-tenant: <value>`, sent verbatim | `Client::new(url, tenant)`, named after `credential` |
+
+A header scheme without `credential` names its constructor argument
+`credential`. The OpenAPI document declares the scheme under
+`components.securitySchemes` and a top-level `security` requirement. The
+four clients put the credential on every request, and the differ tracks
+the scheme.
+
+Changing the scheme is breaking in every direction, including removing it.
+A client generated against a contract that sends a credential keeps
+compiling when the server stops requiring one, but every caller holding it
+then sends a header the contract no longer describes, so the differ reports
+the change for review.
+
+The runtime does not read `auth`. Authenticating a request is the host's
+job, usually in a middleware that seeds a `Principal` (see
+[runtime.md](runtime.md#middleware)).
 
 ## Actions
 
 Actions model verbs beyond list and get: uploads, deletions, signed URLs,
-workflow starts. The contract describes the wire shape; the server binds
-the behavior.
+workflow starts. The contract describes the wire shape, and the service
+binds the behavior.
 
-```rust
-Action {
-    name: "issue_url".into(),
-    method: "POST".into(),
-    path: "/{id}/url".into(),   // "" targets the collection
-    input: vec![ActionField {
-        name: "ttl_secs".into(),
-        kind: TypeRef::Int,      // String, Int, Bool, Json
-        required: false,
-        description: Some("Seconds until the URL stops working.".into()),
-    }],
-    output: ActionOutput::Json,  // Resource, Json, None (HTTP 204)
-    description: Some("Issue a signed URL.".into()),
-    graphql_field: None,
-}
+```json
+"actions": [
+  {
+    "name": "issue_url",
+    "method": "POST",
+    "path": "/{id}/url",
+    "input": [
+      {
+        "name": "ttl_secs",
+        "kind": "int",
+        "description": "Seconds until the URL stops working."
+      }
+    ],
+    "output": "json",
+    "description": "Issue a signed URL."
+  },
+  { "name": "remove", "method": "DELETE", "path": "/{id}", "output": "none" }
+]
 ```
 
-A literal `{id}` in the path marks an instance action and becomes a
-required id parameter on every surface: the OpenAPI path, the mutation
-argument, each client method signature.
+The route is the resource path plus `path`: `POST /v1/files/{id}/url`. An
+empty `path` targets the collection. A literal `{id}` marks an instance
+action and becomes a required id parameter on every surface: the OpenAPI
+path parameter, the `id: ID!` mutation argument, and the first parameter
+of each client method. The generated GraphQL field is camelCase singular
+resource plus PascalCase action (`fileIssueUrl`) unless `graphql_field`
+overrides it.
+
+`output` says what comes back:
+
+| `output` | OpenAPI | GraphQL | Resolver returns |
+| --- | --- | --- | --- |
+| `"resource"` | 200 with the resource schema | the resource type | `Some(row)` |
+| `"json"` (default) | 200 with a free-form object | `JSON!` | `Some(value)` |
+| `"none"` | 204 | `Boolean!` | `None` |
+
+Inputs travel as a JSON request body. `options` closes a string input to a
+set of values, which renders as an `enum` in OpenAPI and MCP and as a menu
+in the console, and which the dispatcher enforces. `multiple` lets a
+caller send several of the options, and it requires `options`. OpenAPI
+and MCP publish such an input as an array. The runtime takes a JSON
+array, the key repeated in a REST query string, or one comma-separated
+string (`"a,b"`), and the resolver reads the comma-separated string
+whichever form arrived.
+
+Validation refuses an empty or duplicate action name, a method other than
+POST, PUT, DELETE, or PATCH, a non-empty path that does not start with
+`/`, duplicate input names, an option listed twice, `options` on a
+non-string input, and `multiple` without `options`.
+
+## Content faces
+
+A resource with stored bytes declares them:
+
+```json
+"content": { "upload": true, "download": true }
+```
+
+These render into the OpenAPI document only, as
+`PUT /v1/files/{id}/content` (an `application/octet-stream` body) and
+`GET /v1/files/{id}/content` (an octet-stream response). They produce no
+GraphQL field, MCP tool, client method, or runtime route. The host serves
+the bytes itself. Content faces need an identity, so `"identity": null`
+refuses them. Removing a face is breaking; adding one is compatible.
 
 ## Sub-resources
 
-A collection that belongs to one instance of a parent is a sub-resource:
-a file's versions, an endpoint's deliveries. It lists and pages like a
-resource and has no id-addressable form of its own, because everything
-about it is reached through the parent.
+A collection that belongs to one instance of a parent is a sub-resource: a
+file's versions, an endpoint's deliveries. It lists and pages like a
+resource and has no by-id form of its own.
 
-```rust
-sub_resources: vec![SubResource {
-    name: "versions".into(),
-    table: "file_version".into(),
-    parent_key: "file".into(),   // server-bound, credited like `pinned`
-    fields: vec![FieldExposure::column("ordinal")],
-    pinned: vec![],
-    filterable: vec![],
-    sortable: vec!["created_at".into()],
-    max_page_size: 50,
-    description: Some("Every stored version of this file.".into()),
-    graphql: None,
-}],
+```json
+"sub_resources": [
+  {
+    "name": "versions",
+    "table": "file_version",
+    "parent_key": "file",
+    "fields": [{ "column": "ordinal" }, { "column": "created_at" }],
+    "sortable": ["created_at"],
+    "max_page_size": 50,
+    "description": "Every stored version of this file."
+  }
+]
 ```
 
-`GET /v1/files/{id}/versions` on REST, `file(id) { versions { items { ... } } }`
-on GraphQL, and a `list_versions_files` method on each generated client.
-The same index rules apply to the sub table, with `parent_key` credited
-as equality-bound, so a sort of `created_at` needs an index holding it
-after `file`.
+That produces `GET /v1/files/{id}/versions` in OpenAPI, a
+`versions(limit: Int = 50, cursor: String, sort: FileVersionSort)` field on
+the `File` GraphQL type, a `file_versions_list` MCP tool, and a
+`list_versions_files` method on each client.
+The same index rules apply to the sub table, with `parent_key` credited as
+equality-bound, so a sort on `created_at` needs an index holding it after
+`file`.
 
-The GraphQL type name composes with the parent (`FileVersion`), so two
-parents may each carry a `versions` collection without colliding.
-Filters and page ceilings belong to the sub-resource. Declaring
-`sortable` on `files` says nothing about what `versions` may sort on.
+The GraphQL type name composes the parent and the sub-resource
+(`FileVersion`), so two parents may each carry a `versions` collection.
+Filters, sorts, and page ceilings belong to the sub-resource. Reading a
+sub-collection requires the parent's `reads_require` scopes and is metered
+by the parent's `rate_class`.
 
 ## Queries
 
-A query is a read that answers a question instead of paging a
-collection. Search is the shape that motivated them: relevance isn't a
-sort column and a query string isn't a filter, so a listing can't
-express one.
+A query is a read with typed inputs and a free-form answer, for questions
+a paged listing cannot express. Search is the usual case: relevance is
+not a sort column and a query string is not a filter.
 
-```rust
-queries: vec![Query {
-    name: "search".into(),
-    path: "/v1/search".into(),          // absolute under the API root
-    input: vec![ActionField {
-        name: "q".into(),
-        kind: TypeRef::String,
-        required: true,
-        ..
-    }],
-    requires: vec!["read".into()],
-    rate_class: Some("reads".into()),
-    searches: vec![SearchKind::Lexical, SearchKind::Vector],
-    backing: vec![/* see below */],
-    ..
-}],
+```json
+"queries": [
+  {
+    "name": "search",
+    "path": "/v1/search",
+    "input": [
+      { "name": "q", "kind": "string", "required": true },
+      { "name": "limit", "kind": "int" }
+    ],
+    "requires": ["read"],
+    "rate_class": "reads",
+    "searches": ["lexical", "vector"],
+    "backing": []
+  }
+]
 ```
 
-Queries render as REST `GET`s, GraphQL query fields, client methods, and
-MCP tools, and carry the same scope and rate declarations every other
-operation carries. The answer is JSON, because its shape belongs to the
-resolver rather than to a projected table. The differ treats them like
-actions: removing one, renaming its field, moving its path, tightening
-its scopes, or gaining a required input all read as breaking.
+A query renders as a REST `GET` at its declared path, a GraphQL query field
+returning `JSON!`, a client method, and an MCP tool. Its inputs are
+query-string parameters on REST and arguments on GraphQL. The answer is
+free-form JSON, because its shape belongs to the resolver. Queries carry
+the same scope and rate declarations every other operation carries.
+
+A path may hold a template such as `/v1/files/{id}/text`. OpenAPI declares
+any `{name}` segment that matches an input as a path parameter. The
+generated clients substitute `{id}` only. The runtime's REST router reads
+path parameters into the query's input, coerced to their declared kinds,
+and a path parameter wins over a query-string pair of the same name.
+
+The differ treats queries like actions, with one difference: removing a
+query input is breaking. See [Diffing](#diffing).
 
 ### Search backings
 
-A listing declares its cost exhaustively, since every filter and sort
-claim is index-validated. A query, the one read whose cost is most
-surprising, would otherwise be an opaque box: typed inputs, a path, and
-nothing about the machinery behind it. Nothing would stop a schema
-change from dropping the FULLTEXT index while the contract went on
-promising search. A backing names that machinery:
+A listing declares its cost in full, because every filter and sort claim
+is index-validated. A backing does the same for a query: it names the
+table, column, and index that answer the search, so a schema change that
+drops the index fails generation.
 
-```rust
-backing: vec![
-    SearchBacking {
-        table: "text_chunk".into(),
-        column: "body".into(),
-        index: "idx_chunk_body".into(),
-        kind: SearchKind::Lexical,       // `@@` through FULLTEXT
-        dimension: None,                 // a FULLTEXT index has no width
-        optional: false,
-    },
-    SearchBacking {
-        table: "text_chunk".into(),
-        column: "embedding".into(),
-        index: "idx_chunk_embedding".into(),
-        kind: SearchKind::Vector,        // KNN through HNSW, MTREE, or DISKANN
-        dimension: Some(768),            // held against the index's DIMENSION
-        optional: true,                  // applied at startup where configured
-    },
-],
+```json
+"backing": [
+  {
+    "table": "text_chunk",
+    "column": "body",
+    "index": "idx_chunk_body",
+    "kind": "lexical"
+  },
+  {
+    "table": "text_chunk",
+    "column": "embedding",
+    "index": "idx_chunk_embedding",
+    "kind": "vector",
+    "dimension": 768,
+    "optional": true
+  }
+]
 ```
 
-A fused search (BM25 candidates and vector neighbors rescored together)
-is two backings on one query; the fusion itself is resolver behavior and
-stays out of the contract. `backing` is optional and empty by default: a
-query without one claims no search machinery, which is what every
-existing contract declares, and old contracts deserialize unchanged.
+A `lexical` backing is answered by `@@` through a FULLTEXT index. A
+`vector` backing is answered by KNN through an HNSW, MTREE, or DISKANN
+index. A fused search (BM25 candidates and vector neighbors rescored
+together) is two backings on one query. The fusion itself is resolver
+behavior and stays out of the contract.
 
-Validation holds a backing to the mirror image of the listing index
-rules. The named table, column, and index must exist; the index must
-hold the column; and it must be the kind's own machinery: FULLTEXT for a
-lexical backing; HNSW, MTREE, or DISKANN for a vector one. A backing
-resting on a plain b-tree is refused the same way a filter resting on a
-FULLTEXT index is, with the violation naming the index and what it
-turned out to be, because "the plain index idx_chunk_tenant cannot
-answer it" points at the fix, while a bare refusal starts a hunt.
+Validation holds a backing to the mirror image of the listing rules. The
+named table, column, and index must exist. The index must hold the column.
+The index must be the kind's own machinery: FULLTEXT for lexical, HNSW,
+MTREE, or DISKANN for vector. A backing resting on a standard index is
+refused with a violation that names the index and its type, the same way a
+filter resting on a FULLTEXT index is. Two identical backings on one query
+are refused.
 
-Which of the three vector machineries answers is the schema's business.
-The contract asks for nearest neighbors through an index; moving a
-column from HNSW to DISKANN is a capacity decision, and the contract
-doesn't have to be rewritten for it.
+Which vector index answers is the schema's choice. Moving a column from
+HNSW to DISKANN does not require a contract change.
 
 ### The width
 
-`dimension` pins what the search sends, and validation holds it against
-the index's own `DIMENSION`. A vector of the wrong width doesn't run
-slower; it answers a different question. And the width changes whenever
-the embedding model does, so a model swap that outran its schema becomes
-a generation failure instead of a quiet change in what comes back. Leave
-it `None` where the deployment chooses the width; state it wherever the
-schema does. A lexical backing has no width, and stating one there is
-refused instead of being compared against a FULLTEXT index that was
-never going to have one.
+`dimension` pins the vector width the search sends, and validation holds
+it against the index's own `DIMENSION`. The width changes whenever the
+embedding model changes, and a query vector of the wrong width does not
+search the index the way the contract describes. Pinning the width turns
+a model swap that the schema has not caught up with into a generation
+failure. Leave `dimension` unset when the deployment chooses the width.
+A lexical backing has no width, and stating one is refused.
 
 ### Machinery a deployment configures
 
-`optional: true` says the deployment is free not to provide this index.
-A file service is the case that needed it: its HNSW index over
-`text_chunk.embedding` is applied at startup, and only where an
-embedding model is configured, at that model's width. Declared outright,
-the claim would be false in every deployment without one. So before this
-flag the backing simply went undeclared, and a real search the contract
-never mentioned is exactly the silence these rules exist to close.
+`"optional": true` says a deployment may lack the index. A file service
+needed this: its HNSW index over `text_chunk.embedding` is created at
+startup, only where an embedding model is configured, at that model's
+width. A required backing would be false in every deployment without a
+model.
 
-Optional relaxes one rule and no others: the index may be absent. An
-index that is present must hold the column, be the kind's own machinery,
-and match the declared width, like any other. `verify --db` reads it the
-same way: the probe runs, and a plan that missed the index is excused on
-exactly one fact, that this database does not define it.
+Optional relaxes one rule: the index may be absent from the schema. An
+index that is present must still hold the column, be the kind's own
+machinery, and match the declared width. `kayak verify` reads it the same
+way: a plan that misses the index is excused only when the database does
+not define that index.
 
 ### The declared search
 
-A backing says what answers a search. `searches` says the search
-happens:
+`searches` states which kinds of search the query performs:
 
-```rust
-searches: vec![SearchKind::Lexical, SearchKind::Vector],
+```json
+"searches": ["lexical", "vector"]
 ```
 
-Every kind named there must have a backing of that kind behind it, or
-generation fails naming the query and the kind. This rule is unusual in
-that it catches an absence instead of a mistake, and absence is how
-unindexed search actually ships: nobody writes down that the neighbor
-query has no index. They write the resolver and move on. Before this
-field there was no way to make the promise, so there was no way to break
-it; a query that declared no backing and a query that needed none were
-the same document.
+Every kind named there must have a backing of that kind, or generation
+fails naming the query and the kind. This rule catches an omission: a
+resolver that runs a vector search over an unindexed column writes nothing
+into the contract, and `searches` gives the gate something to check. It
+cannot force anyone to declare a search, which is why `kayak verify`
+exists beside the static gate.
 
-What it can't do is make anyone declare. That is the standing limit of a
-declaration language, the same one that lets a listing simply not claim
-a filterable column, and it is why `verify --db` exists beside the
-static gate. What the declaration buys is that once made, it is
-load-bearing: dropping the index becomes a build failure, the differ
-calls losing the capability breaking, and the artifacts say which
-machinery a caller is relying on.
+`searches` is empty by default, and a backing whose kind is not declared
+is allowed and still validated, so a contract can adopt the field one
+query at a time. Declaring the same kind twice is refused.
 
-`searches` is empty by default and old contracts deserialize unchanged.
-A backing whose kind is not declared is permitted, and the machinery is
-validated either way, so adopting the field is incremental rather than a
-flag day.
+### Where backings show up
 
-### What it moves
-
-The backing is capacity metadata; it doesn't change the wire shape. REST
-paths, the SDL, and client signatures stay the same when one is
-declared. The declaration surfaces where metadata already surfaces: in
-the MCP tool's annotations, beside scope and rate, and in the OpenAPI
-operation description, where an optional backing reads "where
-configured", because that is the one part of this a caller should expect
-to feel. `searches` renders nowhere of its own: what a query performs is
-implied by the backings that answer for it, and those already render.
-
-The differ reads a removed backing, or any of the four members that say
-where the machinery is (table, column, index, kind), as breaking, and a
-backing added to an existing query as compatible: it promises more about
-the same wire surface. The width and the optional flag move under a
-fixed identity, so each reads as one change instead of a loss plus a
-gain. A width that changes or disappears is breaking, and so is a
-backing that becomes optional; a width that appears and a backing that
-becomes required of every deployment are compatible. Losing a declared
-search is breaking; gaining one is compatible.
-
-`verify --db` probes each backing through its own operator (`@@` for
-lexical, the `<|k,EF|>` KNN form for vector) and holds the plan to the
-named index, which is stricter than merely not scanning: a search served
-by an index other than the declared one is drift too. One boundary is
-the engine's: SurrealDB 3.x has removed MTREE, so while validation
-accepts an MTREE-typed definition for a vector backing, a live 3.x
-database can't hold one and verification composes only the HNSW form.
+A backing does not change the wire shape. REST paths, the SDL, and client
+signatures stay the same. The MCP tool carries the backings in its
+`annotations.backing`, and the OpenAPI operation description reads
+`Search backing: lexical via idx_chunk_body over text_chunk.body; vector
+via idx_chunk_embedding over text_chunk.embedding where configured.` The
+"where configured" marks an optional backing. `searches` renders nowhere.
 
 ## Field guards
 
 A guard is a named visibility policy on one exposed field:
 
-```rust
-FieldExposure::column("digest").with_guard("audit_only"),
+```json
+"fields": [
+  { "column": "path" },
+  { "column": "digest", "guard": "audit_only" }
+]
 ```
 
-The service registers the decision and the dispatcher applies it as
-projection on every row a resolver returns, on every face including
-subscriptions, so a guarded value can't leave through a forgotten path.
-Rows omit denied fields; a read is never an error. A guarded field
-renders nullable on every generated surface, since a field the
-dispatcher may omit can't promise to be present, and its OpenAPI
-property carries `x-guard` naming the policy.
+The service registers a decision under that name (see
+[runtime.md](runtime.md#field-guards)), and the dispatcher applies it to
+every row a resolver returns, on every face including subscriptions. Rows
+omit denied fields, and a read is never an error. A guarded field renders
+nullable on every generated surface, since the dispatcher may omit it, and
+its OpenAPI property carries `x-guard` naming the policy. Guard names are
+lowercase snake case.
 
-A caller who can't see a column can't narrow by it either: filtering or
-sorting on a hidden column refuses, because narrowing by a value is
-reading it.
+A caller who cannot see a column cannot narrow by it either: filtering or
+sorting on a hidden column is refused with `forbidden`.
 
-A guard moving in any direction is breaking. Guarding an open field
-takes values away from deployed callers, and swapping guards changes
-which callers those are. Removing a guard refuses nobody, but it removes
-the redaction itself: the column becomes visible to every caller the
-guard used to deny, on the API faces and in the derived engine policy
-alike (see generators.md). Wider disclosure is not additive for whoever
-the guard protected, so the differ names it and review decides.
+Any change to a guard is breaking: adding one, swapping it, or removing
+it. Adding or swapping a guard takes values away from some callers.
+Removing one shows the column to every caller the guard used to deny, in
+the API and in the derived engine policy (see
+[generators.md](generators.md#the-engine-policy-face)). The differ reports
+it so a reviewer decides.
 
 ## Rate classes
 
-A rate class is a named consumption budget, defined once and
-referenced by the operations it bounds:
+A rate class is a named consumption budget, defined once and referenced by
+the operations it meters:
 
-```rust
-rate_classes: vec![RateClass { name: "reads".into(), units_per_minute: 6000 }],
-resources: vec![Resource { rate_class: Some("reads".into()), /* ... */ }],
+```json
+"rate_classes": [{ "name": "reads", "units_per_minute": 6000 }]
 ```
 
-`rate_class` on a resource meters its reads (list, get,
-sub-collections, watch opens); on an action it meters that action,
-with no fallback to the resource's class. A listing costs its clamped
-row limit and everything else costs one, so a caller asking for
-hundred-row pages spends its budget a hundred times faster than one
-probing single rows. Exhaustion refuses with `too_many_requests`,
-which is retryable after waiting.
+A resource, action, or query then names it with `"rate_class": "reads"`.
+On a resource, `rate_class` meters its reads: list, get, sub-collections,
+and subscription opens. On an action it meters that action, with no
+fallback to the resource's class. On a query it meters the query. A
+listing costs its clamped row limit and every other operation costs one,
+so a caller asking for hundred-row pages spends its budget a hundred times
+faster than one fetching single rows. An exhausted budget refuses with
+`too_many_requests`, which the caller may retry after waiting.
 
-References to undefined classes refuse at validation. The differ
-treats attaching a class to an unmetered operation or shrinking a
-budget as breaking, and detaching or growing as compatible.
+Class names are lowercase snake case and unique. A reference to an
+undefined class is refused at validation. The runtime refuses to build a
+dispatcher for a contract that names a class unless a rate store is
+supplied.
 
 ## Scopes
 
-`reads_require` on a resource names the scopes a caller must hold to
-list, get, read sub-collections of, or watch it. `requires` on an
-action does the same for invoking it. Empty means open to any caller
-the middleware admits, which is every existing contract's behavior.
+`reads_require` on a resource names the scopes a caller must hold to list
+it, get from it, read its sub-collections, or watch it. `requires` on an
+action or query does the same for invoking it. Empty means open to any
+caller the middleware admits.
 
-```rust
-reads_require: vec!["files_read".into()],
-actions: vec![Action { requires: vec!["files_write".into()], /* ... */ }],
+```json
+"reads_require": ["files_read"],
+"actions": [{ "name": "remove", "method": "DELETE", "path": "/{id}", "requires": ["files_write"] }]
 ```
 
-The dispatcher enforces them after the middleware chain and before the
+The dispatcher checks scopes after the middleware chain and before the
 resolver, so an auth layer that resolves the principal mid-chain still
-counts and no guarded data is touched on a refusal. An anonymous
-caller against a declared scope refuses `unauthorized`; an identified
-caller missing one refuses `forbidden`, naming the scope. OpenAPI
-operations carry their requirements as `x-requires-scopes`, and the
-differ treats a new requirement as breaking and a removed one as
-compatible. `reads_require` also feeds the engine policy face:
-`derive_policy` renders it as a select conjunct on the resource's
-table and its sub-resource tables, so a deployment enforcing at the
-engine tightens both layers with one edit (see generators.md).
+counts and no data is read on a refusal. An anonymous caller against a
+declared scope is refused `unauthorized`. An identified caller missing a
+scope is refused `forbidden`, naming the scope.
+
+OpenAPI list, get, sub-collection, and action operations carry their
+requirements as `x-requires-scopes`. Query operations in the OpenAPI
+document do not. MCP tools, queries included, carry them as
+`annotations.requiredScopes`. `reads_require` also feeds the engine policy:
+`derive_policy` renders it as a select conjunct on the resource's table and
+its sub-resource tables (see
+[generators.md](generators.md#the-engine-policy-face)).
+
+## Limits
+
+`limits` declares request-cost ceilings, so they appear in the artifacts
+and the differ tracks them:
+
+```json
+"limits": {
+  "max_depth": 10,
+  "max_complexity": 500,
+  "max_watches_per_principal": 5
+}
+```
+
+| Key | Effect |
+| --- | --- |
+| `max_depth` | Maximum selection depth of one GraphQL operation. The live GraphQL schema applies it. |
+| `max_complexity` | Maximum field-selection count of one GraphQL operation. The live GraphQL schema applies it. |
+| `max_watches_per_principal` | Maximum open subscriptions per principal. Over the ceiling refuses with `too_many_requests`; closing a subscription frees a slot. |
+
+Every key is optional. The OpenAPI document carries the declared limits as
+a root `x-limits` object. Introducing or lowering a limit is breaking.
+Raising or removing one is compatible.
 
 ## Watching
 
-`watchable: true` opens the resource to subscribers.
-`limits.max_watches_per_principal` caps how many subscriptions one
-caller may hold open at once; over the ceiling refuses with the
-retryable code, and closing a subscription frees the slot. It adds a
-GraphQL Subscription field and requires the service to register a watch
-resolver; nothing about REST changes, because Kayak generates no
-long-lived HTTP operations.
+`"watchable": true` opens a resource to subscribers. It adds a GraphQL
+Subscription field (`fileChanged` by default) and requires the service to
+register a watch resolver. Nothing about REST, MCP, or the clients
+changes, because Kayak generates no long-lived HTTP operations. A resource
+without a listing cannot be watchable.
 
-Watchers narrow the stream with the same `filterable` columns list
-callers use, so a resource has one filter vocabulary whichever operation
-reads it. A column watchers should filter on therefore needs an index,
-like any other filter. Streams take no limit or cursor; paging doesn't
-apply to them.
+Watchers narrow the stream with the same `filterable` columns list callers
+use, so a column watchers filter on needs an index like any other filter.
+Streams take no limit or cursor.
 
 ## GraphQL name overrides
 
-GraphQL names are part of a deployed schema's identity, since fragments
-name types and queries name fields. When the derived defaults (type
-`File`, query fields `files` and `file`, mutation `fileIssueUrl`,
-subscription `fileChanged`) need to differ, override them per resource:
+GraphQL names are part of a deployed schema's identity, because fragments
+name types and queries name fields. When the derived names need to differ,
+override them per resource:
 
-```rust
-graphql: Some(GraphqlNames {
-    type_name: Some("StoredFile".into()),
-    list_field: Some("storedFiles".into()),
-    get_field: Some("storedFile".into()),
-    watch_field: Some("storedFileChanged".into()),
-}),
+```json
+"graphql": {
+  "type_name": "StoredFile",
+  "list_field": "storedFiles",
+  "get_field": "storedFile",
+  "watch_field": "storedFileChanged"
+}
 ```
 
-Overrides touch the GraphQL surface only. REST paths and generated
-clients keep the resource name. Every override is validated: GraphQL
-name grammar, no `__` prefix, no collision with a root type, no
-collision across resources on the effective type name, and no collision
-with a SurrealDB v3 reserved name. The reserved-word list is exported as
-`kayak::is_reserved` for schema layers to reuse. Field renames pass
-through the same reserved gate.
+The defaults are the PascalCase singular for the type (`File`), the
+camelCase resource name for the list field (`files`), the camelCase
+singular for the get field (`file`), and the camelCase singular plus
+`Changed` for the watch field (`fileChanged`). Sub-resources take
+`type_name` and `field`. Actions and queries take `graphql_field`.
+
+Overrides touch the GraphQL surface only. REST paths, MCP tool names, and
+generated clients keep the resource name. Resource overrides are checked
+against the GraphQL name grammar, the reserved `__` prefix, the root type
+names `Query`, `Mutation`, and `Subscription`, and the SurrealDB v3
+reserved names. Sub-resource and action overrides are checked against the
+grammar, the `__` prefix, and the reserved names. Effective type names may
+not collide across resources and sub-resources. The reserved-word list is
+exported as `kayak::is_reserved`.
 
 ## Validation
 
-`kayak::validate(&contract, &schema)` returns a list of violations;
-empty means valid. Generation refuses invalid contracts with every
-violation named. The checks: tables and columns exist, renames do not
-collide, filters are indexed by an index that can narrow one, sorts are
-reachable through such an index's prefix, the server-bound columns lead
-some index so the plain listing seeks rather than scans, search backings
-rest on the kind of index that can answer them at the width they claim,
-every declared search has a backing behind it, action definitions are
-well-formed, chosen names are valid for every surface they reach.
+`kayak::validate(&contract, &schema)` returns a list of violations. An
+empty list means valid. Every generation target runs it first and refuses
+with every violation named. The two library functions that take no
+schema, `generate_mcp_tools` and `derive_policy`, cannot run it, so call
+`validate` before them or go through `generate_all`, which does (see
+[generators.md](generators.md#targets)).
 
-Run the gate in the owning service's tests against the real schema
-definitions. Schema drift then fails a test naming the offending column
-before anything ships.
+```rust
+let violations = kayak::validate(&contract, &schema);
+for violation in &violations {
+    eprintln!("{violation}");
+}
+assert!(violations.is_empty());
+```
+
+It checks:
+
+- Revision: `ir_revision` is at least 1 and no newer than the newest
+  revision this build of Kayak reads (`kayak::ir::IR_REVISION`, currently
+  1), since a newer revision can carry a change an older reader would
+  misread.
+- Tables and columns: every named table and column exists, including
+  pins, `pinned_either` columns, filters, sorts, a resource's identity
+  column, and `parent_key`.
+- Index rules: every filter is covered by a standard or unique index, every
+  sort is reachable through such an index's prefix, the server-bound
+  columns lead some index, each `pinned_either` branch passes on its own,
+  and a claim resting only on a FULLTEXT or vector index names that index.
+- Search: backings rest on the right kind of index, over the right column,
+  at the declared width, and every declared search has a backing.
+- Names: resource and sub-resource names are lowercase snake or kebab
+  case; action, action input, query, query input, and rate class names are
+  lowercase snake case, as are the scopes in `reads_require` and action
+  `requires`; resource field renames and guard names are lowercase snake
+  case and renames avoid reserved words; names are unique where they must
+  be; GraphQL overrides pass the checks listed under
+  [GraphQL name overrides](#graphql-name-overrides); two operations may
+  not derive the same client method name.
+- Shape: action methods and paths, input options, `api_prefix`, faces
+  rules, `filter_options` keys, identity rules, and that a resource which
+  renders rows exposes at least one field.
+- References: every named rate class is defined.
+
+It does not check:
+
+- `max_page_size`. A value of `0` passes validation and makes the runtime
+  panic on the first listing.
+- Unknown JSON keys, which serde ignores.
+- A query's `graphql_field`, its `requires` scope names, duplicate query
+  input names, or query input `options` and `multiple`.
+- A sub-resource's identity column, and the renames and guard names on
+  sub-resource fields.
+
+Run the gate in the owning service's test suite against the real schema
+definitions, so schema drift fails a test that names the column.
 
 ### Verifying against a live planner
 
-Static validation proves an index exists; it can't prove the planner
-uses it. That check lives behind the `verify` cargo feature, since kayak
-carries no database client of its own and the client rides this feature
-gate the way async-graphql rides `graphql`.
+Static validation proves an index exists. It cannot prove the planner
+uses it. That check needs a database client, so it lives behind the
+`verify` cargo feature.
 
-`kayak::verify::verify_contract` composes one representative listing per
-filter claim and per sort claim (pins as equality binds, the claimed
-filter bound, the claimed sort ordered, always with a LIMIT) and one
-probe per search backing through its own operator. It runs each through
-`EXPLAIN` against a live database and returns every claim the planner
-does not serve, named the way validation names its violations. A listing
-claim fails when its plan iterates the table. A backing fails when its
-plan does not reach the named index, unless the backing is optional and
-this database does not define that index, which is the one excuse on
-offer; checking it costs one extra round trip, spent only on an optional
-backing that already came back unserved. `kayak::verify::probes` exposes
-the composed queries without running them, so you can inspect what will
-be asked before pointing the asker at production. The same check runs
-from the CLI:
+`kayak::verify::verify_contract(&client, &contract)` composes one
+representative listing per filter claim and per sort claim, for resources
+and sub-resources: the pins as equality binds, the claimed filter bound,
+the claimed sort ordered, always with a `LIMIT`. A resource with
+`pinned_either` gets that set of probes once per branch, with the branch
+column bound beside the pins, since the engine answers each branch with
+its own seek and one walked branch turns the whole read into a scan. It
+composes one probe per
+search backing through the backing's own operator (`@@` for lexical, the
+`<|k,EF|>` KNN form for vector). It runs each through `EXPLAIN` against a
+live database and returns every claim the planner does not serve:
 
+- A listing claim fails when its plan iterates the table.
+- A backing fails when its plan does not reach the named index. An
+  optional backing is excused when this database does not define the
+  index; checking that costs one extra query, spent only on an optional
+  backing that already failed.
+
+`kayak::verify::probes(&contract)` returns the composed probes without
+running them, so you can read what will be asked before pointing it at a
+database. SurrealDB 3.x has removed MTREE, so while validation accepts an
+MTREE-typed vector index, a live 3.x database cannot hold one and
+verification composes only the HNSW form.
+
+The same check runs from the CLI:
+
+```sh
+kayak verify --contract contract.json --db ws://localhost:8000 --namespace app --database app --user root --pass secret
 ```
-kayak verify --contract contract.json --db ws://localhost:8000 \
-    --namespace app --database app [--user root --pass secret]
-```
 
-Exit is non-zero when any claim scans, with each one printed, so it
-gates in CI beside `diff`.
+It exits non-zero when any claim fails, printing each one, so it gates in
+CI beside `diff`. See [generators.md](generators.md#kayak-verify).
 
 ## Diffing
 
-`kayak::diff(&old, &new)` compares two contracts at the IR level and
-classifies every change. Breaking: a removed resource, field, filter, or
-sort; a field re-pointed to a different column under the same wire name;
-a lowered page ceiling; a closed set introduced on a filter that took
-anything, or a value taken out of one; a moved action; a changed output;
-an input that became required or changed type; any effective GraphQL
-rename; a resource that stopped being watchable; a removed sub-resource,
-or one that lost a field, filter, sort, or page headroom; a removed
-search backing, or any of the four members that place one re-pointed; a
-backing that stopped pinning its width or pinned a different one; a
-backing that became optional; a search the query no longer performs.
-Compatible, and each one named: an added resource, field, filter, sort,
-sub-resource, action, query, or optional input, on a resource or a
-sub-resource alike; a raised page ceiling; a value added to a filter's
-closed set, or the set lifted; a resource that became watchable; a
-backing added to an existing query; a width newly pinned; a backing now
-required of every deployment; a search newly performed; and removal of
-an optional input.
+`kayak::diff(&old, &new)` compares two contracts and returns a list of
+`Change` values, each `Breaking` or `Compatible`. `kayak diff old new` on
+the CLI prints them and exits 1 when anything is breaking. Additions are
+named too, as compatible changes, so a contract that only grew still
+shows what it gained.
 
-The CLI exits non-zero on breaking changes
-(`kayak diff old.json new.json`), which makes the gate one line of CI.
+```rust
+let changes = kayak::diff(&old, &new);
+let breaking = changes.iter().any(kayak::Change::is_breaking);
+for change in &changes {
+    println!("{}", change.message());
+}
+```
+
+Resources, sub-resources, actions, queries, fields, and inputs are matched
+by name (fields by API name). Renaming any of them reads as a removal plus
+an addition. GraphQL names are compared by their effective value, so
+writing out a default is not a change. Identities are compared on the
+wire, so writing `"identity": "id"` is not a change either.
+
+### Reported as breaking
+
+- Contract: `auth` added, removed, or switched; `api_prefix` changed; a
+  rate class budget lowered; a limit introduced or lowered.
+- Resource: removed; a field removed; a field pointed at a different
+  column under the same API name; a guard added, swapped, or removed; the
+  identity renamed or withdrawn; a filter removed; a sort removed;
+  `max_page_size` lowered; `filter_options` introduced on a filter that
+  had none; a value removed from a filter's `filter_options`;
+  `pinned_either` changed in any way; the list or
+  get face withdrawn; the effective GraphQL type, list field, or get field
+  renamed; `watchable` turned off; the watch field renamed while
+  watchable; a content upload or download face removed; reads newly
+  metered by a rate class; a scope added to `reads_require`.
+- Sub-resource: removed; a field removed, re-pointed, or its guard moved;
+  the identity renamed or withdrawn; a filter or sort removed;
+  `max_page_size` lowered; the GraphQL field or type renamed.
+- Action: removed; method or path changed; output changed; GraphQL field
+  renamed; newly metered; a scope added to `requires`; a required input
+  added; an optional input made required; an input's type changed;
+  `options` introduced on an input that had none; a value removed from
+  `options`.
+- Query: removed; path changed; GraphQL field renamed; newly metered; a
+  scope added to `requires`; a required input added; an input made
+  required; an input's type changed; an input removed; `options`
+  introduced or a value removed; a declared search removed; a backing
+  removed, or its table, column, index, or kind changed; a backing's width
+  changed or no longer pinned; a backing made optional.
+
+Clearing an input's `options` entirely is reported as one breaking change
+per removed value, even though the input then accepts anything.
+
+### Reported as compatible
+
+- Contract: a rate class budget raised; a limit raised or removed.
+- Resource: added; a field added; an identity gained where rows had none;
+  a filter added; a sort added; `max_page_size` raised; a value added to a
+  filter's `filter_options`; a filter's `filter_options` removed, so it
+  takes any value; a face added back; `watchable` turned on; a content
+  face added; a sub-resource added; an action added; reads no longer
+  metered; a scope removed from `reads_require`.
+- Sub-resource: a field added; an identity gained where rows had none; a
+  filter or sort added; `max_page_size` raised.
+- Action: an optional input added; any input removed; a value added to
+  `options`; no longer metered; a scope removed from `requires`.
+- Query: added; an optional input added; a value added to `options`; no
+  longer metered; a scope removed from `requires`; a search newly
+  declared; a backing added; a width newly pinned; a backing made
+  required of every deployment.
+
+Removing an action input is compatible because the dispatcher drops
+unknown action input keys, so an old client that still sends the input
+keeps working. Queries refuse unknown inputs, which is why removing a
+query input is breaking.
+
+### Not reported
+
+The differ emits nothing for these changes:
+
+- Changes to `pinned`, `table`, `parent_key`, `multiple`, or any
+  `description`.
+- `filter_options` on a filter that is itself added or removed. The
+  filter's own line covers it.
+- The contract's `name`, `version`, or `ir_revision`.
+- An input made optional.
+- A rate class added to or removed from `rate_classes`. Changes show up
+  through the operations that reference it.
+- An operation moved from one rate class to another.
+
+An empty result prints `no contract changes` on the CLI.

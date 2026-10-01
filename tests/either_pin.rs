@@ -8,8 +8,8 @@
 //! The rule these assert was measured against SurrealDB 3 rather than
 //! reasoned about: the engine answers the disjunction as a
 //! UnionIndexScan, one seek per branch, so every branch needs an index
-//! whose prefix is its own column. The friend table in
-//! polyconsole-social is the shape that motivated it.
+//! whose prefix is its own column. The friend table of a social
+//! service is the shape that motivated it.
 
 use kayak::diff::{diff, Change};
 use kayak::validate::validate;
@@ -72,7 +72,7 @@ fn contract(either: &[&str], filterable: &[&str]) -> Contract {
 
 #[test]
 fn both_branches_indexed_is_accepted() {
-    // The shape polyconsole-social's friend table actually has.
+    // The shape a social service's friend table actually has.
     assert_eq!(
         validate(&contract(&["a", "b"], &["state"]), &schema(composites())),
         vec![],

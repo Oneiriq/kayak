@@ -18,12 +18,14 @@ against.
 
 ```sh
 cargo build
+cargo test
 cargo test --all-features
 ```
 
-`--all-features` includes the runtime, GraphQL, console, and `verify`
-tests. The `verify` tests use an embedded in-memory SurrealDB, so no
-database server is needed.
+Plain `cargo test` builds with default features and runs the validation,
+generator, differ, and CLI tests. `--all-features` adds the runtime,
+GraphQL, console, and `verify` tests. The `verify` tests use an embedded
+in-memory SurrealDB, so no database server is needed.
 
 Before you open a pull request, run what CI runs:
 
@@ -31,7 +33,11 @@ Before you open a pull request, run what CI runs:
 cargo fmt --all --check
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test --all-features
+cargo test
 ```
+
+CI runs both test builds, so a test that needs a feature has to carry a
+`#[cfg(feature = "...")]` gate, or the default build fails to compile.
 
 ## Golden files
 

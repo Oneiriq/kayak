@@ -124,18 +124,12 @@ pub fn schema_builder(
         let page_name = format!("{type_name}Page");
         let sort_name = format!("{type_name}Sort");
 
-        // The object type: id plus every exposed field, each plucking
-        // its key from the parent row.
+        // The object type: the identity plus every exposed field, each
+        // plucking its key from the parent row.
         let mut object = Object::new(&type_name);
-        object = object.field(Field::new("id", Gql::named_nn(Gql::ID), |ctx| {
-            FieldFuture::new(async move {
-                let row = parent_row(&ctx)?;
-                Ok(row
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|id| FieldValue::value(GqlValue::String(id.to_owned()))))
-            })
-        }));
+        if let Some(identity) = synthesised_identity(resource.wire_identity(), &resource.fields) {
+            object = object.field(identity_field(identity));
+        }
         for exposure in &resource.fields {
             let field_def = find_column(table, &exposure.column)?;
             let (base, datetime, json) = graphql_scalar(&field_def.field_type);
@@ -164,15 +158,9 @@ pub fn schema_builder(
             let sub_page = format!("{sub_type}Page");
 
             let mut sub_object = Object::new(&sub_type);
-            sub_object = sub_object.field(Field::new("id", Gql::named_nn(Gql::ID), |ctx| {
-                FieldFuture::new(async move {
-                    let row = parent_row(&ctx)?;
-                    Ok(row
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .map(|id| FieldValue::value(GqlValue::String(id.to_owned()))))
-                })
-            }));
+            if let Some(identity) = synthesised_identity(sub.identity.wire_column(), &sub.fields) {
+                sub_object = sub_object.field(identity_field(identity));
+            }
             for exposure in &sub.fields {
                 let field_def = find_column(sub_table, &exposure.column)?;
                 let (base, datetime, json) = graphql_scalar(&field_def.field_type);
@@ -236,6 +224,9 @@ pub fn schema_builder(
             let sub_name = sub.name.clone();
             let sub_filterable = sub.filterable.clone();
             let sub_sortable = sub.sortable.clone();
+            // The parent row names itself by its identity column, which
+            // is not always `id`.
+            let parent_key = addressed(resource)?;
             let mut sub_field =
                 Field::new(sub.graphql_field(), Gql::named_nn(&sub_page), move |ctx| {
                     let dispatcher = sub_dispatcher.clone();
@@ -243,9 +234,10 @@ pub fn schema_builder(
                     let sub = sub_name.clone();
                     let filterable = sub_filterable.clone();
                     let sortable = sub_sortable.clone();
+                    let parent_key = parent_key.clone();
                     FieldFuture::new(async move {
                         let parent_id = parent_row(&ctx)?
-                            .get("id")
+                            .get(parent_key.as_str())
                             .and_then(|v| v.as_str())
                             .unwrap_or_default()
                             .to_owned();
@@ -410,20 +402,27 @@ pub fn schema_builder(
         if !resource.sortable.is_empty() {
             list_field = list_field.argument(InputValue::new("sort", Gql::named(&sort_name)));
         }
-        query = query.field(list_field);
+        // Only the faces the resource exposes, as the SDL prints them.
+        if resource.faces.list {
+            query = query.field(list_field);
+        }
 
-        // Query: the get field.
-        let get_dispatcher = dispatcher.clone();
-        let get_resource = resource.name.clone();
-        query = query.field(
-            Field::new(
+        // Query: the get field. Its argument is the identity column, as
+        // the SDL prints it, since a caller names it at the call site.
+        if resource.faces.get {
+            let get_dispatcher = dispatcher.clone();
+            let get_resource = resource.name.clone();
+            let identity = addressed(resource)?;
+            let argument = identity.clone();
+            let get_field = Field::new(
                 resource.graphql_get_field(),
                 Gql::named(&type_name),
                 move |ctx| {
                     let dispatcher = get_dispatcher.clone();
                     let resource = get_resource.clone();
+                    let identity = identity.clone();
                     FieldFuture::new(async move {
-                        let id = ctx.args.try_get("id")?.string()?.to_owned();
+                        let id = ctx.args.try_get(&identity)?.string()?.to_owned();
                         let jctx = request_context(&ctx);
                         let row = dispatcher
                             .get(&resource, jctx, GetArgs { id })
@@ -433,8 +432,9 @@ pub fn schema_builder(
                     })
                 },
             )
-            .argument(InputValue::new("id", Gql::named_nn(Gql::ID))),
-        );
+            .argument(InputValue::new(argument, Gql::named_nn(Gql::ID)));
+            query = query.field(get_field);
+        }
 
         // Mutation: one field per action.
         for action in &resource.actions {
@@ -654,6 +654,44 @@ fn parent_row<'a>(
     ctx: &'a async_graphql::dynamic::ResolverContext<'_>,
 ) -> async_graphql::Result<&'a serde_json::Value> {
     ctx.parent_value.try_downcast_ref::<serde_json::Value>()
+}
+
+/// The identity column the type synthesises, as the SDL decides it:
+/// none when the rows name themselves not at all, and none when the
+/// resource exposes the column as a field with its real type.
+fn synthesised_identity<'a>(
+    identity: Option<&'a str>,
+    fields: &[crate::ir::FieldExposure],
+) -> Option<&'a str> {
+    identity.filter(|id| !fields.iter().any(|f| f.api_name() == *id))
+}
+
+/// The synthesised identity field, plucking its key from the row.
+fn identity_field(key: &str) -> Field {
+    let key = key.to_owned();
+    Field::new(key.clone(), Gql::named_nn(Gql::ID), move |ctx| {
+        let key = key.clone();
+        FieldFuture::new(async move {
+            let row = parent_row(&ctx)?;
+            Ok(row
+                .get(&key)
+                .and_then(|v| v.as_str())
+                .map(|id| FieldValue::value(GqlValue::String(id.to_owned()))))
+        })
+    })
+}
+
+/// The column that addresses one instance of `resource`. Validation
+/// refuses every addressed face on a resource whose rows carry no
+/// identity, so reaching the error means the two disagree.
+fn addressed(resource: &crate::ir::Resource) -> Result<String, GraphqlBuildError> {
+    resource
+        .wire_identity()
+        .map(str::to_owned)
+        .ok_or_else(|| GraphqlBuildError::Unresolved {
+            what: "identity of",
+            name: resource.name.clone(),
+        })
 }
 
 /// Pluck one key from a row and convert it to a GraphQL value.

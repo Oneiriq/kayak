@@ -496,6 +496,7 @@ fn two_resources_cannot_share_a_name() {
 /// of it. Field values are caller-controlled: a file path or a
 /// metadata string of that shape took down the listing that showed
 /// it.
+#[cfg(feature = "console")]
 #[test]
 fn a_crafted_field_value_does_not_panic_the_cell() {
     // Passes every shape check, and '€' occupies bytes 17, 18 and 19.

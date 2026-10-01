@@ -1,7 +1,7 @@
 //! Field guards: per-caller visibility, decided over the context.
 //!
 //! A guard is a named predicate the service registers. The contract
-//! references it from a [`FieldExposure`](crate::ir::FieldExposure);
+//! references it from a [`FieldExposure`];
 //! the dispatcher applies it as projection on every row a resolver
 //! returns, on every face, so a guarded value cannot leave the
 //! process through a forgotten path.

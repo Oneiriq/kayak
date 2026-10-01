@@ -124,8 +124,8 @@ Helpers exist for the small types: `FieldExposure::column`,
 | --- | --- | --- |
 | `name` | required | Contract name. Becomes the OpenAPI title, appears in client file headers, and names the Go package. |
 | `version` | required | The contract's own version. Becomes the OpenAPI `info.version`. |
-| `ir_revision` | `1` | IR format revision. |
-| `api_prefix` | `"/v1"` | Path prefix for resource routes in generated artifacts. See [Where the routes live](#where-the-routes-live). |
+| `ir_revision` | `1` | IR format revision. Validation refuses `0` and any revision newer than this build of Kayak reads, and every CLI command that reads a contract refuses a newer one, `diff` and `verify` included. |
+| `api_prefix` | `"/v1"` | Path prefix for resource routes, in the generated artifacts and the runtime's REST router. See [Where the routes live](#where-the-routes-live). |
 | `auth` | `{"kind": "none"}` | How callers authenticate. See [Authentication](#authentication). |
 | `rate_classes` | `[]` | Named consumption budgets. See [Rate classes](#rate-classes). |
 | `limits` | none | GraphQL cost ceilings and a subscription cap. See [Limits](#limits). |
@@ -202,7 +202,7 @@ Helpers exist for the small types: `FieldExposure::column`,
 | `required` | `false` | Whether the caller must send it. |
 | `description` | none | Rendered into OpenAPI and MCP. |
 | `options` | `[]` | A closed set of allowed values. String inputs only. |
-| `multiple` | `false` | Whether the caller may send several of `options`, as one comma-separated string. |
+| `multiple` | `false` | Whether the caller may send several of `options`, as a JSON array or one comma-separated string. |
 
 ### Query
 
@@ -254,8 +254,12 @@ can be addressed, so validation refuses it together with a get face,
 content faces, any action whose path holds `{id}`, and any sub-resource.
 Sub-resources take `identity` too, with the same three states.
 
-The runtime does not read `identity`. See
-[runtime.md](runtime.md#known-limitations).
+The live GraphQL schema reads it too: its type carries the identity field
+the SDL prints, its get field takes the identity column as its argument,
+and a sub-collection field reads the parent row's identity column. The
+REST router addresses an instance by its position in the path, so it
+serves any identity. The console's listing page still links rows through
+their `id` key (see [runtime.md](runtime.md#known-limitations)).
 
 ## Pinned, filterable, sortable
 
@@ -304,9 +308,12 @@ whose values form a closed set:
 "filter_options": { "state": ["pending", "ready", "deleted"] }
 ```
 
-The console renders it as a menu. Validation requires every key to be a
-filterable column and every list to be non-empty. The runtime does not
-enforce it: a filter value outside the list still reaches the resolver.
+Validation requires every key to be a filterable column and every list to
+be non-empty. The OpenAPI list parameter and the MCP list tool publish the
+set as an `enum`, and the console renders it as a menu. The dispatcher
+enforces it on every face: a listing or a subscription that filters on a
+value outside the list is refused with `bad_request` before the resolver
+runs.
 
 ## Pinning to one of several columns
 
@@ -356,14 +363,15 @@ sub-resource is refused because it generates nothing.
 
 Withdrawing a face is breaking. Adding one back is compatible.
 
-The runtime does not read `faces`. The dispatcher still requires list and
-get resolvers, and the REST router and live GraphQL schema still serve both
-faces. See [runtime.md](runtime.md#known-limitations).
+The runtime serves only the declared faces. The dispatcher needs no
+resolver for a withdrawn face and refuses a call to it, the REST router
+has no route for it, the live GraphQL schema has no field for it, and the
+console neither lists nor links to it (see
+[runtime.md](runtime.md#resolvers)).
 
 ## Where the routes live
 
-In the generated artifacts, resource routes hang under `api_prefix`, which
-defaults to `/v1`:
+Resource routes hang under `api_prefix`, which defaults to `/v1`:
 
 | `api_prefix` | Generated routes |
 | --- | --- |
@@ -371,7 +379,8 @@ defaults to `/v1`:
 | `""` | `/files`, `/files/{id}`, `/files/{id}/url` |
 | `"/api/v2"` | `/api/v2/files`, `/api/v2/files/{id}`, `/api/v2/files/{id}/url` |
 
-The OpenAPI paths and all client methods use the prefix. A contract that
+The OpenAPI paths, all client methods, the runtime's REST router, and the
+console reference use the prefix. A contract that
 omits the key gets `/v1`, and a contract that uses `/v1` serializes without
 the key. An empty prefix or `"/"` puts resources at the root. Otherwise the
 prefix must start with `/` and contain no empty segment and no whitespace.
@@ -384,23 +393,19 @@ The prefix exists so a service that already serves `/accounts` can adopt
 generated clients without moving its routes. Changing it is breaking in
 both directions, because every generated resource route moves at once.
 
-The runtime's REST router and console serve resource routes under `/v1`
-whatever `api_prefix` says. See
-[runtime.md](runtime.md#known-limitations).
-
 ## Authentication
 
 A contract declares how its callers authenticate:
 
 ```json
-"auth": { "kind": "header", "name": "x-copal-tenant", "credential": "tenant" }
+"auth": { "kind": "header", "name": "x-tenant", "credential": "tenant" }
 ```
 
 | `auth` | On the wire | Rust client constructor |
 | --- | --- | --- |
 | absent, or `{"kind": "none"}` | nothing | `Client::new(url)` |
 | `{"kind": "bearer"}` | `Authorization: Bearer <token>` | `Client::new(url, token)` |
-| `{"kind": "header", "name": "x-copal-tenant", "credential": "tenant"}` | `x-copal-tenant: <value>`, sent verbatim | `Client::new(url, tenant)`, named after `credential` |
+| `{"kind": "header", "name": "x-tenant", "credential": "tenant"}` | `x-tenant: <value>`, sent verbatim | `Client::new(url, tenant)`, named after `credential` |
 
 A header scheme without `credential` names its constructor argument
 `credential`. The OpenAPI document declares the scheme under
@@ -463,8 +468,11 @@ overrides it.
 Inputs travel as a JSON request body. `options` closes a string input to a
 set of values, which renders as an `enum` in OpenAPI and MCP and as a menu
 in the console, and which the dispatcher enforces. `multiple` lets a
-caller send several of the options as one comma-separated string
-(`"a,b"`); it requires `options`.
+caller send several of the options, and it requires `options`. OpenAPI
+and MCP publish such an input as an array. The runtime takes a JSON
+array, the key repeated in a REST query string, or one comma-separated
+string (`"a,b"`), and the resolver reads the comma-separated string
+whichever form arrived.
 
 Validation refuses an empty or duplicate action name, a method other than
 POST, PUT, DELETE, or PATCH, a non-empty path that does not start with
@@ -508,7 +516,8 @@ resource and has no by-id form of its own.
 
 That produces `GET /v1/files/{id}/versions` in OpenAPI, a
 `versions(limit: Int = 50, cursor: String, sort: FileVersionSort)` field on
-the `File` GraphQL type, and a `list_versions_files` method on each client.
+the `File` GraphQL type, a `file_versions_list` MCP tool, and a
+`list_versions_files` method on each client.
 The same index rules apply to the sub table, with `parent_key` credited as
 equality-bound, so a sort on `created_at` needs an index holding it after
 `file`.
@@ -550,9 +559,9 @@ the same scope and rate declarations every other operation carries.
 
 A path may hold a template such as `/v1/files/{id}/text`. OpenAPI declares
 any `{name}` segment that matches an input as a path parameter. The
-generated clients substitute `{id}` only. The runtime's REST router does
-not pass path parameters to a query (see
-[runtime.md](runtime.md#known-limitations)).
+generated clients substitute `{id}` only. The runtime's REST router reads
+path parameters into the query's input, coerced to their declared kinds,
+and a path parameter wins over a query-string pair of the same name.
 
 The differ treats queries like actions, with one difference: removing a
 query input is breaking. See [Diffing](#diffing).
@@ -612,10 +621,11 @@ A lexical backing has no width, and stating one is refused.
 
 ### Machinery a deployment configures
 
-`"optional": true` says a deployment may lack the index. Copal needed this:
-its HNSW index over `text_chunk.embedding` is created at startup, only
-where an embedding model is configured, at that model's width. A required
-backing would be false in every deployment without a model.
+`"optional": true` says a deployment may lack the index. A file service
+needed this: its HNSW index over `text_chunk.embedding` is created at
+startup, only where an embedding model is configured, at that model's
+width. A required backing would be false in every deployment without a
+model.
 
 Optional relaxes one rule: the index may be absent from the schema. An
 index that is present must still hold the column, be the kind's own
@@ -797,8 +807,11 @@ exported as `kayak::is_reserved`.
 ## Validation
 
 `kayak::validate(&contract, &schema)` returns a list of violations. An
-empty list means valid. Every generator except `mcp` and `engine-policy`
-runs it first and refuses with every violation named.
+empty list means valid. Every generation target runs it first and refuses
+with every violation named. The two library functions that take no
+schema, `generate_mcp_tools` and `derive_policy`, cannot run it, so call
+`validate` before them or go through `generate_all`, which does (see
+[generators.md](generators.md#targets)).
 
 ```rust
 let violations = kayak::validate(&contract, &schema);
@@ -810,6 +823,10 @@ assert!(violations.is_empty());
 
 It checks:
 
+- Revision: `ir_revision` is at least 1 and no newer than the newest
+  revision this build of Kayak reads (`kayak::ir::IR_REVISION`, currently
+  1), since a newer revision can carry a change an older reader would
+  misread.
 - Tables and columns: every named table and column exists, including
   pins, `pinned_either` columns, filters, sorts, a resource's identity
   column, and `parent_key`.
@@ -854,7 +871,11 @@ uses it. That check needs a database client, so it lives behind the
 `kayak::verify::verify_contract(&client, &contract)` composes one
 representative listing per filter claim and per sort claim, for resources
 and sub-resources: the pins as equality binds, the claimed filter bound,
-the claimed sort ordered, always with a `LIMIT`. It composes one probe per
+the claimed sort ordered, always with a `LIMIT`. A resource with
+`pinned_either` gets that set of probes once per branch, with the branch
+column bound beside the pins, since the engine answers each branch with
+its own seek and one walked branch turns the whole read into a scan. It
+composes one probe per
 search backing through the backing's own operator (`@@` for lexical, the
 `<|k,EF|>` KNN form for vector). It runs each through `EXPLAIN` against a
 live database and returns every claim the planner does not serve:
@@ -874,8 +895,7 @@ verification composes only the HNSW form.
 The same check runs from the CLI:
 
 ```sh
-kayak verify --contract contract.json --db ws://localhost:8000 \
-    --namespace app --database app --user root --pass secret
+kayak verify --contract contract.json --db ws://localhost:8000 --namespace app --database app --user root --pass secret
 ```
 
 It exits non-zero when any claim fails, printing each one, so it gates in
@@ -885,7 +905,9 @@ CI beside `diff`. See [generators.md](generators.md#kayak-verify).
 
 `kayak::diff(&old, &new)` compares two contracts and returns a list of
 `Change` values, each `Breaking` or `Compatible`. `kayak diff old new` on
-the CLI prints them and exits 1 when anything is breaking.
+the CLI prints them and exits 1 when anything is breaking. Additions are
+named too, as compatible changes, so a contract that only grew still
+shows what it gained.
 
 ```rust
 let changes = kayak::diff(&old, &new);
@@ -908,7 +930,9 @@ wire, so writing `"identity": "id"` is not a change either.
 - Resource: removed; a field removed; a field pointed at a different
   column under the same API name; a guard added, swapped, or removed; the
   identity renamed or withdrawn; a filter removed; a sort removed;
-  `max_page_size` lowered; `pinned_either` changed in any way; the list or
+  `max_page_size` lowered; `filter_options` introduced on a filter that
+  had none; a value removed from a filter's `filter_options`;
+  `pinned_either` changed in any way; the list or
   get face withdrawn; the effective GraphQL type, list field, or get field
   renamed; `watchable` turned off; the watch field renamed while
   watchable; a content upload or download face removed; reads newly
@@ -935,9 +959,13 @@ per removed value, even though the input then accepts anything.
 
 - Contract: a rate class budget raised; a limit raised or removed.
 - Resource: added; a field added; an identity gained where rows had none;
-  a face added back; `watchable` turned on; a content face added; a
-  sub-resource added; an action added; reads no longer metered; a scope
-  removed from `reads_require`.
+  a filter added; a sort added; `max_page_size` raised; a value added to a
+  filter's `filter_options`; a filter's `filter_options` removed, so it
+  takes any value; a face added back; `watchable` turned on; a content
+  face added; a sub-resource added; an action added; reads no longer
+  metered; a scope removed from `reads_require`.
+- Sub-resource: a field added; an identity gained where rows had none; a
+  filter or sort added; `max_page_size` raised.
 - Action: an optional input added; any input removed; a value added to
   `options`; no longer metered; a scope removed from `requires`.
 - Query: added; an optional input added; a value added to `options`; no
@@ -954,10 +982,10 @@ query input is breaking.
 
 The differ emits nothing for these changes:
 
-- A filter or sort added, on a resource or a sub-resource.
-- `max_page_size` raised.
-- Changes to `pinned`, `filter_options`, `table`, `parent_key`, `multiple`,
-  or any `description`.
+- Changes to `pinned`, `table`, `parent_key`, `multiple`, or any
+  `description`.
+- `filter_options` on a filter that is itself added or removed. The
+  filter's own line covers it.
 - The contract's `name`, `version`, or `ir_revision`.
 - An input made optional.
 - A rate class added to or removed from `rate_classes`. Changes show up

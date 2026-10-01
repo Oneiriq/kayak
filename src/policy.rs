@@ -13,7 +13,7 @@
 //! divergence nothing names because the differ never sees it. So the
 //! derivation lives here, beside the seven faces it agrees with, and
 //! the contract changes that move it (`reads_require`, a field's
-//! guard) are classified by [`crate::diff`] like every other face's
+//! guard) are classified by [`crate::diff()`] like every other face's
 //! inputs.
 //!
 //! Two things stay out of this module on purpose, and their absence
@@ -36,8 +36,8 @@
 //! The rendered strings speak a token-claim vocabulary -- which claim
 //! carries the scope list, what clause a named guard becomes -- and
 //! that vocabulary is deployment convention, not contract content.
-//! [`ClaimVocabulary`] carries it, with defaults matching copal's
-//! caller tokens, so the reference deployment's switch to this
+//! [`ClaimVocabulary`] carries it, with defaults matching the caller
+//! tokens of the reference deployment, so its switch to this
 //! derivation is a behavioral no-op (proven byte-for-byte in
 //! `tests/policy.rs`).
 
@@ -68,11 +68,11 @@ pub struct ClaimVocabulary {
 }
 
 impl Default for ClaimVocabulary {
-    /// Copal's caller-token conventions: scopes ride as `sc`, the
-    /// admin claim as `adm`, the principal handle as `pr`. Defaults so
-    /// the reference deployment adopts this module without behavior
-    /// change; any other deployment overrides what its tokens spell
-    /// differently.
+    /// The reference deployment's caller-token conventions: scopes
+    /// ride as `sc`, the admin claim as `adm`, the principal handle as
+    /// `pr`. Defaults so the reference deployment adopts this module
+    /// without behavior change. Any other deployment overrides what its
+    /// tokens spell differently.
     fn default() -> Self {
         Self {
             scopes_claim: "sc".to_owned(),
@@ -124,6 +124,10 @@ pub enum PolicyError {
 /// on every sub-resource table, because a sub-collection is read
 /// under its parent's requirement -- it is reached through the parent,
 /// and the engine face mirrors how the dispatcher enforces reads.
+///
+/// It reads only the contract and so takes no schema to validate
+/// against. Validate first with [`crate::validate()`], or generate
+/// through [`crate::generate_all`], which does.
 pub fn derive_policy(
     contract: &Contract,
     vocabulary: &ClaimVocabulary,

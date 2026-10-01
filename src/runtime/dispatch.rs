@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::ir::{Action, Contract, Resource, SubResource};
 use crate::runtime::args::{
-    validate_action, validate_list, validate_query, validate_sub_list, validate_watch, ActionArgs,
-    GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
+    validate_action, validate_get, validate_list, validate_query, validate_sub_list,
+    validate_watch, ActionArgs, GetArgs, ListArgs, ListOutput, QueryArgs, SubListArgs, WatchArgs,
 };
 use crate::runtime::context::KayakContext;
 use crate::runtime::error::KayakError;
@@ -203,10 +203,10 @@ impl Dispatcher {
         }
 
         for resource in &contract.resources {
-            if !resolvers.list.contains_key(&resource.name) {
+            if resource.faces.list && !resolvers.list.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingList(resource.name.clone()));
             }
-            if !resolvers.get.contains_key(&resource.name) {
+            if resource.faces.get && !resolvers.get.contains_key(&resource.name) {
                 return Err(RuntimeBuildError::MissingGet(resource.name.clone()));
             }
             for sub in &resource.sub_resources {
@@ -231,10 +231,10 @@ impl Dispatcher {
                 }
             }
         }
-        // The converse, which only watching can get wrong: list and get
-        // are always declared, so a stray resolver for them is
-        // impossible. A watch resolver on a resource nobody may watch is
-        // dead code that reads as live.
+        // The converse for watching: a watch resolver on a resource
+        // nobody may watch is dead code that reads as live. A list or get
+        // resolver for a face the resource withholds is never reached,
+        // since the dispatcher refuses the operation before the chain.
         for name in resolvers.watch.keys() {
             if !contract
                 .resources
@@ -450,7 +450,7 @@ impl Dispatcher {
         ctx: KayakContext,
         args: GetArgs,
     ) -> Result<Option<serde_json::Value>, KayakError> {
-        self.resource(resource)?;
+        validate_get(self.resource(resource)?)?;
         let operation = Operation {
             resource: resource.to_owned(),
             kind: OperationKind::Get,

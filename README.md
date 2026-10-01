@@ -36,8 +36,9 @@ flowchart LR
     check --> runtime["runtime: REST, GraphQL, console"]
 ```
 
-Kayak is written for Rust services on SurrealDB. [Copal](https://github.com/Oneiriq/copal)
-uses it for its REST, GraphQL, and MCP interfaces and its admin console.
+Kayak is written for Rust services on SurrealDB. Its reference deployment,
+a file service, uses it for its REST, GraphQL, and MCP interfaces and its
+admin console.
 
 ## Install
 
@@ -194,9 +195,20 @@ kayak diff contract.v1.json contract.json
 BREAKING   files: filter state removed
 ```
 
-Changes that can't affect an existing client, such as adding a filter or
-a sort, print nothing. With no reportable changes, the output is
-`no contract changes` and the exit status is 0.
+Additions are reported too, marked `compatible`, and they leave the exit
+status at 0. Compare the same two files in the other order, so the
+`state` filter is being added:
+
+```sh
+kayak diff contract.json contract.v1.json
+```
+
+```text
+compatible files: filter state added
+```
+
+With no reportable changes, the output is `no contract changes` and the
+exit status is 0.
 
 The differ compares contracts, so it catches changes a document diff
 misses: a filter that disappeared, an input that became required, or a
@@ -338,11 +350,12 @@ Start with [docs/README.md](docs/README.md) for the full index.
 ## Development
 
 ```sh
-cargo test --all-features   # the full suite, as CI runs it
+cargo test                  # default features: validation, generators, differ, CLI
+cargo test --all-features   # adds the runtime, GraphQL, console, and verify tests
 ```
 
-The `verify` tests use an embedded in-memory SurrealDB, so the suite
-needs no database server.
+CI runs both. The `verify` tests use an embedded in-memory SurrealDB, so
+the suite needs no database server.
 
 Each generator has golden files in `tests/golden/`. When you change a
 generator on purpose, re-bless the files it produces and review the diff:

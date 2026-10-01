@@ -18,7 +18,10 @@ pub struct Contract {
     pub name: String,
     /// Semantic version of the contract itself (not the service).
     pub version: String,
-    /// IR schema revision, for forward-compatible tooling.
+    /// IR schema revision, for forward-compatible tooling. It moves
+    /// only for a change an older reader would misread, and validation
+    /// refuses a revision newer than [`IR_REVISION`], so an older kayak
+    /// refuses a newer contract instead of misreading it.
     #[serde(default = "default_ir_revision")]
     pub ir_revision: u32,
     /// Named consumption budgets. A resource or action that names one
@@ -53,9 +56,9 @@ pub struct Contract {
     ///
     /// Every generated client has to put a credential on the wire, and
     /// until this existed each of them hardcoded one consumer's
-    /// convention: `x-copal-tenant`, in eight places across four
-    /// languages. That made kayak a generator of clients for copal
-    /// rather than for contracts -- a service authenticating with a
+    /// tenant header, in eight places across four languages. That
+    /// made kayak a generator of clients for one service rather than
+    /// for contracts -- a service authenticating with a
     /// bearer token got a client that sent somebody else's header and
     /// no credential at all.
     ///
@@ -98,7 +101,7 @@ pub enum AuthScheme {
     None,
     /// `Authorization: Bearer <token>`. The constructor takes a token.
     Bearer,
-    /// An opaque value in a named header -- copal's `x-copal-tenant` is
+    /// An opaque value in a named header -- a file service's tenant header is
     /// the case this generalises. The constructor takes a value named
     /// after the credential rather than after the header.
     Header {
@@ -244,7 +247,7 @@ pub struct Query {
     /// contract went on promising search. Each backing names one
     /// column of one table reached through one index of a stated
     /// kind, and validation holds the index to the same standard the
-    /// listing rules hold theirs to. A fused search (copal's: BM25
+    /// listing rules hold theirs to. A fused search (a file service's: BM25
     /// candidates and HNSW neighbors, rescored together) is two
     /// backings on one query; the fusion itself is resolver behavior,
     /// not contract. Empty means the query claims no search machinery,
@@ -291,7 +294,7 @@ pub struct SearchBacking {
     /// Machinery the deployment is free not to provide.
     ///
     /// A static contract cannot claim an index that exists only where
-    /// an operator configured one: copal's HNSW index over
+    /// an operator configured one: a file service's HNSW index over
     /// `text_chunk.embedding` is applied at startup, and only when an
     /// embedding model is configured, so declaring it outright would
     /// make the contract false in every deployment without one. The
@@ -397,8 +400,11 @@ pub struct ContractLimits {
     pub max_watches_per_principal: Option<u32>,
 }
 
+/// The newest IR revision this kayak reads, and the one it writes.
+pub const IR_REVISION: u32 = 1;
+
 pub(crate) fn default_ir_revision() -> u32 {
-    1
+    IR_REVISION
 }
 
 impl Contract {
@@ -947,10 +953,10 @@ pub struct ActionField {
     pub description: Option<String>,
     /// Whether the caller may name several of `options` at once.
     ///
-    /// The value travels as one comma-separated string, which is what
-    /// a query parameter can carry without ceremony. Meaningless
-    /// without `options`, since a set is what there is to choose
-    /// several of.
+    /// OpenAPI and MCP publish it as an array. The runtime takes an
+    /// array, the key repeated, or one comma-separated string, and the
+    /// resolver reads that one string. Meaningless without `options`,
+    /// since a set is what there is to choose several of.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub multiple: bool,
     /// The values this input accepts, when they are a closed set.
@@ -1048,7 +1054,7 @@ mod tests {
     #[test]
     fn contract_round_trips_as_data() {
         let contract = Contract {
-            name: "copal".into(),
+            name: "probe".into(),
             version: "1.0.0".into(),
             ir_revision: 1,
             api_prefix: "/v1".into(),
@@ -1148,7 +1154,7 @@ mod tests {
     #[test]
     fn a_contract_without_backings_is_the_contract_it_always_was() {
         let old = r#"{
-            "name": "copal",
+            "name": "probe",
             "version": "1.0.0",
             "resources": [],
             "queries": [{
@@ -1173,7 +1179,7 @@ mod tests {
     #[test]
     fn a_backing_without_a_width_is_the_backing_it_always_was() {
         let old = r#"{
-            "name": "copal",
+            "name": "probe",
             "version": "1.0.0",
             "resources": [],
             "queries": [{

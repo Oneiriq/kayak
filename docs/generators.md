@@ -34,23 +34,24 @@ service's schema code.
 | --- | --- | --- | --- | --- |
 | `openapi` | `openapi.json` | yes | yes | OpenAPI 3.1 document. |
 | `sdl` | `schema.graphql` | yes | yes | GraphQL SDL. |
-| `mcp` | `mcp-tools.json` | yes | no | MCP `tools/list` manifest. |
+| `mcp` | `mcp-tools.json` | yes | yes | MCP `tools/list` manifest. |
 | `client-rs` | `client.rs` | yes | yes | Async Rust client on `reqwest`. |
 | `client-ts` | `client.ts` | yes | yes | TypeScript client on `fetch`. |
 | `client-py` | `client.py` | yes | yes | Python client on the standard library. |
 | `client-go` | `client.go` | yes | yes | Go client on the standard library. |
 | `client-rs-blocking` | `client_blocking.rs` | no | yes | The Rust client on `reqwest::blocking`, for callers with no async runtime. |
-| `engine-policy` | `policy.json` | no | no | Engine row-security clauses. See [The engine policy face](#the-engine-policy-face). |
+| `engine-policy` | `policy.json` | no | yes | Engine row-security clauses. See [The engine policy face](#the-engine-policy-face). |
 
 The default set is `kayak::generate::TARGETS`. The two opt-in targets are
 generated only when named.
 
-A target that validates first refuses an invalid contract with every
-violation listed. `mcp` and `engine-policy` do not validate: they render
-whatever contract they are given. A default run always includes
-`openapi`, which validates, so a default run of an invalid contract fails.
-When you generate `mcp` or `engine-policy` on their own, run
-`kayak::validate` or a validating target alongside them.
+Every target validates first and refuses an invalid contract with every
+violation listed, whether it is a default target or an opt-in one. The
+MCP manifest and the engine policy read only the contract, so their own
+library functions (`generate_mcp_tools` and `derive_policy`) take no
+schema and cannot validate. `kayak::generate_all` and the CLI validate
+before rendering them. When you call either function directly, run
+`kayak::validate` first.
 
 Output is deterministic. The OpenAPI document is written with every
 object's keys sorted, so its bytes do not depend on whether some other
@@ -137,8 +138,7 @@ schema cannot be read or defines no tables, and 2 without `--schema`.
 
 ```sh
 kayak generate --contract api/contract.json --schema api/schema.json --out api/generated
-kayak generate --contract api/contract.json --schema api/schema.json --out api/generated \
-    --targets openapi,sdl,mcp,client-rs,client-rs-blocking,engine-policy
+kayak generate --contract api/contract.json --schema api/schema.json --out api/generated --targets openapi,sdl,mcp,client-rs,client-rs-blocking,engine-policy
 ```
 
 It prints `wrote <dir>/<file>` for each artifact. Every target is
@@ -153,11 +153,12 @@ kayak diff api/contract-main.json api/contract.json
 ```
 
 Both arguments are contract files or directories. It prints one line per
-change:
+change, additions included. For a contract that dropped the `created_at`
+sort and exposed a new `digest` field:
 
 ```text
-BREAKING   files: sort created_at removed
 compatible files: field digest added
+BREAKING   files: sort created_at removed
 ```
 
 It prints `no contract changes` when there are none. It exits 1 when any
@@ -279,7 +280,7 @@ Paths, with the default prefix:
 
 | Path | Present when | Details |
 | --- | --- | --- |
-| `GET /v1/files` | list face | `limit` (1 to `max_page_size`, default `max_page_size`), `cursor`, one string parameter per filterable column, and `sort` with values `col` and `-col`. |
+| `GET /v1/files` | list face | `limit` (1 to `max_page_size`, default `max_page_size`), `cursor`, one string parameter per filterable column (with an `enum` when `filter_options` lists its values), and `sort` with values `col` and `-col`. |
 | `GET /v1/files/{id}` | get face | The path parameter is the identity column. 200 or 404. |
 | `GET /v1/files/{id}/versions` | a sub-resource | Paging and filters as a list. `sort` values are `col:asc` and `col:desc`. |
 | `<METHOD> /v1/files<action path>` | an action | Merged into the path item. `id` path parameter when the path holds `{id}`. JSON request body when the action has inputs. 200 with the resource or an object, or 204 for `"none"`. |
@@ -339,15 +340,19 @@ a `name`, a `description`, an `inputSchema` with
 | --- | --- | --- |
 | `{resource}_list` (`files_list`) | list face | `limit`, `cursor`, one string per filterable column, and `sort` (a column name, with a `:desc` suffix for descending) |
 | `{singular}_get` (`file_get`) | get face | the identity column, required |
+| `{singular}_{sub}_list` (`file_versions_list`) | a sub-resource | the parent's identity column, required, then the sub-resource's own `limit`, `cursor`, filters, and `sort` |
 | `{singular}_{action}` (`file_issue_url`) | an action | `id` when the path holds `{id}`, then the inputs |
 | `{query}` (`search`) | a query | the inputs |
 
-Inputs with `options` carry an `enum`, and `multiple` inputs are declared
-as arrays. `annotations.requiredScopes` lists required scopes,
+Inputs with `options` carry an `enum`, and so does a filter whose column
+has `filter_options`. `multiple` inputs are declared as arrays.
+`annotations.requiredScopes` lists required scopes,
 `annotations.rateClass` names the rate class, and a query's
-`annotations.backing` lists its search backings.
+`annotations.backing` lists its search backings. A sub-collection tool
+carries its parent's scopes and rate class, since the dispatcher reads a
+sub-collection under them.
 
-There are no tools for sub-resources, subscriptions, or content faces.
+There are no tools for subscriptions or content faces.
 Kayak writes the manifest only; serving MCP is up to the host (see
 [runtime.md](runtime.md#mcp)).
 
@@ -356,7 +361,10 @@ Kayak writes the manifest only; serving MCP is up to the host (see
 Each client is one self-contained file with a type for every resource and
 sub-resource, a page type for each, and one method per operation. Types
 carry the identity field (unless the identity is `null`) and every exposed
-field; nullable and guarded fields are optional.
+field; nullable and guarded fields are optional. Every client names a field
+by its API name, the name the OpenAPI document uses and the server sends.
+A TypeScript interface declares `created_at` exactly as the JSON body
+carries it, and quotes a name only when it is not a plain identifier.
 
 | Client | Constructor | Dependencies |
 | --- | --- | --- |
@@ -409,11 +417,6 @@ What the clients do not cover:
 - There are no methods for content upload or download, and none for
   subscriptions.
 - In a query path, the clients substitute `{id}` only.
-- The TypeScript interfaces name fields in camelCase (`createdAt`), while
-  the server sends the API names (`created_at`) and the client does not
-  convert keys. Any field whose API name contains an underscore is typed
-  under a name the response does not carry. The Rust, Python, and Go
-  clients use the API names.
 
 The Kayak test suite checks generated client syntax with real tools where
 they are installed: `py_compile` for Python, `gofmt -e` for Go, and

@@ -10,7 +10,9 @@
 //! surface for whoever the guard protects even when no caller loses
 //! a thing.
 
-use crate::ir::{Action, ActionField, Contract, FieldExposure, Resource, SearchBacking};
+use crate::ir::{
+    Action, ActionField, Contract, FieldExposure, Resource, SearchBacking, SubResource,
+};
 
 /// One observed change between two contracts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,7 +382,7 @@ fn diff_options(scope: &str, old: &ActionField, new: &ActionField, changes: &mut
 /// policy derives guards from both, so the rules cannot be allowed to
 /// differ by nesting depth: a guard the differ watches on a resource
 /// but not on its sub-collection is a silent hole exactly where
-/// copal's one guarded field actually lives.
+/// a file service's one guarded field actually lives.
 fn diff_fields(
     scope: &str,
     old: &[FieldExposure],
@@ -438,6 +440,122 @@ fn diff_fields(
     }
 }
 
+/// What a listing lets a caller ask for: the filters, the sorts, and
+/// how many rows a page may carry.
+struct Listing<'a> {
+    filterable: &'a [String],
+    sortable: &'a [String],
+    max_page_size: u32,
+}
+
+impl<'a> Listing<'a> {
+    fn of_resource(resource: &'a Resource) -> Self {
+        Self {
+            filterable: &resource.filterable,
+            sortable: &resource.sortable,
+            max_page_size: resource.max_page_size,
+        }
+    }
+
+    fn of_sub(sub: &'a SubResource) -> Self {
+        Self {
+            filterable: &sub.filterable,
+            sortable: &sub.sortable,
+            max_page_size: sub.max_page_size,
+        }
+    }
+}
+
+/// Listing changes, shared by resources and sub-resources for the
+/// reason `diff_fields` is: a rule that differs by nesting depth is a
+/// hole at one of them.
+///
+/// Losing a filter or a sort, or page headroom, refuses a request that
+/// used to be served. Gaining one takes nothing away, but it is still
+/// a change to the published surface and is named: a differ that stays
+/// silent on an addition reads, to whoever is reviewing, as a contract
+/// that did not move.
+fn diff_listing(scope: &str, old: Listing<'_>, new: Listing<'_>, changes: &mut Vec<Change>) {
+    for (kind, before, after) in [
+        ("filter", old.filterable, new.filterable),
+        ("sort", old.sortable, new.sortable),
+    ] {
+        for column in before {
+            if !after.contains(column) {
+                changes.push(Change::Breaking(format!(
+                    "{scope}: {kind} {column} removed",
+                )));
+            }
+        }
+        for column in after {
+            if !before.contains(column) {
+                changes.push(Change::Compatible(format!(
+                    "{scope}: {kind} {column} added",
+                )));
+            }
+        }
+    }
+    if new.max_page_size < old.max_page_size {
+        changes.push(Change::Breaking(format!(
+            "{scope}: max_page_size lowered {} -> {}",
+            old.max_page_size, new.max_page_size,
+        )));
+    } else if new.max_page_size > old.max_page_size {
+        changes.push(Change::Compatible(format!(
+            "{scope}: max_page_size raised {} -> {}",
+            old.max_page_size, new.max_page_size,
+        )));
+    }
+}
+
+/// How a filter's closed set moved, by the rules `diff_options`
+/// applies to an input's: the filter value is the other place a
+/// caller supplies a value, and the published documents state the set
+/// as an enum either way.
+///
+/// Only filters present on both sides are compared. A filter that left
+/// is already reported breaking, set and all, and one that arrived is
+/// already reported added.
+fn diff_filter_options(scope: &str, old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
+    let none: &[String] = &[];
+    for column in old
+        .filterable
+        .iter()
+        .filter(|column| new.filterable.contains(column))
+    {
+        let before = old.filter_options.get(column).map_or(none, Vec::as_slice);
+        let after = new.filter_options.get(column).map_or(none, Vec::as_slice);
+        if before.is_empty() && !after.is_empty() {
+            changes.push(Change::Breaking(format!(
+                "{scope}: filter {column} now takes only {}",
+                after.join(", "),
+            )));
+            continue;
+        }
+        if !before.is_empty() && after.is_empty() {
+            changes.push(Change::Compatible(format!(
+                "{scope}: filter {column} takes any value (was {})",
+                before.join(", "),
+            )));
+            continue;
+        }
+        for option in before {
+            if !after.contains(option) {
+                changes.push(Change::Breaking(format!(
+                    "{scope}: filter {column} no longer takes {option}",
+                )));
+            }
+        }
+        for option in after {
+            if !before.contains(option) {
+                changes.push(Change::Compatible(format!(
+                    "{scope}: filter {column} also takes {option}",
+                )));
+            }
+        }
+    }
+}
+
 /// How the wire name rows answer to may change: renaming or
 /// withdrawing it strands deployed callers, gaining one is additive.
 fn diff_identity(
@@ -472,24 +590,13 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
     // spelling the default out loud is not a change.
     diff_identity(scope, old.wire_identity(), new.wire_identity(), changes);
 
-    for column in &old.filterable {
-        if !new.filterable.contains(column) {
-            changes.push(Change::Breaking(format!(
-                "{scope}: filter {column} removed",
-            )));
-        }
-    }
-    for column in &old.sortable {
-        if !new.sortable.contains(column) {
-            changes.push(Change::Breaking(format!("{scope}: sort {column} removed",)));
-        }
-    }
-    if new.max_page_size < old.max_page_size {
-        changes.push(Change::Breaking(format!(
-            "{scope}: max_page_size lowered {} -> {}",
-            old.max_page_size, new.max_page_size,
-        )));
-    }
+    diff_listing(
+        scope,
+        Listing::of_resource(old),
+        Listing::of_resource(new),
+        changes,
+    );
+    diff_filter_options(scope, old, new, changes);
 
     // Changing what the server binds changes which rows a caller
     // sees. Narrowing the alternatives hides rows that used to come
@@ -560,28 +667,12 @@ fn diff_resource(old: &Resource, new: &Resource, changes: &mut Vec<Change>) {
                     new_sub.identity.wire_column(),
                     changes,
                 );
-                for column in &old_sub.filterable {
-                    if !new_sub.filterable.contains(column) {
-                        changes.push(Change::Breaking(format!(
-                            "{scope}.{}: filter {column} removed",
-                            old_sub.name,
-                        )));
-                    }
-                }
-                for column in &old_sub.sortable {
-                    if !new_sub.sortable.contains(column) {
-                        changes.push(Change::Breaking(format!(
-                            "{scope}.{}: sort {column} removed",
-                            old_sub.name,
-                        )));
-                    }
-                }
-                if new_sub.max_page_size < old_sub.max_page_size {
-                    changes.push(Change::Breaking(format!(
-                        "{scope}.{}: max_page_size lowered {} -> {}",
-                        old_sub.name, old_sub.max_page_size, new_sub.max_page_size,
-                    )));
-                }
+                diff_listing(
+                    &format!("{scope}.{}", old_sub.name),
+                    Listing::of_sub(old_sub),
+                    Listing::of_sub(new_sub),
+                    changes,
+                );
                 let before = old_sub.graphql_field();
                 let after = new_sub.graphql_field();
                 if before != after {

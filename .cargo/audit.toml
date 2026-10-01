@@ -1,8 +1,8 @@
 # The advisories this repository knowingly carries, each with the
 # reason it cannot come out yet and the condition that retires it.
-# Both arrived with the `verify` feature, whose EXPLAIN probe is the
-# first thing to put a database client in this crate's lockfile; the
-# advisories live in the engine SDK's transitive tree, not in code
+# It arrived with the `verify` feature, whose EXPLAIN probe is the
+# first thing to put a database client in this crate's lockfile. The
+# advisory lives in the engine SDK's transitive tree, not in code
 # this crate compiles or runs. Mirrors the file surql-rs carries for
 # the same tree.
 [advisories]
@@ -15,14 +15,4 @@ ignore = [
     # signs nor holds keys. Re-evaluate whenever surrealdb or
     # jsonwebtoken move off the unfixed crate.
     "RUSTSEC-2023-0071",
-
-    # RUSTSEC-2026-0235 (rkyv: out-of-bounds reads validating archives
-    # holding Rc/Arc) is fixed in 0.8.17, which rust_decimal 1.41
-    # cannot take and surrealdb-core pins. It reaches the lockfile
-    # through rust_decimal's OPTIONAL `rkyv` feature, which nothing in
-    # this graph turns on: `cargo tree -i rkyv --all-features` prints
-    # nothing, so the vulnerable code is never compiled here and no
-    # archive is ever deserialised. Re-evaluate whenever surrealdb
-    # moves to a rust_decimal built on rkyv 0.8.
-    "RUSTSEC-2026-0235",
 ]

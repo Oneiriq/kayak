@@ -23,7 +23,7 @@ use crate::runtime::args::{ActionArgs, GetArgs, ListArgs, QueryArgs, SortDirecti
 use crate::runtime::context::KayakContext;
 use crate::runtime::dispatch::Dispatcher;
 use crate::runtime::error::KayakError;
-use crate::runtime::wire::percent_decode;
+use crate::runtime::wire::{gather, percent_decode};
 
 /// One answered request: an HTTP status and a JSON body.
 #[derive(Debug, Clone)]
@@ -36,18 +36,10 @@ fn answer(status: u16, body: Value) -> RestAnswer {
     RestAnswer { status, body }
 }
 
+/// A refusal answers with the status the error itself carries, so no
+/// face keeps a table of its own to fall out of step.
 fn refusal(error: &KayakError) -> RestAnswer {
-    let status = match error {
-        KayakError::BadRequest(_) => 400,
-        KayakError::Unauthorized(_) => 401,
-        KayakError::Forbidden(_) => 403,
-        KayakError::NotFound => 404,
-        KayakError::Conflict(_) => 409,
-        KayakError::PayloadTooLarge(_) => 413,
-        KayakError::TooManyRequests(_) => 429,
-        _ => 500,
-    };
-    answer(status, json!({ "error": error.to_string() }))
+    answer(error.status(), json!({ "error": error.to_string() }))
 }
 
 enum Segment {
@@ -89,32 +81,40 @@ pub struct RestRouter {
 
 impl RestRouter {
     /// Derive the route table from the dispatcher's contract. The
-    /// formulas are the OpenAPI document's: `/v1/{plural}` lists,
-    /// `/v1/{plural}/{id}` gets, `/v1/{plural}/{id}/{sub}` walks a
-    /// sub-collection, `/v1/{plural}{action.path}` performs an
-    /// action, and a query serves at its own declared path.
+    /// formulas are the OpenAPI document's: `{prefix}/{plural}` lists,
+    /// `{prefix}/{plural}/{id}` gets, `{prefix}/{plural}/{id}/{sub}`
+    /// walks a sub-collection, `{prefix}/{plural}{action.path}`
+    /// performs an action, and a query serves at its own declared path.
+    /// The prefix is the contract's `api_prefix`, `/v1` by default.
     pub fn new(dispatcher: Arc<Dispatcher>) -> Self {
         let contract = dispatcher.contract().clone();
+        let prefix = contract.prefix();
         let mut routes = Vec::new();
         for resource in &contract.resources {
-            routes.push(Route {
-                method: "GET".to_owned(),
-                segments: template(&format!("/v1/{}", resource.name)),
-                target: Target::List {
-                    resource: resource.name.clone(),
-                },
-            });
-            routes.push(Route {
-                method: "GET".to_owned(),
-                segments: template(&format!("/v1/{}/{{id}}", resource.name)),
-                target: Target::Get {
-                    resource: resource.name.clone(),
-                },
-            });
+            // A face the resource withholds gets no route, so the path
+            // answers 404 the way an undeclared one does.
+            if resource.faces.list {
+                routes.push(Route {
+                    method: "GET".to_owned(),
+                    segments: template(&format!("{prefix}/{}", resource.name)),
+                    target: Target::List {
+                        resource: resource.name.clone(),
+                    },
+                });
+            }
+            if resource.faces.get {
+                routes.push(Route {
+                    method: "GET".to_owned(),
+                    segments: template(&format!("{prefix}/{}/{{id}}", resource.name)),
+                    target: Target::Get {
+                        resource: resource.name.clone(),
+                    },
+                });
+            }
             for sub in &resource.sub_resources {
                 routes.push(Route {
                     method: "GET".to_owned(),
-                    segments: template(&format!("/v1/{}/{{id}}/{}", resource.name, sub.name)),
+                    segments: template(&format!("{prefix}/{}/{{id}}/{}", resource.name, sub.name)),
                     target: Target::SubList {
                         resource: resource.name.clone(),
                         sub: sub.name.clone(),
@@ -124,7 +124,7 @@ impl RestRouter {
             for action in &resource.actions {
                 routes.push(Route {
                     method: action.method.to_uppercase(),
-                    segments: template(&format!("/v1/{}{}", resource.name, action.path)),
+                    segments: template(&format!("{prefix}/{}{}", resource.name, action.path)),
                     target: Target::Action {
                         resource: resource.name.clone(),
                         action: action.name.clone(),
@@ -271,12 +271,21 @@ impl RestRouter {
                     .queries
                     .iter()
                     .find(|q| q.name == *name);
+                let field =
+                    |key: &str| declared.and_then(|q| q.input.iter().find(|f| f.name == key));
                 let mut input = Map::new();
+                // A multi-valued input may repeat its key, the form the
+                // OpenAPI document describes, so every value is kept.
                 for (key, raw) in pairs {
-                    let kind = declared
-                        .and_then(|q| q.input.iter().find(|f| f.name == key))
-                        .map(|f| &f.kind);
-                    input.insert(key, coerce(raw, kind));
+                    let value = coerce(raw, field(&key).map(|f| &f.kind));
+                    gather(&mut input, field(&key), key, value);
+                }
+                // A parameter the path names arrives in the path, the way
+                // the OpenAPI document and every client send it. Read
+                // last, so the path wins over a query pair of the same name.
+                for (key, raw) in params {
+                    let value = coerce(raw, field(&key).map(|f| &f.kind));
+                    input.insert(key, value);
                 }
                 match self.dispatcher.query(name, ctx, QueryArgs { input }).await {
                     Ok(value) => answer(200, value),
@@ -293,7 +302,10 @@ impl RestRouter {
 /// `column:desc`.
 fn list_args(pairs: &mut Vec<(String, String)>) -> Result<ListArgs, RestAnswer> {
     let mut args = ListArgs {
-        limit: 50,
+        // No limit asks for a full page. The dispatcher clamps this to
+        // the declared `max_page_size`, the default the OpenAPI
+        // document states and the GraphQL face applies.
+        limit: u32::MAX,
         cursor: None,
         filters: BTreeMap::new(),
         sort: None,

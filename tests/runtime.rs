@@ -74,7 +74,7 @@ fn contract_with_versions() -> Contract {
 
 fn contract() -> Contract {
     Contract {
-        name: "copal".into(),
+        name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
         api_prefix: "/v1".into(),

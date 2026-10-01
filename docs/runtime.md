@@ -143,8 +143,9 @@ let resolvers = Resolvers::new()
 Construction is the completeness gate. `Dispatcher::new` returns a
 `RuntimeBuildError` naming the first gap it finds:
 
-- a resource without a list resolver or a get resolver (both are required
-  whatever the resource's `faces` say);
+- a resource without a list resolver when it has a listing, or without a
+  get resolver when it has a getter (a face the resource's `faces`
+  withhold needs no resolver);
 - a sub-resource, action, or query without a resolver;
 - a watchable resource without a watch resolver, or a watch resolver for
   a resource that is not watchable;
@@ -176,24 +177,32 @@ Before the middleware chain, the dispatcher checks the call against the
 declaration and answers `bad_request` on any failure:
 
 - The resource, action, sub-resource, or query must exist.
+- Faces: a listing of a resource whose `faces` withhold its listing, or a
+  get on one that withholds its getter, is refused.
 - Listings and sub-collection listings: `limit` is clamped to between 1
   and `max_page_size`. Every filter key must be a `filterable` column and
-  the sort column must be `sortable`. A sub-collection listing needs a
-  non-empty `parent_id`.
+  the sort column must be `sortable`. When the column has
+  `filter_options`, a string filter value must be one of them. A
+  sub-collection listing needs a non-empty `parent_id`.
 - Actions: an action whose path holds `{id}` needs an id. Required inputs
   must be present and not null. Each input must match its `kind` (`int`
   accepts any JSON integer, `json` accepts anything). A string input with
-  `options` must be one of them; with `multiple`, it is one
-  comma-separated string and each part must be an option. Input keys the
-  action does not declare are dropped without an error.
+  `options` must be one of them. Input keys the action does not declare
+  are dropped without an error.
 - Queries: the same input checks, except that an input key the query does
   not declare is refused with `no input named ...`.
-- Subscriptions: the resource must be `watchable`, and every filter key
-  must be `filterable`.
+- Subscriptions: the resource must be `watchable`, every filter key must
+  be `filterable`, and a value for a column with `filter_options` must be
+  one of them.
 
-Filter values are not checked. `filter_options` is not enforced, and a
-filter arrives at the resolver as whatever value the face passed (a
-string from REST, GraphQL, and the console).
+An input marked `multiple` takes several of its `options`. The OpenAPI
+document and the MCP manifest publish it as an array, and the dispatcher
+takes each form a caller sends: a JSON array in an action body or an MCP
+call, the key repeated in a REST query string (`?facets=a&facets=b`), or
+one comma-separated string (`?facets=a,b`), which the GraphQL schema and
+the generated clients send. Every value must be one of the options. The
+resolver reads one comma-separated string whichever form arrived, so
+`args.input["facets"]` is `"a,b"` for each of those requests.
 
 Action inputs and query inputs differ on unknown keys because the differ
 calls removing an action input compatible. That holds only if an old
@@ -450,7 +459,8 @@ HTTP status and a stable code:
 `status()` and `code()` return the mapping. The REST router answers with
 the status and a `{"error": "<message>"}` body. GraphQL errors carry the
 message and `extensions.code`. The console renders a refusal page with
-the status.
+the status. REST and the console both take the status from `status()`,
+so they answer every refusal alike, a 413 included.
 
 ## REST: RestRouter
 
@@ -489,23 +499,31 @@ Build it once with `RestRouter::new(dispatcher.clone())`. `handle` never
 fails: every outcome is a `RestAnswer { status, body }` to write as the
 HTTP status and a JSON body.
 
-Routes:
+Routes, with the default `api_prefix` of `/v1`:
 
 | Method and path | Dispatches to |
 | --- | --- |
-| `GET /v1/{resource}` | `list` |
-| `GET /v1/{resource}/{id}` | `get` |
+| `GET /v1/{resource}` | `list`, when the resource has a listing |
+| `GET /v1/{resource}/{id}` | `get`, when the resource has a getter |
 | `GET /v1/{resource}/{id}/{sub}` | `sub_list` |
 | `<action method> /v1/{resource}<action path>` | `action` |
 | `GET <query path>` | `query` |
+
+Resource routes take the contract's `api_prefix`, so a contract with
+`"api_prefix": ""` is served at `/{resource}`, the same paths its OpenAPI
+document and generated clients use. Query paths are absolute and never
+prefixed. A face the resource's `faces` withhold has no route, so its path
+answers 404 like any undeclared one. The `{id}` segment carries the
+resource's identity value, whatever its identity column is named.
 
 Path segments are percent-decoded. When several routes match, the one
 with the most literal segments wins. A path that matches no route answers
 404 with `{"error": "no declared route matches"}`. A path that matches
 with the wrong method answers 405.
 
-Listings and sub-collections read the query string: `limit` (default 50,
-then clamped to `max_page_size`; a non-integer answers 400), `cursor`,
+Listings and sub-collections read the query string: `limit` (default
+`max_page_size`, the default the OpenAPI document declares; a larger
+value is clamped to it, and a non-integer answers 400), `cursor`,
 and `sort` as `col` or `col:desc`. Every other pair is a filter keyed by
 column name, and an undeclared one answers 400. The answer is
 `{"items": [...], "next_cursor": ...}`.
@@ -517,10 +535,14 @@ Actions read the JSON body, which must be an object, `null`, or absent
 status 200, or `{"ok": true}` with status 200 when the resolver returns
 `None`.
 
-Queries read their inputs from the query string, each coerced to its
-declared kind (an `int` parses as an integer, a `bool` from `true` or
-`false`, `json` as JSON). A value that does not parse passes through as a
-string, and the dispatcher refuses it.
+Queries read their inputs from the query string and from the path, each
+coerced to its declared kind (an `int` parses as an integer, a `bool` from
+`true` or `false`, `json` as JSON). A value that does not parse passes
+through as a string, and the dispatcher refuses it. A query path such as
+`/v1/files/{id}/text` hands its `id` segment to the query as the `id`
+input, the way OpenAPI declares it and the clients send it, and a path
+parameter wins over a query-string pair of the same name. A `multiple`
+input may repeat its key (`?facets=a&facets=b`), and every value is kept.
 
 Content faces are not routed. The host serves byte upload and download.
 
@@ -569,18 +591,17 @@ The served schema follows the same rules as the generated SDL for types,
 nullability, sort enums, list and filter arguments, sub-collection fields,
 the Mutation and Subscription roots (present only when something
 populates them), query fields, and the `DateTime` and `JSON` scalars. It
-differs in three ways:
+reads `identity` and `faces` the way the SDL does:
 
-- Every object type has `id: ID!`, read from the row's `id` key, whatever
-  the resource's `identity` says.
-- Every resource has both a list field and a get field, whatever its
-  `faces` say. The get field's argument is always `id`.
-- A sub-collection field passes the parent row's `id` key as the parent
-  id.
-
-So a resource with a non-default `identity` or narrowed `faces` serves a
-schema that differs from the checked-in `schema.graphql`. See
-[Known limitations](#known-limitations).
+- An object type carries the identity field as `ID!`, read from the row
+  under the identity column, unless the identity is `null` or already an
+  exposed field.
+- A resource has a list field only when it has a listing, and a get field
+  only when it has a getter. The get field's argument is the identity
+  column, so a `presence` resource with `"identity": "user"` serves
+  `presence(user: ...)`.
+- A sub-collection field passes the parent row's identity column as the
+  parent id.
 
 ## Console: ConsoleRouter
 
@@ -620,9 +641,9 @@ Pages, by path relative to the base:
 
 | Path | Page |
 | --- | --- |
-| `/` | Overview: the first 4 rows of every resource's listing, and a card per query. |
+| `/` | Overview: the first 4 rows of every resource's listing (a resource with no listing says so instead), and a card per query. |
 | `/reference` | Every operation with its REST path, GraphQL field, MCP tool, inputs, and required scopes, with copyable request examples. |
-| `/r/{resource}` | The listing, 50 rows per page, with filter and sort controls, cursor paging, and collection action forms. |
+| `/r/{resource}` | The listing, 50 rows per page, with filter and sort controls, cursor paging, and collection action forms. A resource with no listing shows only its collection action forms, and rows link to their instance pages only when the resource has a getter. |
 | `/r/{resource}/{id}` | One instance: its fields, the first 10 rows of each sub-collection, and instance action forms. |
 | `/q/{name}` | A query form. The query runs once any input has a value. |
 
@@ -639,9 +660,15 @@ coerces each value to its declared kind, and answers:
   or a `json` input does not parse.
 
 `page` parses its query string itself and joins repeated keys with
-commas. `submit` takes the pairs as the host decoded them and keeps the
-last value for a repeated key, so join repeated keys (the checkbox group
-of a `multiple` input) with commas before calling it.
+commas. `submit` takes the pairs as the host decoded them. For a
+`multiple` input it keeps every value of a repeated key, so a checkbox
+group arrives whole; for any other input it keeps the last value.
+
+The reference page writes each request the way its face publishes it:
+paths under the contract's `api_prefix`, instances addressed by the
+identity column, a `multiple` input as a JSON array in a REST body and an
+MCP call and as the key repeated in a REST query string, and only the
+faces the resource declares.
 
 The console loads no external assets. Every page inlines its stylesheet,
 a small theme script, and a reference-page script (the type filter and
@@ -652,9 +679,7 @@ console's routes has to allow inline scripts and styles. Caller input is
 escaped.
 
 `document`, `Page`, `rail_section`, `cell`, `humanize`, and `STYLE` are
-exported so a host can render its own pages in the same frame. Copal, the
-reference deployment, mounts the console in
-`crates/copal-server/src/console.rs`.
+exported so a host can render its own pages in the same frame.
 
 ## MCP
 
@@ -666,12 +691,16 @@ A host that serves MCP maps each tool call onto the dispatcher:
 | --- | --- |
 | `{resource}_list` | `list(resource, ctx, ListArgs { limit, cursor, filters, sort })` |
 | `{singular}_get` | `get(resource, ctx, GetArgs { id })` |
+| `{singular}_{sub}_list` | `sub_list(resource, sub, ctx, SubListArgs { parent_id, limit, cursor, filters, sort })` |
 | `{singular}_{action}` | `action(resource, action, ctx, ActionArgs { id, input })` |
 | `{query}` | `query(name, ctx, QueryArgs { input })` |
 
+The get and sub-collection tools name their instance argument after the
+resource's identity column, so pass that argument as `id` or `parent_id`.
 The manifest's `sort` is a column with an optional `:desc` suffix, and it
-declares `multiple` inputs as arrays. Join such an array into one
-comma-separated string before dispatching.
+declares `multiple` inputs as arrays. Pass such an array to the dispatcher
+as it arrived: it accepts the array and hands the resolver one
+comma-separated string.
 
 ## Known limitations
 
@@ -680,16 +709,11 @@ Each of these is current behavior.
 
 | Area | Behavior |
 | --- | --- |
-| `faces` | Ignored. The dispatcher requires list and get resolvers for every resource, `RestRouter` routes list and get for every resource, the live GraphQL schema has both fields, and the console overview lists every resource. For a withdrawn face, register a resolver that refuses, such as one returning `Err(KayakError::NotFound)`. |
-| `api_prefix` | Ignored. `RestRouter` serves resource routes under `/v1`, and the console reference prints `/v1` paths. Clients generated for another prefix call routes `RestRouter` does not serve unless the host rewrites resource paths to `/v1` before calling `handle`. Query paths are unaffected. |
-| `identity` | Ignored. The live GraphQL schema declares `id: ID!` and reads `id` from rows, its get field takes `id`, and sub-collection fields read the parent's `id` key. The generated SDL uses the identity column. |
+| `identity` in the console | The console's listing page shows an `id` column and links each row to its instance page through the row's `id` key. A resource whose identity column has another name lists without those links. |
 | Sort syntax | It differs by face. OpenAPI resource listings declare `col` and `-col`. OpenAPI sub-collections declare `col:asc` and `col:desc`. `RestRouter` and the console read `col` and `col:desc`. MCP describes a `:desc` suffix. GraphQL uses `COL_ASC` and `COL_DESC`. `RestRouter` treats `-col` and `col:asc` as unknown columns and answers 400. |
-| Default page size | `RestRouter` and the console listing use 50 when no `limit` is sent. OpenAPI and GraphQL declare `max_page_size` as the default. Generated clients send no `limit` unless given one, so against `RestRouter` they get 50. |
+| Console page size | The console's listing page asks for 50 rows, clamped to `max_page_size`. `RestRouter`, OpenAPI, and GraphQL default to `max_page_size`. |
 | `"output": "none"` | OpenAPI declares 204. `RestRouter` answers 200 with `{"ok": true}`, and GraphQL answers `true`. A `"json"` or `"resource"` action whose resolver returns `None` also gets 200 `{"ok": true}` from `RestRouter`, and an error from GraphQL. |
-| Query path parameters | `RestRouter` matches a query path such as `/v1/files/{id}/text` but passes only query-string pairs to the query. A required `id` input fails with 400 unless the caller also sends `?id=`. |
 | `max_page_size: 0` | Passes validation. The first listing of that resource or sub-resource panics in the dispatcher's limit clamp. |
-| `filter_options` | Not enforced. Any filter value reaches the resolver. |
-| `multiple` inputs | The dispatcher accepts one comma-separated string. OpenAPI action bodies and the MCP manifest declare an array, and an array is refused as the wrong type. |
 | REST error bodies | `{"error": "<message>"}` only. The `code()` value is not included. |
 | Per-process state | `MemoryRateStore` and the watch ceiling count live in one process. |
 | Content faces | Not routed. The host serves bytes. |

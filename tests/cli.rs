@@ -27,7 +27,7 @@ fn file_table() -> TableDefinition {
 
 fn contract() -> Contract {
     Contract {
-        name: "copal".into(),
+        name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
         api_prefix: "/v1".into(),
@@ -161,7 +161,7 @@ fn a_scaffolded_contract_generates_without_edits() {
             "--out",
             contract_path.to_str().unwrap(),
             "--name",
-            "copal",
+            "probe",
         ])
         .output()
         .unwrap();
@@ -712,4 +712,46 @@ fn two_files_cannot_declare_the_same_resource() {
         said.contains("duplicate resource") && said.contains("files"),
         "the refusal names it: {said}",
     );
+}
+
+/// A contract names the IR revision it was written in, and a revision
+/// newer than this kayak reads is refused by every command. `diff`
+/// never validates, so it used to read such a contract and compare
+/// fields it might misread.
+#[test]
+fn a_contract_from_a_newer_kayak_is_refused() {
+    let newer = Contract {
+        ir_revision: kayak::ir::IR_REVISION + 1,
+        ..contract()
+    };
+    let violations = kayak::validate(&newer, &[file_table()]);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.to_string().contains("ir_revision")),
+        "{violations:?}",
+    );
+    let zero = Contract {
+        ir_revision: 0,
+        ..contract()
+    };
+    assert!(!kayak::validate(&zero, &[file_table()]).is_empty());
+    assert!(kayak::validate(&contract(), &[file_table()]).is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.json");
+    let new_path = dir.path().join("new.json");
+    std::fs::write(&old_path, serde_json::to_string(&contract()).unwrap()).unwrap();
+    std::fs::write(&new_path, serde_json::to_string(&newer).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_kayak"))
+        .args([
+            "diff",
+            old_path.to_str().unwrap(),
+            new_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ir_revision 2 is newer"), "{stderr}");
 }

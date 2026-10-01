@@ -49,7 +49,7 @@ fn chunk_resource() -> Resource {
 
 fn contract(resources: Vec<Resource>) -> Contract {
     Contract {
-        name: "copal".into(),
+        name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
         api_prefix: "/v1".into(),
@@ -61,7 +61,7 @@ fn contract(resources: Vec<Resource>) -> Contract {
     }
 }
 
-/// Copal's `text_chunk` shape, with the index set left open because
+/// A file service's `text_chunk` shape, with the index set left open because
 /// what varies between these cases is only which index covers what.
 fn chunk_table(
     indexes: impl IntoIterator<Item = surql::schema::IndexDefinition>,
@@ -90,7 +90,7 @@ fn text_chunk_table() -> TableDefinition {
         // test would additionally be an unreachable listing, and these
         // tests are about the claims.
         index("idx_chunk_tenant", ["tenant_id", "created_at"]),
-        bm25_index("idx_chunk_body", ["body"], "copal_text"),
+        bm25_index("idx_chunk_body", ["body"], "chunk_text"),
         hnsw_index(
             "idx_chunk_embedding",
             "embedding",
@@ -113,7 +113,7 @@ fn text_chunk_table() -> TableDefinition {
 /// A column can be indexed and still be neither filterable nor
 /// sortable, and that is the case most likely to be got wrong.
 ///
-/// The shape is copal's `text_chunk`: `body` carries a BM25 index for
+/// The shape is a file service's `text_chunk`: `body` carries a BM25 index for
 /// lexical recall, `embedding` an HNSW index for vector recall,
 /// `locator` an MTREE one. None of the three has a b-tree behind it, so
 /// an equality filter on `body` scans the table and an ORDER BY down
@@ -202,7 +202,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
 fn an_ordering_index_beside_a_search_one_still_carries_the_claim() {
     let table = chunk_table([
         index("idx_chunk_tenant", ["tenant_id", "body"]),
-        bm25_index("idx_chunk_body", ["body"], "copal_text"),
+        bm25_index("idx_chunk_body", ["body"], "chunk_text"),
     ]);
     let resource = Resource {
         table: "text_chunk".into(),
@@ -226,7 +226,7 @@ fn an_ordering_index_beside_a_search_one_still_carries_the_claim() {
 fn an_unbound_prefix_is_reported_as_a_prefix_and_not_as_an_index_type() {
     let table = chunk_table([
         index("idx_chunk_body", ["file", "body"]),
-        bm25_index("idx_chunk_search", ["body"], "copal_text"),
+        bm25_index("idx_chunk_search", ["body"], "chunk_text"),
     ]);
     let resource = Resource {
         table: "text_chunk".into(),
@@ -297,22 +297,19 @@ fn searching(backing: Vec<SearchBacking>) -> Contract {
     contract
 }
 
-/// Copal's real search surface, declared.
+/// A file service's real search surface, declared.
 ///
-/// The `search` query in `crates/copal-server/src/contract/search.rs`
-/// is served by machinery the contract never named: BM25 over
+/// Its `search` query is served by machinery the contract never named: BM25 over
 /// `text_chunk.body` through `idx_chunk_body` and HNSW over
-/// `text_chunk.embedding` through `idx_chunk_embedding` (the fused
-/// implementation in `crates/copal-store/src/repo/text.rs`, the
-/// indexes in `crates/copal-store/src/schema/text.rs`), fused in the
+/// `text_chunk.embedding` through `idx_chunk_embedding`, fused in the
 /// resolver -- so nothing stopped a schema change from dropping
 /// `idx_chunk_body` while the contract went on promising search.
 /// Declared as two backings, the same surface validates clean against
-/// the copal-shaped table, and `file_text` beside it shows a backing
+/// the same table shape, and `file_text` beside it shows a backing
 /// is optional: plain queries stay legal. This fixture is what makes
-/// the copal adoption a three-line contract edit.
+/// adopting it in that service a three-line contract edit.
 #[test]
-fn copal_search_declared_with_its_backing_validates_clean() {
+fn a_real_search_declared_with_its_backing_validates_clean() {
     let mut contract = searching(vec![
         backing("body", "idx_chunk_body", SearchKind::Lexical),
         backing("embedding", "idx_chunk_embedding", SearchKind::Vector),
@@ -401,7 +398,7 @@ fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
     // A DISKANN index is the third machinery that answers a vector
     // backing, new with surql 0.33; a Lexical claim on one is still
     // refused. The table gains the index only inside this test so the
-    // other cases keep exercising the HNSW shape copal actually ships.
+    // other cases keep exercising the HNSW shape a real deployment ships.
     let mut with_diskann = text_chunk_table();
     with_diskann.indexes.push(surql::schema::diskann_index(
         "idx_chunk_diskann",
@@ -535,8 +532,8 @@ fn a_backing_that_resolves_nothing_is_named() {
 ///
 /// Every other rule here catches a claim held against the schema and
 /// found wanting. This one catches an absence, and an absence is what
-/// unindexed search looks like from the outside: driftnet's chunk
-/// search and antumbra's recall paths both ran for months over
+/// unindexed search looks like from the outside: a document chunk
+/// search and a memory recall path both ran for months over
 /// columns nothing could answer a neighbor query on, and no contract
 /// anywhere could have said so, because saying nothing about search
 /// and needing nothing were the same declaration. They stop being the
@@ -647,7 +644,7 @@ fn a_vector_backing_answers_for_its_width() {
 /// Machinery a deployment configures can be declared without the
 /// contract lying about deployments that did not.
 ///
-/// Copal's HNSW index over `text_chunk.embedding` exists only where an
+/// A file service's HNSW index over `text_chunk.embedding` exists only where an
 /// embedding model is configured, applied at startup at that model's
 /// width. Declared outright it would be false everywhere else, so it
 /// was declared nowhere -- and a search nothing in the contract

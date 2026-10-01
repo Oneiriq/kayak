@@ -342,6 +342,57 @@ fn clients_carry_types_and_action_methods() {
     );
 }
 
+/// A response is JSON, and JSON keeps the names the wire gave it. The
+/// TypeScript interfaces once camelCased every field (`createdAt`)
+/// while the body carried `created_at`, so each multi-word field was
+/// typed under a name no response holds and read back `undefined`.
+/// The OpenAPI document is the wire's own statement of those names;
+/// every client must type each field under exactly that name.
+#[test]
+fn every_client_types_a_field_under_its_wire_name() {
+    let artifacts = generate_all(&contract(), &schema(), TARGETS).unwrap();
+    let openapi: serde_json::Value = serde_json::from_str(&artifacts["openapi.json"]).unwrap();
+    let wire: Vec<&str> = openapi["components"]["schemas"]["File"]["properties"]
+        .as_object()
+        .expect("the File schema lists its properties")
+        .keys()
+        .map(String::as_str)
+        .filter(|name| name.contains('_'))
+        .collect();
+    assert!(
+        wire.contains(&"created_at") && wire.contains(&"content_type"),
+        "the fixture must carry multi-word fields for this to prove anything: {wire:?}"
+    );
+
+    let (ts, python, rust, go) = (
+        &artifacts["client.ts"],
+        &artifacts["client.py"],
+        &artifacts["client.rs"],
+        &artifacts["client.go"],
+    );
+    for name in wire {
+        assert!(
+            ts.contains(&format!("\n  {name}: ")) || ts.contains(&format!("\n  {name}?: ")),
+            "client.ts must type `{name}` under its wire name:\n{ts}"
+        );
+        assert!(
+            python.contains(&format!("\n  {name}: ")),
+            "client.py must type `{name}` under its wire name:\n{python}"
+        );
+        assert!(
+            rust.contains(&format!("pub {name}: ")),
+            "client.rs must deserialize `{name}` from its wire name:\n{rust}"
+        );
+        assert!(
+            go.contains(&format!("`json:\"{name}\"`")),
+            "client.go must tag `{name}` with its wire name:\n{go}"
+        );
+    }
+    for camel in ["createdAt", "contentType"] {
+        assert!(!ts.contains(camel), "client.ts still camelCases `{camel}`");
+    }
+}
+
 #[test]
 fn unknown_target_is_refused() {
     let error = generate_all(&contract(), &schema(), &["client-cobol"]).unwrap_err();

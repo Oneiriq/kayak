@@ -241,24 +241,47 @@ async fn index_defined(
         .is_some_and(|indexes| indexes.contains_key(index)))
 }
 
+/// A resource's probes. An either-of pin is answered as one seek per
+/// branch, so each branch is probed as its own listing with its column
+/// bound beside the pins, under the scope validation gives it. A branch
+/// the planner walks drags the whole read back to a scan, so every
+/// branch has to verify.
 fn resource_probes(resource: &Resource, out: &mut Vec<Probe>) {
     let pins: Vec<&str> = resource.pinned.iter().map(String::as_str).collect();
-    push_probes(
-        &resource.name,
-        &resource.table,
-        &pins,
-        &resource.filterable,
-        &resource.sortable,
-        resource.max_page_size,
-        |column| {
-            resource
-                .filter_options
-                .get(column)
-                .and_then(|options| options.first())
-                .map(String::as_str)
-        },
-        out,
-    );
+    let option_for = |column: &str| {
+        resource
+            .filter_options
+            .get(column)
+            .and_then(|options| options.first())
+            .map(String::as_str)
+    };
+    if resource.pinned_either.is_empty() {
+        push_probes(
+            &resource.name,
+            &resource.table,
+            &pins,
+            &resource.filterable,
+            &resource.sortable,
+            resource.max_page_size,
+            option_for,
+            out,
+        );
+        return;
+    }
+    for alternative in &resource.pinned_either {
+        let mut bound = pins.clone();
+        bound.push(alternative);
+        push_probes(
+            &format!("{} (pinned on {alternative})", resource.name),
+            &resource.table,
+            &bound,
+            &resource.filterable,
+            &resource.sortable,
+            resource.max_page_size,
+            option_for,
+            out,
+        );
+    }
 }
 
 fn sub_resource_probes(parent: &str, sub: &SubResource, out: &mut Vec<Probe>) {
@@ -434,8 +457,8 @@ fn table_walk(node: &Value) -> Option<String> {
 /// With the index absent, `@@` degrades to a `TableScan` carrying the
 /// predicate as an attribute, and `<|k,EF|>` to a bare `TableScan`;
 /// the metric KNN form `<|k,COSINE|>` plans as `KnnTopK` OVER a
-/// `TableScan` even when an HNSW index exists, which is why copal
-/// renders the `<|k,EF|>` form and why the probe does too. Matching
+/// `TableScan` even when an HNSW index exists, which is why a real
+/// search renders the `<|k,EF|>` form and why the probe does too. Matching
 /// on the `index` attribute rather than on the operator names keeps
 /// the walker one rule for both kinds, and means a future operator
 /// respelling fails the pinned vocabulary test instead of silently

@@ -1,14 +1,60 @@
 //! The engine-policy face, proven against the deployment it replaces.
 //!
-//! Copal derived its SurrealDB `PERMISSIONS` clauses from the contract
-//! by hand in `crates/copal-server/src/engine.rs` (`fn engine_policy`);
-//! this module moved that derivation into kayak. The tests here hold
-//! the derived clause STRINGS byte-identical to what copal's own code
-//! produces for the same inputs, so copal's switch to
-//! `kayak::derive_policy` reviews as pure deletion: same tables, same
-//! columns, same clauses, in the same order.
+//! A file service derived its SurrealDB `PERMISSIONS` clauses from the
+//! contract by hand in its server, and this module moved that
+//! derivation into kayak. The tests here hold the derived clause
+//! STRINGS byte-identical to what the service's own code produced for
+//! the same inputs, so its switch to `kayak::derive_policy` reviews as
+//! pure deletion: same tables, same columns, same clauses, in the same
+//! order.
 
-use kayak::{derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, Resource, SubResource};
+use kayak::generate::{generate_all, TARGETS};
+use kayak::{
+    derive_policy, ClaimVocabulary, EnginePolicy, FieldExposure, GenerateError, Resource,
+    SubResource,
+};
+use surql::schema::{index, string_field, table_schema, TableDefinition, TableMode};
+
+/// The tables the contract below validates against: every column it
+/// names, and an index leading with the columns each listing binds.
+/// The derivation reads none of this, and the target validates against
+/// it first.
+fn schema() -> Vec<TableDefinition> {
+    let table = |name: &str, columns: &[&str], indexed: &[&str]| {
+        table_schema(name)
+            .with_mode(TableMode::Schemafull)
+            .with_fields(
+                columns
+                    .iter()
+                    .map(|column| string_field(*column).build_unchecked().unwrap()),
+            )
+            .with_indexes([index(format!("idx_{name}"), indexed.iter().copied())])
+    };
+    vec![
+        table(
+            "file",
+            &["tenant_id", "created_at", "digest"],
+            &["tenant_id"],
+        ),
+        table(
+            "file_version",
+            &["file", "tenant_id", "number", "created_by", "created_at"],
+            &["file", "tenant_id"],
+        ),
+        table(
+            "webhook_endpoint",
+            &["tenant_id", "created_at"],
+            &["tenant_id"],
+        ),
+        table(
+            "webhook_delivery",
+            &["endpoint", "tenant_id", "state", "created_at"],
+            &["endpoint", "tenant_id", "state"],
+        ),
+        table("file_event", &["tenant_id", "created_at"], &["tenant_id"]),
+        table("workflow_run", &["tenant_id", "created_at"], &["tenant_id"]),
+    ]
+}
 
 /// A resource carrying only what the policy face reads: table, field
 /// exposures, read scopes, sub-resources. Everything else defaulted,
@@ -36,11 +82,11 @@ fn resource(name: &str, table: &str) -> Resource {
     }
 }
 
-/// The shape of copal's real contract
-/// (`crates/copal-server/src/contract/`): four resources, all
+/// The shape of the reference deployment's real contract: four
+/// resources, all
 /// requiring the `read` scope, two carrying a sub-resource, and one
 /// guarded field -- `file_version.created_by` under `owner_or_admin`.
-fn copal_shaped() -> kayak::Contract {
+fn reference_shaped() -> kayak::Contract {
     let mut files = resource("files", "file");
     files.reads_require = vec!["read".into()];
     files.sub_resources = vec![SubResource {
@@ -84,7 +130,7 @@ fn copal_shaped() -> kayak::Contract {
     runs.reads_require = vec!["read".into()];
 
     kayak::Contract {
-        name: "copal".into(),
+        name: "probe".into(),
         version: "0.1.0".into(),
         ir_revision: 1,
         api_prefix: "/v1".into(),
@@ -96,34 +142,28 @@ fn copal_shaped() -> kayak::Contract {
     }
 }
 
-/// Byte-for-byte what copal's `engine_policy` produces.
+/// Byte-for-byte what the reference deployment's hand derivation
+/// produced. The forms it matches:
 ///
-/// The matched copal sources, so a copal change that invalidates this
-/// test can be traced:
-///
-/// - `crates/copal-server/src/engine.rs:33-44` (`fn guard_clause`):
-///   `"owner_or_admin"` renders as
+/// - Guard clauses: `"owner_or_admin"` renders as
 ///   `"$token.adm = true OR created_by = $token.pr"` and
 ///   `"admin_only"` as `"$token.adm = true"` -- the default
 ///   [`ClaimVocabulary`] carries both verbatim.
-/// - `crates/copal-server/src/engine.rs:54-78`: field guards walk
-///   resources in contract order, each resource's own fields before
-///   its sub-resources' fields, pushing `(table, column, clause)`.
-/// - `crates/copal-server/src/engine.rs:89-107`: each scope in
-///   `reads_require` renders as `$token.sc CONTAINS '{scope}'`, the
-///   scopes join with `" AND "`, and the conjunct lands on the
-///   resource's table and then on every sub-resource table, in
-///   contract order.
+/// - Field guards walk resources in contract order, each resource's
+///   own fields before its sub-resources' fields, pushing
+///   `(table, column, clause)`.
+/// - Each scope in `reads_require` renders as
+///   `$token.sc CONTAINS '{scope}'`, the scopes join with `" AND "`,
+///   and the conjunct lands on the resource's table and then on every
+///   sub-resource table, in contract order.
 ///
 /// Not reproduced, on purpose: the `file_version` delete conjunct
-/// (`engine.rs:85-88`, retention the contract cannot declare) and the
-/// store's mechanical tenancy floor
-/// (`crates/copal-store/src/schema/mod.rs:86-133`, derived from the
-/// schema so an omitted table cannot dodge it). Both stay with the
-/// service.
+/// (retention the contract cannot declare) and the store's mechanical
+/// tenancy floor (derived from the schema so an omitted table cannot
+/// dodge it). Both stay with the service.
 #[test]
-fn the_derivation_is_a_no_op_for_copal() {
-    let policy = derive_policy(&copal_shaped(), &ClaimVocabulary::default()).unwrap();
+fn the_derivation_is_a_no_op_for_the_reference_deployment() {
+    let policy = derive_policy(&reference_shaped(), &ClaimVocabulary::default()).unwrap();
     assert_eq!(
         policy,
         EnginePolicy {
@@ -159,17 +199,16 @@ fn the_derivation_is_a_no_op_for_copal() {
     );
 }
 
-/// The other guard copal's vocabulary names, and the multi-scope
-/// join, held to the same clause forms (`engine.rs:35` and
-/// `engine.rs:93-98`).
+/// The other guard the default vocabulary names, and the multi-scope
+/// join, held to the same clause forms.
 #[test]
-fn the_default_vocabulary_matches_copals_other_forms() {
+fn the_default_vocabulary_matches_the_other_forms() {
     let mut audited = resource("audits", "audit_log");
     audited.reads_require = vec!["read".into(), "audit".into()];
     audited.fields = vec![FieldExposure::column("actor").with_guard("admin_only")];
     let contract = kayak::Contract {
         resources: vec![audited],
-        ..copal_shaped()
+        ..reference_shaped()
     };
     let policy = derive_policy(&contract, &ClaimVocabulary::default()).unwrap();
     assert_eq!(
@@ -190,12 +229,12 @@ fn the_default_vocabulary_matches_copals_other_forms() {
 }
 
 /// A guard without a clause refuses the whole derivation, the way
-/// copal's boot refuses (`engine.rs:58-63`): shipping it would
+/// the reference deployment's boot refuses: shipping it would
 /// silently drop the engine layer for that column while the
 /// application layer kept enforcing.
 #[test]
 fn an_unknown_guard_refuses_rather_than_ships_half_a_policy() {
-    let mut contract = copal_shaped();
+    let mut contract = reference_shaped();
     contract.resources[0].fields = vec![FieldExposure::column("digest").with_guard("finance_only")];
     let error = derive_policy(&contract, &ClaimVocabulary::default()).unwrap_err();
     assert!(
@@ -211,8 +250,7 @@ fn an_unknown_guard_refuses_rather_than_ships_half_a_policy() {
 /// changes here in a commit is what changes in the engine.
 #[test]
 fn the_engine_policy_target_renders_the_artifact() {
-    let artifacts =
-        kayak::generate::generate_all(&copal_shaped(), &[], &["engine-policy"]).unwrap();
+    let artifacts = generate_all(&reference_shaped(), &schema(), &["engine-policy"]).unwrap();
     assert_eq!(
         artifacts["policy.json"],
         r#"{
@@ -257,14 +295,33 @@ fn the_engine_policy_target_renders_the_artifact() {
 /// Through the CLI orchestrator, a guard outside the default
 /// vocabulary refuses the run and names the guard -- the reason the
 /// target is opt-in rather than a default: the vocabulary belongs to
-/// the deployment, and the CLI only holds copal's conventions.
+/// the deployment, and the CLI only holds the default conventions.
 #[test]
 fn the_target_refuses_a_guard_outside_the_default_vocabulary() {
-    let mut contract = copal_shaped();
+    let mut contract = reference_shaped();
     contract.resources[0].fields = vec![FieldExposure::column("digest").with_guard("finance_only")];
-    let error = kayak::generate::generate_all(&contract, &[], &["engine-policy"]).unwrap_err();
+    let error = generate_all(&contract, &schema(), &["engine-policy"]).unwrap_err();
     assert!(
         error.to_string().contains("finance_only"),
         "the refusal names the guard: {error}",
     );
+}
+
+/// Every target validates first, the two that read only the contract
+/// included. The MCP manifest and the engine policy used to render
+/// whatever they were handed, so a contract over a table the schema
+/// lacks shipped a manifest and a policy for it.
+#[test]
+fn every_target_refuses_an_invalid_contract() {
+    let mut contract = reference_shaped();
+    contract.resources[0].table = "nonesuch".into();
+    let opt_in = ["engine-policy", "client-rs-blocking"];
+    for target in TARGETS.iter().chain(opt_in.iter()) {
+        let refused = generate_all(&contract, &schema(), &[target]);
+        assert!(
+            matches!(refused, Err(GenerateError::Invalid(_))),
+            "{target} rendered an invalid contract: {refused:?}",
+        );
+    }
+    assert!(generate_all(&reference_shaped(), &schema(), &["mcp", "engine-policy"]).is_ok());
 }

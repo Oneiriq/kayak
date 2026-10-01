@@ -54,11 +54,12 @@ diff to review (see
 [generators.md](generators.md#keeping-artifacts-in-sync)).
 
 The runtime reads the contract when the dispatcher is built. It enforces
-scopes, filter and sort allowlists, input types, rate classes, and field
-guards on every face. It does not yet honor `faces`, `api_prefix`, or
-`identity`, so a contract that sets them serves routes and a GraphQL
-schema that differ from the generated artifacts (see
-[runtime.md](runtime.md#known-limitations)).
+scopes, filter and sort allowlists, filter value sets, input types, rate
+classes, and field guards on every face. It serves only the faces a
+resource declares, under the contract's `api_prefix`, and the live
+GraphQL schema addresses rows by their identity column, as the generated
+artifacts do. The differences that remain are listed under
+[runtime.md](runtime.md#known-limitations).
 
 ## Why it exists
 

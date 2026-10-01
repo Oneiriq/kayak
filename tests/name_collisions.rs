@@ -260,14 +260,15 @@ fn a_query_parameter_cannot_shadow_the_methods_own_locals() {
 }
 
 /// Writes the keyword fixture to disk so the generated Rust can be
-/// compiled by a real toolchain out of band. Ignored by default.
+/// compiled by a real toolchain out of band. Ignored by default. Run it
+/// with `KAYAK_DUMP_DIR=<dir> cargo test --test name_collisions -- --ignored`.
 #[test]
 #[ignore]
 fn dump_keyword_fixture() {
     let columns = ["type", "match", "move", "self", "path"];
     let contract = contract_exposing(&columns);
     let schema = vec![table(&columns)];
-    let dir = std::env::var("JANUS_DUMP_DIR").expect("set JANUS_DUMP_DIR");
+    let dir = std::env::var("KAYAK_DUMP_DIR").expect("set KAYAK_DUMP_DIR");
     std::fs::write(
         format!("{dir}/schema.json"),
         serde_json::to_string_pretty(&schema).unwrap(),

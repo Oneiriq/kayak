@@ -2,6 +2,7 @@
 //!
 //! Both faces read percent-encoded text out of a path segment or a
 //! query string, and both used to carry their own copy of the decoder.
+//! Both also gather a repeated key the same way.
 
 /// One hex digit, or nothing if the byte is not one.
 fn hex(byte: u8) -> Option<u8> {
@@ -57,6 +58,32 @@ pub(crate) fn percent_decode(raw: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Put one value from a query string or a form into `input`.
+///
+/// A multi-valued input keeps every value it arrives with, in an
+/// array. The OpenAPI document describes it as the key repeated, and a
+/// checked box in a console form submits its own pair, so keeping only
+/// the last would drop what the caller chose. The dispatcher joins the
+/// array into the one string a resolver reads. Any other input keeps
+/// the last value it arrives with.
+pub(crate) fn gather(
+    input: &mut serde_json::Map<String, serde_json::Value>,
+    field: Option<&crate::ir::ActionField>,
+    key: String,
+    value: serde_json::Value,
+) {
+    if !field.is_some_and(|field| field.multiple) {
+        input.insert(key, value);
+        return;
+    }
+    let slot = input
+        .entry(key)
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    if let serde_json::Value::Array(values) = slot {
+        values.push(value);
+    }
 }
 
 #[cfg(test)]

@@ -291,9 +291,9 @@ filterable, `created_at` is a valid sort. Declaring a sort no index can
 serve is a generation error naming the column.
 
 Only a standard or unique index counts toward either rule. `DEFINE INDEX`
-also defines FULLTEXT, HNSW, and MTREE indexes, and none of them narrows an
-equality or supplies an order. A column covered only by one of them is
-uncovered for a filter or a sort. Claiming it is a generation error that
+also defines FULLTEXT, HNSW, DISKANN, and COUNT indexes, and none of them
+narrows an equality or supplies an order. A column covered only by one of
+them is uncovered for a filter or a sort. Claiming it is a generation error that
 names the index and its type, so the message points at the index you were
 looking at. A column may carry both kinds: a FULLTEXT index beside a
 standard one makes a column searchable and filterable.
@@ -593,15 +593,15 @@ drops the index fails generation.
 ```
 
 A `lexical` backing is answered by `@@` through a FULLTEXT index. A
-`vector` backing is answered by KNN through an HNSW, MTREE, or DISKANN
-index. A fused search (BM25 candidates and vector neighbors rescored
-together) is two backings on one query. The fusion itself is resolver
+`vector` backing is answered by KNN through an HNSW or DISKANN index. A
+fused search (BM25 candidates and vector neighbors rescored together) is
+two backings on one query. The fusion itself is resolver
 behavior and stays out of the contract.
 
 Validation holds a backing to the mirror image of the listing rules. The
 named table, column, and index must exist. The index must hold the column.
-The index must be the kind's own machinery: FULLTEXT for lexical, HNSW,
-MTREE, or DISKANN for vector. A backing resting on a standard index is
+The index must be the kind's own machinery: FULLTEXT for lexical, HNSW or
+DISKANN for vector. A backing resting on a standard index is
 refused with a violation that names the index and its type, the same way a
 filter resting on a FULLTEXT index is. Two identical backings on one query
 are refused.
@@ -888,9 +888,9 @@ live database and returns every claim the planner does not serve:
 
 `kayak::verify::probes(&contract)` returns the composed probes without
 running them, so you can read what will be asked before pointing it at a
-database. SurrealDB 3.x has removed MTREE, so while validation accepts an
-MTREE-typed vector index, a live 3.x database cannot hold one and
-verification composes only the HNSW form.
+database. SurrealDB 3.x has removed MTREE, so validation refuses a vector
+backing resting on an MTREE-typed index, and verification composes only the
+`<|k,EF|>` form that HNSW and DISKANN answer.
 
 The same check runs from the CLI:
 

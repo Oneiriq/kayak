@@ -326,9 +326,9 @@ fn is_false(flag: &bool) -> bool {
 ///
 /// The vocabulary is the contract's rather than the
 /// engine's: `lexical` requires a FULLTEXT index (the `@@` operator),
-/// `vector` an HNSW, MTREE, or DISKANN one (the KNN operator), and
+/// `vector` an HNSW or DISKANN one (the KNN operator), and
 /// validation translates between the two vocabularies when it
-/// refuses. Which of the three vector machineries answers is the
+/// refuses. Which of the two vector machineries answers is the
 /// schema's business, not the contract's -- the contract asks for
 /// nearest neighbors through an index and the engine chooses how, so
 /// moving a column from HNSW to DISKANN is a capacity decision the
@@ -338,8 +338,8 @@ fn is_false(flag: &bool) -> bool {
 pub enum SearchKind {
     /// Term matching over analyzed text: `@@` through FULLTEXT.
     Lexical,
-    /// Nearest-neighbor over a stored vector: KNN through HNSW,
-    /// MTREE, or DISKANN.
+    /// Nearest-neighbor over a stored vector: KNN through HNSW or
+    /// DISKANN.
     Vector,
 }
 

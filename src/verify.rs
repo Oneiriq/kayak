@@ -26,9 +26,9 @@
 //! exists to catch. One boundary is the engine's, stated rather than
 //! papered over: SurrealDB 3.x has removed MTREE (`DEFINE INDEX ...
 //! MTREE` no longer parses, and `<|k|>` errors with "no longer
-//! supported"), so while static validation accepts an MTREE-typed
-//! definition for a vector backing, a live 3.x database cannot hold
-//! one and verification composes only the HNSW form.
+//! supported"), so static validation refuses an MTREE-typed
+//! definition for a vector backing as well, and verification composes
+//! only the `<|k,EF|>` form.
 //!
 //! The module rides the `verify` cargo feature because it is the one
 //! part of kayak that needs a database client, and kayak itself

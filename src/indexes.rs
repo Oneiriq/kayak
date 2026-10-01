@@ -1,11 +1,11 @@
 //! What an index is actually able to answer.
 //!
-//! SurrealDB spells five kinds of index with one `DEFINE INDEX`, and
+//! SurrealDB spells six kinds of index with one `DEFINE INDEX`, and
 //! only two of them have a b-tree behind them. FULLTEXT answers `@@`
-//! against an analyzer's terms; HNSW and MTREE answer nearest-neighbor
-//! over a vector. None of the three narrows an equality or supplies an
-//! order, so a column they cover is, as far as a filter or an ORDER BY
-//! is concerned, uncovered.
+//! against an analyzer's terms; HNSW and DISKANN answer nearest-neighbor
+//! over a vector; COUNT keeps a table's record count. None of the four
+//! narrows an equality or supplies an order, so a column they cover is,
+//! as far as a filter or an ORDER BY is concerned, uncovered.
 //!
 //! This sits apart from both readers because it had two of them and
 //! they disagreed. The scaffold filtered on index type; the validator
@@ -37,10 +37,7 @@ pub(crate) fn serves_ordering(index: &IndexDefinition) -> bool {
 pub(crate) fn serves_search(index: &IndexDefinition, kind: SearchKind) -> bool {
     match kind {
         SearchKind::Lexical => matches!(index.index_type, IndexType::Search),
-        SearchKind::Vector => matches!(
-            index.index_type,
-            IndexType::Hnsw | IndexType::Mtree | IndexType::Diskann
-        ),
+        SearchKind::Vector => matches!(index.index_type, IndexType::Hnsw | IndexType::Diskann),
     }
 }
 

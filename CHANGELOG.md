@@ -215,6 +215,21 @@ Kayak has not cut a release yet. Everything below is the road to 0.1.0.
   the refusal message names all three machineries. A lexical claim on
   one is refused as before.
 
+- **surql 0.34 and SurrealDB 3.3; a vector backing on MTREE is
+  refused.** SurrealDB 3 has no MTREE index, and surql 0.34 deprecates
+  `mtree_index` and refuses an MTREE-typed definition in `validate()`.
+  `serves_search` now admits only HNSW and DISKANN for a
+  `SearchKind::Vector` backing, so a contract resting a vector search
+  on an MTREE index is refused at validation instead of passing and
+  then failing against every live 3.x database, which cannot hold one.
+  The refusal message names the two machineries that remain. The
+  `text_chunk` fixture's `locator` index moved from MTREE to DISKANN.
+  The minimum Rust version rises to 1.95 with surql's, and the
+  test-only `surrealdb` dev-dependency to 3.3. `.cargo/audit.toml`
+  carries the two quick-xml advisories (RUSTSEC-2026-0194/0195) that
+  SurrealDB 3.3's embedded engine brings in through object_store 0.13;
+  only the test-only `kv-mem` engine compiles them.
+
 ### Fixed
 
 - **Plain `cargo test` compiles again.** `tests/arbitrary_input.rs`

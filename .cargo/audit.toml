@@ -15,4 +15,20 @@ ignore = [
     # signs nor holds keys. Re-evaluate whenever surrealdb or
     # jsonwebtoken move off the unfixed crate.
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (quick-xml < 0.41:
+    # quadratic duplicate-attribute check, unbounded namespace
+    # allocation in NsReader) reach the lockfile through object_store
+    # 0.13.2's `aws` backend, which surrealdb-core 3.3.0 enables on
+    # native targets. No object_store 0.13 release takes quick-xml
+    # 0.41; object_store 0.14 does, but surrealdb-core pins 0.13. Only
+    # the embedded engine pulls it in, and here that is the test-only
+    # `kv-mem` dev-dependency: `cargo tree -i quick-xml -e normal
+    # --all-features` prints nothing, so no shipped build compiles it.
+    # It parses XML responses from an S3 endpoint, which an in-memory
+    # engine never talks to. Tracked upstream as surrealdb/surrealdb#7568;
+    # remove both entries when surrealdb-core moves to object_store 0.14
+    # or stops enabling `aws`. Mirrors surql-rs's entry.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]

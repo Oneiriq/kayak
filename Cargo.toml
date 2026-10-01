@@ -2,7 +2,7 @@
 name = "oneiriq-kayak"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.95"
 description = "Contract layer for SurrealDB-backed APIs: one serializable IR over surql-rs schema definitions, validated against real indexes, generating every API surface."
 license = "Apache-2.0"
 repository = "https://github.com/Oneiriq/kayak"
@@ -47,7 +47,7 @@ async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] 
 # pulling an executor or a combinator library into the runtime.
 futures-core = "0.3"
 maud = { version = "0.27", optional = true }
-oneiriq-surql = { version = "0.33", default-features = false }
+oneiriq-surql = { version = "0.34", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
@@ -61,5 +61,5 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Feature-unifies `kv-mem` into the client's `surrealdb` so the verify
 # tests can run a real embedded engine (`mem://`) without a server.
 # Test-only; the shipped feature set stays ws-only.
-surrealdb = { version = "3.0", default-features = false, features = ["kv-mem"] }
+surrealdb = { version = "3.3", default-features = false, features = ["kv-mem"] }
 

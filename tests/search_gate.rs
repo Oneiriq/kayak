@@ -16,9 +16,9 @@ use kayak::{
     SearchBacking, SearchKind, TypeRef, Violation,
 };
 use surql::schema::{
-    array_field, bm25_index, hnsw_index, index, int_field, mtree_index, string_field, table_schema,
-    unique_index, HnswDistanceType, IndexType, MTreeDistanceType, MTreeVectorType, TableDefinition,
-    TableMode,
+    array_field, bm25_index, diskann_index, hnsw_index, index, int_field, string_field,
+    table_schema, unique_index, DiskAnnDistanceType, HnswDistanceType, IndexType, MTreeVectorType,
+    TableDefinition, TableMode,
 };
 
 /// The listing template the index-type cases vary one claim at a time
@@ -100,12 +100,12 @@ fn text_chunk_table() -> TableDefinition {
             None,
             None,
         ),
-        mtree_index(
+        diskann_index(
             "idx_chunk_locator",
             "locator",
             3,
-            MTreeDistanceType::Euclidean,
-            MTreeVectorType::F64,
+            DiskAnnDistanceType::Euclidean,
+            MTreeVectorType::F32,
         ),
     ])
 }
@@ -115,7 +115,7 @@ fn text_chunk_table() -> TableDefinition {
 ///
 /// The shape is a file service's `text_chunk`: `body` carries a BM25 index for
 /// lexical recall, `embedding` an HNSW index for vector recall,
-/// `locator` an MTREE one. None of the three has a b-tree behind it, so
+/// `locator` a DISKANN one. None of the three has a b-tree behind it, so
 /// an equality filter on `body` scans the table and an ORDER BY down
 /// `embedding` is not a thing the engine will do. The gate matched on
 /// column membership alone and accepted every one of them, which is
@@ -142,7 +142,7 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
     for (column, index, kind) in [
         ("body", "idx_chunk_body", IndexType::Search),
         ("embedding", "idx_chunk_embedding", IndexType::Hnsw),
-        ("locator", "idx_chunk_locator", IndexType::Mtree),
+        ("locator", "idx_chunk_locator", IndexType::Diskann),
     ] {
         for claim in ["filterable", "sortable"] {
             assert!(
@@ -172,7 +172,10 @@ fn a_claim_resting_on_a_search_or_vector_index_is_refused() {
         text.contains("the HNSW index idx_chunk_embedding"),
         "{text}"
     );
-    assert!(text.contains("the MTREE index idx_chunk_locator"), "{text}");
+    assert!(
+        text.contains("the DISKANN index idx_chunk_locator"),
+        "{text}"
+    );
 
     // And generation refuses rather than shipping the scan.
     let err = generate_openapi(
@@ -334,15 +337,38 @@ fn a_real_search_declared_with_its_backing_validates_clean() {
     });
     assert_eq!(validate(&contract, &[text_chunk_table()]), vec![]);
 
-    // MTREE is the other vector machinery the schema layer can spell,
-    // and a vector backing accepts it the way the WrongIndexType rule
-    // groups it with HNSW.
-    let mtree = searching(vec![backing(
+    // DISKANN is the other vector machinery, and a vector backing
+    // accepts it the way the WrongIndexType rule groups it with HNSW.
+    let diskann = searching(vec![backing(
         "locator",
         "idx_chunk_locator",
         SearchKind::Vector,
     )]);
-    assert_eq!(validate(&mtree, &[text_chunk_table()]), vec![]);
+    assert_eq!(validate(&diskann, &[text_chunk_table()]), vec![]);
+
+    // MTREE is gone from SurrealDB 3, so an MTREE-typed definition is
+    // one no live database can hold, and a vector backing resting on it
+    // is refused rather than passed through to fail at deploy time.
+    let mut with_mtree = text_chunk_table();
+    #[allow(deprecated)] // the definition under test is the removed kind
+    with_mtree.indexes.push(
+        surql::schema::IndexDefinition::new("idx_chunk_mtree", ["locator"])
+            .with_type(IndexType::Mtree),
+    );
+    let mtree = searching(vec![backing(
+        "locator",
+        "idx_chunk_mtree",
+        SearchKind::Vector,
+    )]);
+    let violations = validate(&mtree, &[with_mtree]);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        matches!(
+            &violations[0],
+            Violation::WrongBackingIndexType { index, .. } if index == "idx_chunk_mtree"
+        ),
+        "{violations:?}",
+    );
 }
 
 /// The mirror image of `a_claim_resting_on_a_search_or_vector_index_is_refused`:
@@ -395,10 +421,11 @@ fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
         );
     }
 
-    // A DISKANN index is the third machinery that answers a vector
+    // A DISKANN index is the second machinery that answers a vector
     // backing, new with surql 0.33; a Lexical claim on one is still
-    // refused. The table gains the index only inside this test so the
-    // other cases keep exercising the HNSW shape a real deployment ships.
+    // refused. The table gains this index over `embedding` only inside
+    // this test so the other cases keep exercising the HNSW shape a real
+    // deployment ships there.
     let mut with_diskann = text_chunk_table();
     with_diskann.indexes.push(surql::schema::diskann_index(
         "idx_chunk_diskann",
@@ -446,7 +473,7 @@ fn a_backing_resting_on_the_wrong_index_kind_is_refused_by_name() {
         "{text}"
     );
     assert!(
-        text.contains("a vector backing needs an HNSW, MTREE, or DISKANN one"),
+        text.contains("a vector backing needs an HNSW or DISKANN one"),
         "{text}"
     );
     let crossed = searching(vec![backing("body", "idx_chunk_body", SearchKind::Vector)]);

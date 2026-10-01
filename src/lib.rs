@@ -6,6 +6,10 @@
 //! schema; it references tables and columns by name and resolves them
 //! against the authoritative [`surql::schema::TableDefinition`]s, so a
 //! contract cannot drift from the schema without failing generation.
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/Oneiriq/kayak/main/assets/icon.svg",
+    html_favicon_url = "https://raw.githubusercontent.com/Oneiriq/kayak/main/assets/favicon-32.png"
+)]
 
 pub mod clients;
 pub mod diff;

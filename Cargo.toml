@@ -7,6 +7,16 @@ description = "Contract layer for SurrealDB-backed APIs: one serializable IR ove
 license = "Apache-2.0"
 repository = "https://github.com/Oneiriq/kayak"
 authors = ["Shon Thomas <shonpt@outlook.com>"]
+readme = "README.md"
+keywords = ["surrealdb", "openapi", "graphql", "codegen", "api"]
+categories = ["development-tools", "web-programming", "database"]
+# Brand images are for the repository page; the crate does not need them.
+exclude = ["/assets"]
+
+# docs.rs builds default features only unless told otherwise, which would
+# leave the runtime, GraphQL, console, and verify APIs undocumented.
+[package.metadata.docs.rs]
+all-features = true
 
 [lib]
 name = "kayak"

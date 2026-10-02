@@ -42,12 +42,12 @@ admin console.
 
 ## Install
 
-Kayak needs Rust 1.90 or newer.
+Kayak needs Rust 1.95 or newer.
 
 The command-line tool:
 
 ```sh
-cargo install --git https://github.com/Oneiriq/kayak
+cargo install oneiriq-kayak
 ```
 
 Add `--features verify` to include `kayak verify`, which checks a contract
@@ -57,8 +57,8 @@ The library, in your service's `Cargo.toml`:
 
 ```toml
 [dependencies]
-oneiriq-kayak = { git = "https://github.com/Oneiriq/kayak", features = ["runtime"] }
-oneiriq-surql = { version = "0.33", default-features = false }
+oneiriq-kayak = { version = "0.1", features = ["runtime"] }
+oneiriq-surql = { version = "0.34", default-features = false }
 ```
 
 The crate is `oneiriq-kayak` and you import it as `kayak`. Schema types

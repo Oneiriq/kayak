@@ -1,0 +1,10 @@
+# The `verify` tests run the embedded SurrealDB engine (`mem://`) on the
+# test harness's threads, whose stack is 2 MiB unless `RUST_MIN_STACK`
+# says otherwise. SurrealDB asks for a 10 MiB stack for an embedded
+# engine (the `surrealdb::engine::local` docs), and a debug build of the
+# 4.0 engine overflows 2 MiB: on Windows, the tests in `tests/verify.rs`
+# did. This gives every thread the tests start the size SurrealDB asks
+# for. A value already in the environment wins. Mirrors the setting
+# surql-rs carries for the same engine.
+[env]
+RUST_MIN_STACK = "10485760"

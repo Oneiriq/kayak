@@ -16,19 +16,20 @@ ignore = [
     # jsonwebtoken move off the unfixed crate.
     "RUSTSEC-2023-0071",
 
-    # RUSTSEC-2026-0194 and RUSTSEC-2026-0195 (quick-xml < 0.41:
-    # quadratic duplicate-attribute check, unbounded namespace
-    # allocation in NsReader) reach the lockfile through object_store
-    # 0.13.2's `aws` backend, which surrealdb-core 3.3.0 enables on
-    # native targets. No object_store 0.13 release takes quick-xml
-    # 0.41; object_store 0.14 does, but surrealdb-core pins 0.13. Only
-    # the embedded engine pulls it in, and here that is the test-only
-    # `kv-mem` dev-dependency: `cargo tree -i quick-xml -e normal
-    # --all-features` prints nothing, so no shipped build compiles it.
-    # It parses XML responses from an S3 endpoint, which an in-memory
-    # engine never talks to. Tracked upstream as surrealdb/surrealdb#7568;
-    # remove both entries when surrealdb-core moves to object_store 0.14
-    # or stops enabling `aws`. Mirrors surql-rs's entry.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
+    # RUSTSEC-2026-0387 (crypto-bigint < 0.7.6: timing variability in
+    # operations meant to be constant-time) reaches the lockfile through
+    # the same JWT stack, `crypto-bigint 0.5.5 -> elliptic-curve 0.13
+    # -> p256 / p384 -> jsonwebtoken 10 -> surrealdb-core 4.0.0`. The
+    # fix is in the 0.7 line, and elliptic-curve 0.13 takes only 0.5,
+    # so no compatible update exists. Only the embedded engine pulls it
+    # in, and here that is the test-only `kv-mem` dev-dependency:
+    # `cargo tree -i crypto-bigint -e normal --all-features` prints
+    # nothing, so no shipped build compiles it. The tests sign and
+    # verify no ECDSA token. Remove the entry when jsonwebtoken (or
+    # surrealdb-core) moves to an elliptic-curve on crypto-bigint 0.7.
+    "RUSTSEC-2026-0387",
 ]
+
+# The move to surrealdb 4.0 retired RUSTSEC-2026-0194 and -0195
+# (quick-xml < 0.41): surrealdb-core 4.0.0 takes object_store 0.14,
+# which takes quick-xml 0.41. Mirrors surql-rs.

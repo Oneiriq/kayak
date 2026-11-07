@@ -6,10 +6,10 @@
 //! would credit an index for half the rows.
 //!
 //! The rule these assert was measured against SurrealDB 3 rather than
-//! reasoned about: the engine answers the disjunction as a
-//! UnionIndexScan, one seek per branch, so every branch needs an index
-//! whose prefix is its own column. The friend table of a social
-//! service is the shape that motivated it.
+//! reasoned about, and measured again on 4.0: the engine answers the
+//! disjunction as a UnionIndexScan, one seek per branch, so every
+//! branch needs an index whose prefix is its own column. The friend
+//! table of a social service is the shape that motivated it.
 
 use kayak::diff::{diff, Change};
 use kayak::validate::validate;

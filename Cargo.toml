@@ -1,6 +1,6 @@
 [package]
 name = "oneiriq-kayak"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Contract layer for SurrealDB-backed APIs: one serializable IR over surql-rs schema definitions, validated against real indexes, generating every API surface."
@@ -47,7 +47,7 @@ async-graphql = { version = "7", optional = true, features = ["dynamic-schema"] 
 # pulling an executor or a combinator library into the runtime.
 futures-core = "0.3"
 maud = { version = "0.27", optional = true }
-oneiriq-surql = { version = "0.34", default-features = false }
+oneiriq-surql = { version = "0.35.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
@@ -61,5 +61,18 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Feature-unifies `kv-mem` into the client's `surrealdb` so the verify
 # tests can run a real embedded engine (`mem://`) without a server.
 # Test-only; the shipped feature set stays ws-only.
-surrealdb = { version = "3.3", default-features = false, features = ["kv-mem"] }
+surrealdb = { version = "4.0.0", default-features = false, features = ["kv-mem"] }
+
+# TEMPORARY: oneiriq-surql 0.35.0 is not on crates.io yet. This points
+# the build at the local surql-rs worktree that carries it (branch
+# feat/surrealdb-4) so this branch builds and tests before surql is
+# published. The path exists only on the machine that made this
+# branch, so CI cannot build it while the patch is here. Once
+# oneiriq-surql 0.35.0 is on crates.io, delete this whole section and
+# run `cargo update -p oneiriq-surql` so the lockfile takes the
+# registry copy; the requirement above already names 0.35.0. It has
+# to come out before a release: a published crate resolves surql from
+# crates.io.
+[patch.crates-io]
+oneiriq-surql = { path = "C:/Users/shonp/repos/surql-rs/.claude/worktrees/surrealdb-4" }
 

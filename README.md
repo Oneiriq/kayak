@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0E2229?style=flat-square"></a>
   <img alt="Rust 1.90 or newer" src="https://img.shields.io/badge/rust-1.90%2B-0E2229?style=flat-square">
-  <img alt="SurrealDB 3" src="https://img.shields.io/badge/SurrealDB-3-0E2229?style=flat-square">
+  <img alt="SurrealDB 3 and 4" src="https://img.shields.io/badge/SurrealDB-3%20%7C%204-0E2229?style=flat-square">
 </p>
 
 Kayak keeps an API and its database in agreement. You write one short
@@ -51,15 +51,21 @@ cargo install oneiriq-kayak
 ```
 
 Add `--features verify` to include `kayak verify`, which checks a contract
-against a live database.
+against a live database. It is built on the SurrealDB 4 SDK and connects
+to SurrealDB 3.x and 4.x servers.
 
 The library, in your service's `Cargo.toml`:
 
 ```toml
 [dependencies]
-oneiriq-kayak = { version = "0.1", features = ["runtime"] }
-oneiriq-surql = { version = "0.34", default-features = false }
+oneiriq-kayak = { version = "0.2", features = ["runtime"] }
+oneiriq-surql = { version = "0.35", default-features = false }
 ```
+
+Kayak 0.2 needs oneiriq-surql 0.35. A service that also depends on
+oneiriq-surql directly must use 0.35 too: kayak takes surql's schema
+types, and a 0.34 copy's `TableDefinition` is a different type. Kayak 0.1
+is the release for oneiriq-surql 0.34 and the SurrealDB 3 SDK.
 
 The crate is `oneiriq-kayak` and you import it as `kayak`. Schema types
 come from [`oneiriq-surql`](https://crates.io/crates/oneiriq-surql),

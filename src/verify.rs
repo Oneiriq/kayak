@@ -24,11 +24,11 @@
 //! stronger demand than not scanning, and that is the point -- a search served
 //! by some other index than the declared one is drift the contract
 //! exists to catch. One boundary is the engine's, stated rather than
-//! papered over: SurrealDB 3.x has removed MTREE (`DEFINE INDEX ...
-//! MTREE` no longer parses, and `<|k|>` errors with "no longer
-//! supported"), so static validation refuses an MTREE-typed
-//! definition for a vector backing as well, and verification composes
-//! only the `<|k,EF|>` form.
+//! papered over: SurrealDB 3.x removed MTREE and 4.0 has not brought
+//! it back (`DEFINE INDEX ... MTREE` no longer parses, and `<|k|>`
+//! errors with "no longer supported"), so static validation refuses
+//! an MTREE-typed definition for a vector backing as well, and
+//! verification composes only the `<|k,EF|>` form.
 //!
 //! The module rides the `verify` cargo feature because it is the one
 //! part of kayak that needs a database client, and kayak itself
@@ -354,10 +354,10 @@ fn push_probes<'a>(
 /// just the operator the backing claims machinery for, because the
 /// question is whether THAT operator reaches THAT index. The vector
 /// literal is `[0]` whatever the index's dimension -- probed on
-/// SurrealDB 3.x, the planner resolves the index before it ever looks
-/// at the literal's width (`KnnScan` either way, see the vocabulary
-/// note on [`reaches_index`]) -- so a contract needs no knowledge of
-/// the embedding dimension to be verified.
+/// SurrealDB 3.x and 4.0, the planner resolves the index before it
+/// ever looks at the literal's width (`KnnScan` either way, see the
+/// vocabulary note on [`reaches_index`]) -- so a contract needs no
+/// knowledge of the embedding dimension to be verified.
 fn query_probes(query: &Query, out: &mut Vec<Probe>) {
     for backing in &query.backing {
         let surql = match backing.kind {
@@ -401,11 +401,11 @@ fn probe_value(option: Option<&str>) -> String {
 
 /// The operation that walks a table, found anywhere in the plan tree.
 ///
-/// The vocabulary is PROBED, not guessed, against SurrealDB 3.x on
-/// `mem://` (the probe lives on as the vocabulary test in
-/// `tests/verify.rs`, so an engine upgrade that respells it fails
-/// there by name instead of turning every verification silently
-/// green). `EXPLAIN` returns one plan-tree object per statement --
+/// The vocabulary is PROBED, not guessed, against SurrealDB 3.x and
+/// again against 4.0 on `mem://` (the probe lives on as the
+/// vocabulary test in `tests/verify.rs`, so an engine upgrade that
+/// respells it fails there by name instead of turning every
+/// verification silently green). `EXPLAIN` returns one plan-tree object per statement --
 /// `operator`, `attributes`, `children` -- and the two scan leaves
 /// observed are:
 ///
@@ -416,11 +416,15 @@ fn probe_value(option: Option<&str>) -> String {
 ///  "direction": "Forward", "topk_pushdown": "yes"}}
 /// ```
 ///
-/// A sort the index order cannot serve shows as a `SortTopKByKey`
-/// node OVER whichever scan feeds it (and an index-served sort elides
-/// the sort node entirely), while a filter the index cannot narrow
-/// becomes a residual `Filter` node over the pins' `IndexScan`. So
-/// the scan leaf alone decides: the plan iterates the table exactly
+/// 4.0 adds a `context` key to every node and a `table` attribute to
+/// the index scans; the walker reads neither. A sort the index order
+/// cannot serve shows as a sort node OVER whichever scan feeds it
+/// (`SortTopKByKey` on 3.x, `Sort` with `sort_keys` and `keep` on
+/// 4.0; an index-served sort elides the sort node entirely on both),
+/// while a filter the index cannot narrow becomes a residual `Filter`
+/// node over the pins' `IndexScan`. Of this vocabulary only the sort
+/// node's name changed in 4.0, and the walker never reads it: the
+/// scan leaf alone decides, and the plan iterates the table exactly
 /// when a `TableScan` node appears anywhere in the tree.
 fn table_walk(node: &Value) -> Option<String> {
     if node.get("operator").and_then(Value::as_str) == Some("TableScan") {
@@ -439,10 +443,10 @@ fn table_walk(node: &Value) -> Option<String> {
 /// Whether the plan reaches the named index, anywhere in the tree.
 ///
 /// The search vocabulary is PROBED the same way the scan vocabulary
-/// was, against SurrealDB 3.x on `mem://` (and pinned alongside it in
-/// `tests/verify.rs`). A `@@` predicate the FULLTEXT index serves and
-/// a `<|k,EF|>` KNN the HNSW index serves each answer with one leaf
-/// naming the index in its attributes:
+/// was, against SurrealDB 3.x and 4.0 on `mem://` (and pinned
+/// alongside it in `tests/verify.rs`). A `@@` predicate the FULLTEXT
+/// index serves and a `<|k,EF|>` KNN the HNSW index serves each
+/// answer with one leaf naming the index in its attributes:
 ///
 /// ```text
 /// SELECT * FROM text_chunk WHERE body @@ 'quick' EXPLAIN
@@ -454,11 +458,13 @@ fn table_walk(node: &Value) -> Option<String> {
 ///     "dimension": "3", "ef": "40", "k": "4"}}
 /// ```
 ///
-/// With the index absent, `@@` degrades to a `TableScan` carrying the
-/// predicate as an attribute, and `<|k,EF|>` to a bare `TableScan`;
-/// the metric KNN form `<|k,COSINE|>` plans as `KnnTopK` OVER a
-/// `TableScan` even when an HNSW index exists, which is why a real
-/// search renders the `<|k,EF|>` form and why the probe does too. Matching
+/// With the index absent, both degrade to a table walk: on 3.x `@@`
+/// is a `TableScan` carrying the predicate as an attribute and
+/// `<|k,EF|>` a bare `TableScan`, and on 4.0 each is a `Filter`
+/// holding the predicate over a bare `TableScan`. The metric KNN form
+/// `<|k,COSINE|>` plans as `KnnTopK` OVER a `TableScan` even when an
+/// HNSW index exists, which is why a real search renders the
+/// `<|k,EF|>` form and why the probe does too. Matching
 /// on the `index` attribute rather than on the operator names keeps
 /// the walker one rule for both kinds, and means a future operator
 /// respelling fails the pinned vocabulary test instead of silently
@@ -748,8 +754,9 @@ mod tests {
 
     #[test]
     fn the_walk_finds_a_table_scan_at_any_depth() {
-        // The exact shape the probe returned for an unserved sort:
-        // SortTopKByKey over TableScan, under Limit and SelectProject.
+        // The exact shape the probe returned for an unserved sort on
+        // 3.x: SortTopKByKey over TableScan, under Limit and
+        // SelectProject.
         let plan = serde_json::json!({
             "operator": "SelectProject",
             "children": [{
@@ -764,6 +771,30 @@ mod tests {
             }],
         });
         assert_eq!(table_walk(&plan), Some("TableScan over file".to_owned()));
+
+        // The same probe on 4.0: the sort node is respelled `Sort`, and
+        // every node gains a `context` key. The walk reads neither, so
+        // the conviction is unchanged.
+        let plan = serde_json::json!({
+            "operator": "SelectProject",
+            "context": "Db",
+            "children": [{
+                "operator": "Limit",
+                "context": "Db",
+                "children": [{
+                    "operator": "Sort",
+                    "context": "Db",
+                    "attributes": {"keep": "5", "sort_keys": "title ASC"},
+                    "children": [{
+                        "operator": "TableScan",
+                        "context": "Db",
+                        "attributes": {"table": "note", "direction": "Forward",
+                                       "topk_pushdown": "yes"},
+                    }],
+                }],
+            }],
+        });
+        assert_eq!(table_walk(&plan), Some("TableScan over note".to_owned()));
 
         let seeking = serde_json::json!({
             "operator": "SelectProject",

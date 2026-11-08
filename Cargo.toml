@@ -63,16 +63,3 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Test-only; the shipped feature set stays ws-only.
 surrealdb = { version = "4.0.0", default-features = false, features = ["kv-mem"] }
 
-# TEMPORARY: oneiriq-surql 0.35.0 is not on crates.io yet. This points
-# the build at the local surql-rs worktree that carries it (branch
-# feat/surrealdb-4) so this branch builds and tests before surql is
-# published. The path exists only on the machine that made this
-# branch, so CI cannot build it while the patch is here. Once
-# oneiriq-surql 0.35.0 is on crates.io, delete this whole section and
-# run `cargo update -p oneiriq-surql` so the lockfile takes the
-# registry copy; the requirement above already names 0.35.0. It has
-# to come out before a release: a published crate resolves surql from
-# crates.io.
-[patch.crates-io]
-oneiriq-surql = { path = "C:/Users/shonp/repos/surql-rs/.claude/worktrees/surrealdb-4" }
-

@@ -888,9 +888,11 @@ live database and returns every claim the planner does not serve:
 
 `kayak::verify::probes(&contract)` returns the composed probes without
 running them, so you can read what will be asked before pointing it at a
-database. SurrealDB 3.x has removed MTREE, so validation refuses a vector
-backing resting on an MTREE-typed index, and verification composes only the
-`<|k,EF|>` form that HNSW and DISKANN answer.
+database. SurrealDB 3.x removed MTREE and 4.0 has none either, so
+validation refuses a vector backing resting on an MTREE-typed index, and
+verification composes only the `<|k,EF|>` form that HNSW and DISKANN answer.
+The plan vocabulary verification reads is the same on 3.x and 4.0, so one
+kayak build verifies against either server.
 
 The same check runs from the CLI:
 

@@ -7,6 +7,77 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+Kayak moves to oneiriq-surql 0.35 and, with it, the SurrealDB 4 Rust
+SDK. SurrealDB 4.0 is the only line with fixes for RUSTSEC-2026-0454
+(`reblessive` in `surrealdb-core`) and RUSTSEC-2026-0452 (`surrealkv`
+0.21); no 3.x release fixes either. A service that uses kayak beside
+oneiriq-surql has to keep the two on one surql version, so kayak moves
+with surql. Kayak's own API does not change, but the surql types it
+takes are now 0.35's, hence the minor bump.
+
+### Changed
+
+- **Requires oneiriq-surql 0.35 and the SurrealDB 4 SDK.**
+  `oneiriq-surql` is now `0.35.0` (still `default-features = false`;
+  `verify` still turns on `client-rustls`), and the test-only `surrealdb`
+  dev-dependency is `4.0.0` with `kv-mem`. Every surql type in kayak's
+  API is the 0.35 one: the `surql::schema` definitions that `validate`,
+  the generators, the scaffold and the runtime take, and the
+  `surql::DatabaseClient` that `verify::verify_contract` takes. A crate
+  that builds those values with oneiriq-surql 0.34 has to move to 0.35
+  too. No kayak item changed its name, signature or behaviour.
+  **Breaking**
+
+- **`kayak verify` and `verify_contract` still work against SurrealDB
+  3.x servers.** The 4.x SDK connects to 3.x servers as well as 4.x, and
+  the plan vocabulary the walker reads is unchanged in 4.0: the
+  `TableScan`, `IndexScan`, `UnionIndexScan`, `FullTextScan`, `KnnScan`
+  and `KnnTopK` operators, the `index` and `table` attributes, and
+  `INFO FOR TABLE`'s `indexes` map. Probed again on the 4.0 `mem://`
+  engine: 4.0 adds a `context` key to every plan node, spells the sort
+  node `Sort` where 3.x spelled it `SortTopKByKey`, and plans an
+  unserved `@@` or `<|k,EF|>` as a `Filter` over a bare `TableScan`
+  rather than a `TableScan` carrying the predicate. The walker reads
+  none of those, so it reaches the same verdict on both. The vocabulary
+  test passes unchanged on 4.0, and the walker's unit test gains the 4.0
+  sort shape. MTREE is still absent, so the MTREE refusal stands.
+
+- **The tests give their threads a 10 MiB stack.** A debug build of the
+  4.0 embedded engine overflowed the test harness's 2 MiB default on
+  Windows in `tests/verify.rs`. `.cargo/config.toml` sets
+  `RUST_MIN_STACK = "10485760"` under `[env]`, the stack SurrealDB asks
+  for an embedded engine, as surql-rs does. A value already in the
+  environment wins.
+
+- **`.cargo/audit.toml` follows the 4.0 tree.** RUSTSEC-2026-0194 and
+  -0195 (quick-xml) are retired: surrealdb-core 4.0.0 takes object_store
+  0.14, which takes quick-xml 0.41. RUSTSEC-2026-0387 (crypto-bigint
+  0.5.5, through jsonwebtoken's p256 and p384 in surrealdb-core) is
+  carried, since elliptic-curve 0.13 has no compatible fix and only the
+  test-only `kv-mem` engine compiles it. The lockfile takes the
+  compatible fixes for rustls-webpki (0.103.16), webpki-roots and
+  webpki-root-certs (1.0.11), and the re-resolved tree leaves behind
+  the advisories 0.1.0's lockfile has picked up since its release:
+  reblessive (RUSTSEC-2026-0454) goes with surrealdb-core 3.3, and
+  ammonia, rustls and tokio resolve to fixed releases (4.2.4, 0.23.46,
+  1.54.1).
+
+### Notes
+
+- Kayak reads no query's rows in order: `verify` reads one `EXPLAIN`
+  plan per probe and one `INFO FOR TABLE` answer, so SurrealDB 4
+  returning rows in no particular order without `ORDER BY` needs no
+  change here.
+- SurrealDB 4 plans a B-tree index built by 3.x as one that may hold
+  arrays until `REBUILD INDEX`, which its upgrade notes say makes
+  `ORDER BY ... LIMIT` sort every match and an open range read the
+  table. `kayak verify` reports what the planner does, so after an
+  in-place upgrade a claim that verified on 3.x may report differently
+  until its index is rebuilt. Not reproduced here: a `mem://` engine
+  starts on 4.0.
+
 ## [0.1.0] - 2026-10-02
 
 The first release, published to crates.io as `oneiriq-kayak`.

@@ -158,8 +158,12 @@ fn searching_contract() -> Contract {
 /// as a test, and an engine upgrade that respells its plans fails
 /// HERE, naming the operator, instead of nowhere.
 ///
-/// Probed on SurrealDB 3.x over `mem://` (abridged to the attributes
-/// the matcher reads):
+/// Probed on SurrealDB 3.x over `mem://`, and probed again on 4.0
+/// (abridged to the attributes the matcher reads). 4.0 adds a
+/// `context` key to every node and a `table` attribute to the index
+/// scans, and spells the sort node `Sort` (with `sort_keys` and
+/// `keep`) where 3.x spelled it `SortTopKByKey`; the matcher reads
+/// none of those, and every operator below is unchanged:
 ///
 /// ```text
 /// SELECT * FROM file WHERE tenant_id = 't1' AND state = 'ready'
@@ -179,12 +183,14 @@ fn searching_contract() -> Contract {
 /// ```
 ///
 /// And the search operators, probed the same way. Served, each names
-/// its index in one leaf; unserved, `@@` degrades to a `TableScan`
-/// carrying the predicate as an attribute and `<|k,EF|>` to a bare
-/// one. The wrong-dimension literal still resolves the index, which
-/// is what lets a probe carry `[0]` without knowing the embedding
-/// width. MTREE is gone from this engine entirely: the `DEFINE` no
-/// longer parses, and `<|k|>` errors with "no longer supported".
+/// its index in one leaf; unserved, each degrades to a table walk (on
+/// 3.x `@@` is a `TableScan` carrying the predicate as an attribute
+/// and `<|k,EF|>` a bare one; on 4.0 each is a `Filter` holding the
+/// predicate over a bare `TableScan`). The wrong-dimension literal
+/// still resolves the index, which is what lets a probe carry `[0]`
+/// without knowing the embedding width. MTREE is gone from both
+/// engines entirely: the `DEFINE` no longer parses, and `<|k|>` errors
+/// with "no longer supported".
 ///
 /// ```text
 /// SELECT * FROM text_chunk WHERE body @@ 'quick' EXPLAIN

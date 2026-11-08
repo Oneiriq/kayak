@@ -30,7 +30,7 @@ queries, or watchable resources needs those resolvers too.
 
 ```toml
 [dependencies]
-oneiriq-kayak = { version = "0.1", features = ["runtime"] }
+oneiriq-kayak = { version = "0.2", features = ["runtime"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```

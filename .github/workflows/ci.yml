@@ -52,8 +52,18 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
 
+      # Both test builds compile SurrealDB 4's embedded engine (the
+      # test-only `kv-mem` dev-dependency). At full width with debuginfo
+      # that OOM-kills the aur0 runner pod and the job ends without a
+      # log ("the runner lost communication"), as it does in surql-rs:
+      # one compile at a time and no debuginfo keep it inside the pod.
+      # The two steps share the profile so the second reuses what it can.
       - name: cargo test
         run: cargo test --all-features
+        env:
+          CARGO_BUILD_JOBS: "1"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
 
       # The build a contributor runs first, and the one the README's
       # re-bless lines use. --all-features alone let two test files
@@ -61,6 +71,10 @@ jobs:
       # compile while every run here stayed green.
       - name: cargo test (default features)
         run: cargo test
+        env:
+          CARGO_BUILD_JOBS: "1"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
 
       - name: Dependency audit
         run: |

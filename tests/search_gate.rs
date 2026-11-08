@@ -346,9 +346,10 @@ fn a_real_search_declared_with_its_backing_validates_clean() {
     )]);
     assert_eq!(validate(&diskann, &[text_chunk_table()]), vec![]);
 
-    // MTREE is gone from SurrealDB 3, so an MTREE-typed definition is
-    // one no live database can hold, and a vector backing resting on it
-    // is refused rather than passed through to fail at deploy time.
+    // MTREE is gone from SurrealDB 3 and 4, so an MTREE-typed
+    // definition is one no live database can hold, and a vector backing
+    // resting on it is refused rather than passed through to fail at
+    // deploy time.
     let mut with_mtree = text_chunk_table();
     #[allow(deprecated)] // the definition under test is the removed kind
     with_mtree.indexes.push(
